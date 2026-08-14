@@ -285,6 +285,13 @@ class TestRegistry:
             "gadm20-adm2-per-destination",
         ):
             assert entries[name].record == "21934155"
+        for name in (
+            "gadm41-adm1-per-source",
+            "gadm41-adm1-per-destination",
+            "gadm41-adm2-per-source",
+            "gadm41-adm2-per-destination",
+        ):
+            assert entries[name].record == "21935431"
 
     def test_local_registry_resolves_name(self, served, tmp_path):
         reg = tmp_path / "registry.toml"

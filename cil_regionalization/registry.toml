@@ -41,3 +41,23 @@ manifest = "ir_adm2_per_source.manifest.json"
 record = "21934155"
 parquet = "ir_adm2_per_destination.parquet"
 manifest = "ir_adm2_per_destination.manifest.json"
+
+[artifacts.gadm41-adm1-per-source]
+record = "21935431"
+parquet = "ir_adm1_per_source.parquet"
+manifest = "ir_adm1_per_source.manifest.json"
+
+[artifacts.gadm41-adm1-per-destination]
+record = "21935431"
+parquet = "ir_adm1_per_destination.parquet"
+manifest = "ir_adm1_per_destination.manifest.json"
+
+[artifacts.gadm41-adm2-per-source]
+record = "21935431"
+parquet = "ir_adm2_per_source.parquet"
+manifest = "ir_adm2_per_source.manifest.json"
+
+[artifacts.gadm41-adm2-per-destination]
+record = "21935431"
+parquet = "ir_adm2_per_destination.parquet"
+manifest = "ir_adm2_per_destination.manifest.json"

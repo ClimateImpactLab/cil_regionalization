@@ -11,8 +11,9 @@ being regenerated. The numbers are a demonstration, not results.
 Start with the notebook, `aggregation_colombia.ipynb`. It fetches the
 weights, aggregates and maps one draw, shows percent of GDP with the
 `ratio` kind, pools statistics across the 33 models, maps a pooled
-quantile next to the single draw, and plots the distribution of draws
-for every department. All output is saved in the notebook, so you can
+quantile next to the single draw, plots the distribution of draws
+for every department, and runs the same aggregation against the GADM
+4.1 weights. All output is saved in the notebook, so you can
 read it without running anything. Beyond the `[netcdf]` extra it needs
 `matplotlib`; there is no separate extra for that.
 

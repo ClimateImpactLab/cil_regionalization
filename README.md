@@ -133,12 +133,11 @@ the full printed output.
 Straight from GitHub:
 
 ```
-pip install "git+https://github.com/ClimateImpactLab/REPOSITORY.git"
-pip install "cil_regionalization[netcdf] @ git+https://github.com/ClimateImpactLab/REPOSITORY.git"
+pip install "git+https://github.com/ClimateImpactLab/cil_regionalization.git"
+pip install "cil_regionalization[netcdf] @ git+https://github.com/ClimateImpactLab/cil_regionalization.git"
 ```
 
-(the URL is a placeholder until the repository moves to the Climate
-Impact Lab organisation), or from a clone:
+or from a clone:
 
 ```
 pip install .                # library and CLI
@@ -173,8 +172,20 @@ and different keys, and results built on one cannot be compared with
 results built on the other. Each geometry version is published as its own
 record, and every manifest states which version it was built against.
 
-The published weights were built against two GADM versions, recorded
-in every manifest by their version labels: GADM 2.0 (label
+Three records are published on Zenodo:
+
+- the impact region shapefile, world-combo-201710
+  (doi:10.5281/zenodo.21934131)
+- GADM 2.0 weights, names `gadm20-adm1-per-source` and so on
+  (doi:10.5281/zenodo.21934155)
+- GADM 4.1 weights, names `gadm41-adm1-per-source` and so on, keyed by
+  GADM's GID codes (doi:10.5281/zenodo.21935431). GADM 4.1 draws
+  coastlines differently from the impact region geometry, so 1,178
+  coastal regions are partially covered; the manifests record this,
+  and `apply_weights` needs `allow_partial_coverage=True` to proceed
+
+The weights were built against two GADM versions, recorded in every
+manifest by their version labels: GADM 2.0 (label
 `gadm-2.0-impactmap-copy-2025`, a processed copy of the combined GADM
 2.0 shapefile) and GADM 4.1 (label `gadm-4.10-impactmap-copy-2022`,
 the gadm_410.gpkg GeoPackage as distributed by GADM). You can obtain
