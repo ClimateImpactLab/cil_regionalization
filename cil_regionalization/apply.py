@@ -36,8 +36,8 @@ cannot be expressed through this interface.
 
 Version agreement
 -----------------
-The artifact records the vintage of the geometry its source units come
-from (``source_version``). The caller must state the vintage the data was
+The artifact records the version of the geometry its source units come
+from (``source_version``). The caller must state the version the data was
 built against; a mismatch raises, and a missing version on either side is
 itself an error rather than an assumed compatibility.
 
@@ -225,7 +225,7 @@ def apply_weights(
     drop them beforehand if they should not appear in the output. Rows
     duplicated on (source keys + dimensions) would double count and raise.
 
-    ``data_version`` states the geometry vintage the data was built
+    ``data_version`` states the geometry version the data was built
     against and is compared to the artifact's recorded source version.
     ``group_col`` optionally names a data column to run the mass balance
     per group (typically the country) as well as globally.
@@ -386,12 +386,12 @@ def _check_version_agreement(
         raise ValueError(
             "weights artifact records no source geometry version; only "
             "artifacts built with source.version set (polygon mode) can be "
-            "applied. Grid-mode artifacts do not carry a source vintage yet."
+            "applied. Grid-mode artifacts do not carry a source version yet."
         )
     if data_version is None:
         raise ValueError(
             "data_version is None: the data carries no geometry version "
-            "information. State the vintage the data was built against "
+            "information. State the version the data was built against "
             f"(the artifact records {artifact.source_version!r}); do not "
             "assume compatibility."
         )
@@ -400,7 +400,7 @@ def _check_version_agreement(
             f"geometry version mismatch: the weights artifact was built "
             f"against source version {artifact.source_version!r} but the "
             f"data states {data_version!r}. Rebuild the weights against the "
-            f"data's vintage or use matching data."
+            f"data's version or use matching data."
         )
 
 

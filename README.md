@@ -79,7 +79,7 @@ contains quantiles.
 
 To use published weights you provide three things: your draws in the
 long form above, the `kind` of your variable, and `data_version`, the
-impact region vintage your data was built on. If the vintage does not
+impact region version your data was built on. If the version does not
 match what the weight file records, `apply_weights` raises an error
 before producing any numbers, because weights and data built on
 different geometries silently misallocate.
@@ -120,10 +120,10 @@ plausible wrong numbers.
 `examples/aggregation/` aggregates a small sample of real Monte Carlo
 mortality projections (not the complete output: two draws, one climate
 model) for Colombia, fetching the published weights by name and
-reading a committed 1.6 MB sample. Start with the notebook,
-`aggregation_colombia.ipynb`: it runs the aggregation and maps the
-result by department, with all output readable inline (the map needs
-`matplotlib`). The script `run_example.py` covers the same case plus
+reading a committed 2.5 MB sample. Start with the notebook,
+`aggregation_colombia.ipynb`: it runs the aggregation, shows percent
+of GDP with the `ratio` kind, and maps the results by department, with
+all output readable inline (the maps need `matplotlib`). The script `run_example.py` covers the same case plus
 municipalities and rates from the command line, and its README shows
 the full printed output.
 
@@ -166,14 +166,14 @@ validate <config.toml>` checks a config without computing anything.
 Worked configurations, including the GADM target preparation and the
 full generation runs, live under `examples/`.
 
-Weight files built on different target vintages are not
+Weight files built on different target geometry versions are not
 interchangeable. GADM 2.0 and GADM 4.1 have different unit universes
 and different keys, and results built on one cannot be compared with
-results built on the other. Each vintage is published as its own
-record, and every manifest states which vintage it was built against.
+results built on the other. Each geometry version is published as its own
+record, and every manifest states which version it was built against.
 
-The published weights were built against two GADM vintages, recorded
-in every manifest by their vintage labels: GADM 2.0 (label
+The published weights were built against two GADM versions, recorded
+in every manifest by their version labels: GADM 2.0 (label
 `gadm-2.0-impactmap-copy-2025`, a processed copy of the combined GADM
 2.0 shapefile) and GADM 4.1 (label `gadm-4.10-impactmap-copy-2022`,
 the gadm_410.gpkg GeoPackage as distributed by GADM). You can obtain

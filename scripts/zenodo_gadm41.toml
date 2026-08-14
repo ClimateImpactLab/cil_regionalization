@@ -25,9 +25,9 @@ keywords = [
 description = """
 Weights for aggregating Climate Impact Lab impact region results to GADM 4.1 administrative units, at ADM1 (state or province) and ADM2 (district) level, keyed by GADM's GID codes.
 
-Each level comes in two directions, and the choice matters. The per_source files split a region's total between the units it touches (shares sum to one per region); use them for totals like dollars or deaths. The per_destination files average over the regions inside each unit (shares sum to one per unit); use them for averages like rates or temperatures. One direction cannot do the other's job. A sibling record covers GADM 2.0; the two vintages have different unit universes and keys and are not comparable.
+Each level comes in two directions, and the choice matters. The per_source files split a region's total between the units it touches (shares sum to one per region); use them for totals like dollars or deaths. The per_destination files average over the regions inside each unit (shares sum to one per unit); use them for averages like rates or temperatures. One direction cannot do the other's job. A sibling record covers GADM 2.0; the two versions have different unit universes and keys and are not comparable.
 
-Each artifact is a parquet table plus a manifest carrying provenance and a SHA256 checksum of the parquet. Source geometry: world-combo-201710, 24,378 impact regions. Target: GADM 4.1, vintage label gadm-4.10-impactmap-copy-2022, population weights from GPW v4r10 (2015).
+Each artifact is a parquet table plus a manifest carrying provenance and a SHA256 checksum of the parquet. Source geometry: world-combo-201710, 24,378 impact regions. Target: GADM 4.1, version label gadm-4.10-impactmap-copy-2022, population weights from GPW v4r10 (2015).
 
 With the cil_regionalization package (Climate Impact Lab GitHub organisation): fetch_weights("gadm41-adm1-per-source"), and likewise for the other three names.
 """

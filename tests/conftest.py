@@ -8,7 +8,7 @@ reasoned about by hand.
 world-combo-2017 impact region set, chosen to cover its three naming
 shapes: a bare ISO3 country (ABW, MAF), an R-suffixed clustering
 remainder (AND, BMU), and a dotted subdivision (BHR.5). The list is a
-measured fact about that vintage, inlined here so the test suite is
+measured fact about that version, inlined here so the test suite is
 self contained.
 """
 from __future__ import annotations

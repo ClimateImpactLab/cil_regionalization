@@ -1,7 +1,7 @@
 """`cilreg regions find <pattern> <config>` CLI subcommand.
 
 Cheap LIKE search against the configured regions source. Helps users
-resolve hierids in this IR vintage's mixed naming patterns (bare ISO3,
+resolve hierids in this impact region version's mixed naming patterns (bare ISO3,
 single-remainder-only suffixes, admin subdivisions) without guessing.
 """
 from __future__ import annotations

@@ -71,7 +71,7 @@ class RegionsConfig(_Strict):
     path: Optional[str] = None
     table: Optional[str] = None
     id_fields: list[str] = Field(min_length=1)
-    # Vintage label of the geometry source (e.g. "world-combo-201710",
+    # Version label of the geometry source (e.g. "world-combo-201710",
     # "gadm-2.0"), recorded in the manifest. Required in polygon mode:
     # GADM 2.0, 3.6 and 4.1 all exist on disk with different unit counts,
     # so a weight file must state which target set it was built against.
@@ -157,7 +157,7 @@ class SourceConfig(_Strict):
     GeoParquet with id columns works; nothing here is specific to one
     geometry family.
 
-    ``version`` is required: it is the vintage label recorded in the
+    ``version`` is required: it is the version label recorded in the
     manifest so a weight file states which source set produced it.
 
     ``on_zero_overlap`` handles source units whose intersection with every
@@ -367,7 +367,7 @@ class Config(_Strict):
             if self.regions.version is None:
                 raise ValueError(
                     "polygon mode requires regions.version: the weight file "
-                    "must state which target geometry vintage it was built "
+                    "must state which target geometry version it was built "
                     "against (e.g. 'gadm-2.0')"
                 )
         return self

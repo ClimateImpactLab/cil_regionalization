@@ -7,13 +7,15 @@ weight directions. It is a sample, not the complete output: two Monte
 Carlo draws out of hundreds, one climate model out of dozens, so the
 numbers demonstrate the mechanics and are not results.
 
-The Monte Carlo sample is committed here (about 1.6 MB). The weights
+The Monte Carlo sample is committed here (about 2.5 MB). The weights
 come from the published Zenodo records, fetched by name, which is what
 any real use looks like.
 
 Start with the notebook, `aggregation_colombia.ipynb`. It fetches the
-weights, aggregates one draw, maps the result by department, and pools
-statistics, with all output readable inline. Beyond the `[netcdf]`
+weights, aggregates one draw, maps the result by department in dollars
+and as percent of GDP (the `ratio` kind, using the GDP embedded in the
+same projection files), and pools statistics, with all output readable
+inline. Beyond the `[netcdf]`
 extra it needs `matplotlib` for the map (`pip install matplotlib`);
 there is no separate extra for that, since it is the only plotting use
 in the package.
@@ -54,7 +56,7 @@ Colombia slices instead (`WeightsArtifact.load` on the directories
 under `data/weights/`) and needs no restriction, since the slices
 already match the data.
 
-`data_version` names the impact region geometry vintage the data was
+`data_version` names the impact region geometry version the data was
 built on. If it differs from the `source_version` the weight file
 records, `apply_weights` raises an error before producing numbers;
 that is how a mismatched pairing of weights and data gets caught.
@@ -62,7 +64,7 @@ that is how a mismatched pairing of weights and data gets caught.
 ## What is in the sample
 
 Colombia has 500 impact regions, 32 ADM1 departments in this GADM 2.0
-vintage (the country later gained a 33rd), and 1,065 ADM2
+version (the country later gained a 33rd), and 1,065 ADM2
 municipalities. The Monte Carlo sample is two batches for one climate
 model (GFDL-ESM2G, rcp85, iam low, SSP3), in the standard tree
 grammar, with two files per leaf directory because the same country
@@ -129,7 +131,7 @@ COL     1       q50  -4.022969e+07
 COL     1       q95   6.790414e+07
 ```
 
-The ADM2 section is where the weights do visible work. In this vintage
+The ADM2 section is where the weights do visible work. In this version
 a Colombian impact region is a grouping of municipalities, so one
 region's total spreads across up to 90 of them by population share,
 the shares sum to one, and the municipality totals still add back to

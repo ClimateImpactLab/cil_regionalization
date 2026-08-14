@@ -119,7 +119,7 @@ class TestValidConfigs:
     def test_on_unknown_id_default_is_error(self):
         # Same protection rationale as on_null_geometry: a silent skip
         # at the library level would hide request-side typos / stale
-        # configs (AND/BMU not in this IR vintage was caught by the
+        # configs (AND/BMU not in this impact region version was caught by the
         # runner's coverage check, not by anyone reviewing the diff).
         cfg = Config.model_validate(_local_cfg())
         assert cfg.regions.on_unknown_id == "error"

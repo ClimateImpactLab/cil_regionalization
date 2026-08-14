@@ -6,8 +6,8 @@ numbers it produces are not results: two Monte Carlo draws out of
 hundreds, one climate model out of dozens.
 
 The Monte Carlo extract is committed under examples/aggregation/data
-(about 1.6 MB): Colombia's 500 impact regions, its 32 ADM1 departments
-(this GADM 2.0 vintage predates the 33rd), and its 1,065 ADM2
+(about 2.5 MB): Colombia's 500 impact regions, its 32 ADM1 departments
+(this GADM 2.0 version predates the 33rd), and its 1,065 ADM2
 municipalities. Two batches, one climate model (GFDL-ESM2G), rcp85,
 iam low, SSP3, in the canonical batch/rcp/gcm/iam/ssp tree grammar.
 Needs the base package plus the [netcdf] extra.
@@ -50,8 +50,8 @@ from cil_regionalization.netcdf_io import read_netcdf_leaf
 from cil_regionalization.stats import summarize_samples
 
 DATA = _HERE / "data"
-# The impact region geometry vintage the data was built on. apply_weights
-# refuses data whose vintage differs from the one the weight file
+# The impact region geometry version the data was built on. apply_weights
+# refuses data whose version differs from the one the weight file
 # records (source_version on the loaded weights shows it).
 DATA_VERSION = "world-combo-201710"
 BATCHES = ("batch0", "batch1")
@@ -159,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
           f"= sum over impact regions {total_ir:.6e}\n")
 
     # 3. The same damages at ADM2, where the split is visible: in this
-    # vintage a Colombian impact region is a grouping of municipalities,
+    # version a Colombian impact region is a grouping of municipalities,
     # so one region's total spreads across up to 90 of them by
     # population share, and the shares sum to one per region.
     data_b0 = read_netcdf_leaf(

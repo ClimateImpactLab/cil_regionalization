@@ -13,20 +13,20 @@ The same `RegionSet` API serves both: `is_local`, `table`, `iter_regions`,
 `__len__`. The BQ-only constructor refuses iteration since it has no
 geometries to hand out.
 
-One vintage's id regularities, recorded, not relied on
+One version's id regularities, recorded, not relied on
 ------------------------------------------------------
 Region ids are opaque join keys; nothing in the package parses their
 structure, and a test enforces that. What follows is a measured profile
-of the world-combo-201710 impact region vintage, kept for humans who
-need to reason about that vintage's names, with no conclusions encoded
+of the world-combo-201710 impact region version, kept for humans who
+need to reason about that version's names, with no conclusions encoded
 in code. Its ids mix three shapes: bare ISO3 codes for countries
 carried as a single region (Aruba is one), dotted hierarchical codes
 for admin subdivisions, and R-suffixed clustering remainders (Andorra's
 single region is one) that already break clean hierarchy semantics.
-Measured on the BigQuery geometries table for that vintage: no country
+Measured on the BigQuery geometries table for that version: no country
 prefix has both a bare-country row and child rows, which is the one
 fact that made prefix-level rollups safe there. That regularity is a
-property of one vintage, never a contract; the next vintage may break
+property of one version, never a contract; the next version may break
 it silently, which is exactly why the package treats ids as opaque.
 """
 from __future__ import annotations

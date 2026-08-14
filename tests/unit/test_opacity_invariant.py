@@ -2,11 +2,11 @@
 
 The library treats hierid as an OPAQUE identifier; a pure join key
 whose structure must not be parsed in production code. The usual
-``country.adm1.adm2`` shape is a vintage REGULARITY, not a contract;
+``country.adm1.adm2`` shape is a version REGULARITY, not a contract;
 R-suffixed clustering remainders (e.g. ``AND.Ra5cc0db7a54d1bb3``)
 already break clean hierarchy semantics, and any code path that
 introduces a structural assumption will silently misbehave on the next
-IR vintage.
+impact region version.
 
 Allowed exceptions
 ------------------
@@ -15,7 +15,7 @@ Allowed exceptions
   passes a SQL ``LIKE`` pattern, the library translates it to a regex
   in the local-source path, but the library itself interprets nothing
   about hierid structure;
-- vintage regularities are characterised in prose only: the measured
+- version regularities are characterised in prose only: the measured
   world-combo-201710 profile lives in the ``cil_regionalization/regions.py``
   module docstring, with no conclusions encoded in code.
 
@@ -104,7 +104,7 @@ def test_no_hierid_structural_parsing():
         msg.append(
             "hierid is opaque. Vintage regularities (country.adm1.adm2, "
             "ISO3 prefixes, etc.) are NOT a contract; the next IR "
-            "vintage may break them silently. If profiling a vintage, "
+            "version may break them silently. If profiling a version, "
             "record it in prose in the regions.py module docstring. If "
             "letting a user search, do it in the regions find CLI."
         )

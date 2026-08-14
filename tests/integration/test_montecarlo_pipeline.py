@@ -207,7 +207,7 @@ class TestConfigurableTree:
         depth, one of them a passthrough identity dimension rather than
         a sample dimension."""
         levels = {
-            "vintage": ["v1"],
+            "version": ["v1"],
             "flavor": ["sweet", "sour"],
             "draw_tag": ["d0", "d1"],
         }
@@ -238,7 +238,7 @@ class TestConfigurableTree:
         stats = result.stats
         assert set(stats.columns) == {
             "target_id",
-            "vintage",
+            "version",
             "flavor",
             "statistic",
             "value",

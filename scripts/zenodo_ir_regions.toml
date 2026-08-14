@@ -18,7 +18,7 @@ keywords = [
 ]
 
 description = """
-The Climate Impact Lab impact region boundaries, vintage world-combo-201710: 24,378 regions covering global land, built by agglomerating administrative units into regions of comparable population.
+The Climate Impact Lab impact region boundaries, version world-combo-201710: 24,378 regions covering global land, built by agglomerating administrative units into regions of comparable population.
 
 Three things the file does not say itself: there is no .prj, and coordinates are longitude and latitude on WGS84 (EPSG:4326); the identifying attribute is hierid; hierid is an opaque key whose apparent structure varies across regions and should not be parsed.
 
@@ -37,7 +37,7 @@ loose = false
 [zip]
 name = "world-combo-201710_impact_regions.zip"
 readme = """
-Climate Impact Lab impact regions, vintage world-combo-201710:
+Climate Impact Lab impact regions, version world-combo-201710:
 24,378 regions covering global land. No .prj is included; coordinates
 are longitude and latitude on WGS84 (EPSG:4326). The identifying
 attribute is hierid, an opaque key not to be parsed.
