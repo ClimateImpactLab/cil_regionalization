@@ -1,0 +1,38 @@
+# The versions the full test suite passed against on the cluster.
+# requirements-cluster.freeze.txt is the exact rebuild.
+#
+# exactextract is installed by the setup script in its own step before
+# this file, so a missing wheel fails immediately and visibly.
+
+pandas==3.0.3
+numpy==2.4.6
+geopandas==1.1.3
+shapely==2.1.2
+pyproj==3.7.2
+rasterio==1.4.4
+pyarrow==24.0.0
+pydantic==2.13.4
+
+# [netcdf] extra contents, pinned here rather than resolved via the
+# extra so nothing re-resolves past the pins.
+xarray==2026.4.0
+netcdf4==1.7.4
+
+# Dask, for the weight-generation cluster option. The dask code paths
+# have never been exercised outside marker-skipped tests; the
+# dask-jobqueue pin is the one version here not validated anywhere yet.
+dask[distributed]==2026.3.0
+dask-jobqueue==0.8.5
+
+# [bigquery] extra contents. Included so this one environment runs the
+# entire repo, offline BigQuery tests included (the shared stack lacked
+# the client and 54 tests could only skip there); the cost is a few
+# pure-python wheels plus grpc. These are the versions the suite passed
+# with, including under the pandas 3 pins.
+google-cloud-bigquery==3.43.0
+google-cloud-bigquery-storage==2.40.0
+db-dtypes==1.7.1
+gcsfs==2026.7.0
+
+# Test runner, same version as the shared stack.
+pytest==9.0.3

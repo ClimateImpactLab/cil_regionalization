@@ -1,0 +1,40 @@
+# Minimal local-backend example.
+#
+# Run from anywhere:
+#     segweights validate examples/configs/local_synthetic.toml
+#     segweights run      examples/configs/local_synthetic.toml --test-mode
+#
+# All relative paths are resolved against this file's directory, so the
+# config works from a fresh clone with no environment setup.
+#
+# Fixtures: tests/data/synthetic/ (committed binaries, ~10 kB).
+# Output:   data/out/local_synthetic/ at the repo root (gitignored).
+
+[project]
+name = "local_synthetic_example"
+
+[regions]
+path = "../../tests/data/synthetic/regions.parquet"
+id_fields = ["region_id"]
+
+[grid]
+mode = "generate"
+resolution = 1.0
+offset = "center"
+lon_convention = "[-180,180)"
+
+[[weights]]
+name = "pop"
+raster = "../../tests/data/synthetic/raster.tif"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "local"
+coverage = "exact_fraction"
+
+[output]
+dir = "../../data/out/local_synthetic"
+format = "both"

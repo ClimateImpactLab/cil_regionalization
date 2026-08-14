@@ -1,0 +1,85 @@
+# Production run: mortality damages, ADM1, rcp85.
+#
+# One pipeline run per rcp per target level. The GCM list is declared
+# per rcp because the surrogate surrogate_GFDL-ESM2G_06 exists only
+# under rcp85; a shared cross-product declaration would (correctly)
+# refuse to run. 33 GCMs x 15 batches x 2 iams = 990 leaves.
+#
+# Windows and statistics are shared by every production run: three
+# windows matching the richest shipped 2025 output, and the shipped
+# eight statistics (mean plus q05, q17, q25, q50, q75, q83, q95) for
+# comparability with those files.
+
+[weights]
+dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/weights/ir_adm1_full"
+weight = "pop"
+
+[tree]
+# Location of the input damages tree at the time of the production
+# runs. This is input data the caller supplies; update the path if the
+# tree moves.
+root = "/project/cil/home_dirs/scadavidsanchez/repos/impact-map-data/mortality/current/data/montecarlo_original"
+levels = ["batch", "rcp", "gcm", "iam", "ssp"]
+filename = "mortality_damages_IR_batch.nc4"
+
+[tree.expect]
+batch = ["batch0", "batch1", "batch2", "batch3", "batch4", "batch5", "batch6", "batch7", "batch8", "batch9", "batch10", "batch11", "batch12", "batch13", "batch14"]
+rcp = ["rcp85"]
+gcm = [
+    "ACCESS1-0",
+    "BNU-ESM",
+    "CCSM4",
+    "CESM1-BGC",
+    "CNRM-CM5",
+    "CSIRO-Mk3-6-0",
+    "CanESM2",
+    "GFDL-CM3",
+    "GFDL-ESM2G",
+    "GFDL-ESM2M",
+    "IPSL-CM5A-LR",
+    "IPSL-CM5A-MR",
+    "MIROC-ESM",
+    "MIROC-ESM-CHEM",
+    "MIROC5",
+    "MPI-ESM-LR",
+    "MPI-ESM-MR",
+    "MRI-CGCM3",
+    "NorESM1-M",
+    "bcc-csm1-1",
+    "inmcm4",
+    "surrogate_CanESM2_89",
+    "surrogate_CanESM2_94",
+    "surrogate_CanESM2_99",
+    "surrogate_GFDL-CM3_89",
+    "surrogate_GFDL-CM3_94",
+    "surrogate_GFDL-CM3_99",
+    "surrogate_GFDL-ESM2G_01",
+    "surrogate_GFDL-ESM2G_06",
+    "surrogate_GFDL-ESM2G_11",
+    "surrogate_MRI-CGCM3_01",
+    "surrogate_MRI-CGCM3_06",
+    "surrogate_MRI-CGCM3_11",
+]
+iam = ["high", "low"]
+ssp = ["SSP3"]
+
+[data]
+format = "netcdf"
+region_dim = "region"
+value_col = "total_damages"
+kind = "extensive"
+version = "world-combo-201710"
+
+[stats]
+sample_dims = ["batch", "gcm"]
+time_col = "year"
+windows = [[2020, 2039], [2040, 2059], [2080, 2099]]
+quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
+include_mean = true
+
+[output]
+dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/pipeline_runs/mortality_adm1_rcp85"
+write_leaves = true
+
+[run]
+n_workers = 8

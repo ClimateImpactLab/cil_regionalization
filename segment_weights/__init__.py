@@ -1,0 +1,69 @@
+"""Public API surface for segment_weights.
+
+What a consumer of published weights touches, in call order:
+
+    fetch_weights       download a published artifact, verify, cache, load
+    apply_weights       aggregate source-level data to the artifact's targets
+    summarize_samples   window means and pooled statistics over MC draws
+
+plus `WeightsArtifact` (the loaded weights) and, for weight generation,
+`Config` / `load_config` with the `segweights` CLI. Everything not
+exported here is internal and may change without notice.
+
+Package import does two small env-repairs so CLI, notebooks, and library
+users all get a working geospatial stack without per-process incantations:
+
+1. PROJ_LIB / PROJ_DATA pointed at this env's share/proj when one
+   exists (conda layouts), or cleared when they point outside this env
+   (pip venvs, where each wheel bundles its own PROJ data and
+   self-locates once the variables are unset). Either stale state comes
+   from inheriting another installation's environment and breaks CRS
+   construction, with "Invalid projection: EPSG:4326" or "proj.db lacks
+   DATABASE.LAYOUT.VERSION" depending on the direction of the mismatch.
+2. The GDAL 4.0 FutureWarning about UseExceptions is suppressed (or, if
+   the osgeo binding is present, UseExceptions is called explicitly).
+   Notebook and CLI output stay clean of the upstream warning.
+"""
+from __future__ import annotations
+
+import os as _os
+import sys as _sys
+import warnings as _warnings
+from pathlib import Path as _Path
+
+_proj_dir = _Path(_sys.prefix) / "share" / "proj"
+if (_proj_dir / "proj.db").exists():
+    _os.environ.setdefault("PROJ_DATA", str(_proj_dir))
+    _os.environ["PROJ_LIB"] = str(_proj_dir)
+else:
+    for _var in ("PROJ_LIB", "PROJ_DATA"):
+        _val = _os.environ.get(_var)
+        if _val and not _val.startswith(_sys.prefix):
+            del _os.environ[_var]
+
+try:  # pragma: no cover - the osgeo binding is optional
+    from osgeo import gdal as _gdal
+    _gdal.UseExceptions()
+except ImportError:
+    _warnings.filterwarnings(
+        "ignore",
+        message=r".*gdal\.UseExceptions.*",
+        category=FutureWarning,
+    )
+
+from segment_weights.apply import WeightsArtifact, apply_weights
+from segment_weights.config import Config, load_config
+from segment_weights.fetch import clear_cache, fetch_weights, list_cached
+from segment_weights.stats import summarize_samples
+
+__all__ = [
+    "Config",
+    "WeightsArtifact",
+    "apply_weights",
+    "clear_cache",
+    "fetch_weights",
+    "list_cached",
+    "load_config",
+    "summarize_samples",
+]
+__version__ = "0.1.0"

@@ -1,0 +1,101 @@
+# RCC crop weights production config.
+#
+# Targets:
+#   - regions : world-combo-201710 shapefile (no .prj; RegionSet sets
+#               EPSG:4326 explicitly at load).
+#   - grid    : 0.25 deg, centers at .125, lon [-180, 180).
+#   - crop    : cropland fraction (Ramankutty cropland2000_area.tif),
+#               integrated as area_weighted_sum = fraction x geodesic
+#               pixel area in m^2. Zero-crop regions use the marked
+#               nan fallback so cropwt is NaN there (not 0). Never feed
+#               the _ha derivative; despite the name, that file is
+#               already fraction x area in km^2 and would double-multiply.
+#   - pop     : GPW v4 r10 UN-WPP-adjusted population count GeoTIFF
+#               under .../raster_geotiff/; the filename below matches
+#               the directory naming convention. If `ls` shows the
+#               .tif under a different name in your snapshot, update
+#               the `raster` line for the pop weight to match.
+#
+# All paths are real RCC locations verified across the project. The
+# only field a first-time runner must edit is `--account` in
+# `run_rcc_crops.sbatch`.
+#
+# Output: weights.parquet + weights.manifest.json + weights_legacy.csv
+# (13-column legacy schema; the splines consumer and the Item #6
+# legacy-comparison both read the CSV).
+#
+# Env (use these three lines verbatim, every run):
+#   module load python
+#   source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
+#
+# Test first:
+#   segweights run examples/rcc_crops/rcc_crops.toml --test-mode --legacy-csv
+# Full:
+#   sbatch examples/rcc_crops/run_rcc_crops.sbatch
+
+[project]
+name = "rcc_crops"
+description = "Crop + pop + area weights, 0.25deg, world-combo-201710"
+
+[regions]
+path = "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
+id_fields = ["hierid"]
+# Source shapefile has no .prj; loader sets EPSG:4326 explicitly. The
+# repair policy makes planar invalidities loud rather than silent.
+on_invalid_geometry = "repair"
+# Legacy world-combo-201710 has no NULL geometries inherited from the
+# 2017 vintage; error is correct (anything else is a finding to
+# report, not skip).
+on_null_geometry = "error"
+on_unknown_id = "error"
+
+[grid]
+mode = "generate"
+resolution = 0.25
+offset = "center"
+lon_convention = "[-180,180)"
+
+[[weights]]
+name = "crop"
+# Cropland FRACTION raster (Ramankutty cropland2000_area.tif). Values
+# in [0, 1]. Real RCC path; do NOT swap in the _ha derivative.
+raster = "/project/cil/battuta_shares/gcp/estimation/agriculture/Data/1_raw/3_cropped_area/CroplandPastureArea2000_Geotiff/cropland2000_area.tif"
+kind = "area_weighted_sum"
+fallback = "nan"
+
+[[weights]]
+name = "pop"
+# GPW v4 r10 UN-WPP-adjusted population count, 2015. The .tif inside
+# the raster_geotiff/ directory; confirm with `ls` if your snapshot
+# uses a different filename.
+raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015.tif"
+# Pop fallback to area: regions with zero population still get
+# normalised area-derived weights so downstream temperature
+# aggregations don't drop them.
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "local"
+coverage = "exact_fraction"
+
+# LocalCluster Dask over the cil partition's single allocated node.
+# 32 processes x 2 threads per worker = 64 logical units (the cil
+# node has 64 cores / 251GB). Geometry ops are CPU-bound and
+# shapely 2.0 releases the GIL well, so threads help but processes
+# dominate; 8GB per worker is comfortable for the 24k-region run.
+[backend.local]
+dask = "local"
+n_workers = 32
+threads_per_worker = 2
+
+[output]
+dir = "data/out/rcc_crops"
+format = "parquet"
+# No interactive prompt; the sbatch is non-interactive by definition.
+confirm_cost = false
+
+[validation]
+sum_tolerance = 1e-6

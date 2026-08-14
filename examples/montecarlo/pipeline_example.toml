@@ -1,0 +1,57 @@
+# Monte Carlo pipeline example.
+#
+# Every site-specific fact lives here, not in code: the weights artifact
+# location, the tree grammar, the data declaration, the statistics
+# specification, and the parallelism. Paths given relative resolve
+# against this file's directory.
+#
+# Dry run first:
+#   python -m segment_weights.pipelines.montecarlo pipeline_example.toml --dry-run
+# Then:
+#   python -m segment_weights.pipelines.montecarlo pipeline_example.toml
+
+[weights]
+# Directory holding weights.parquet + weights.manifest.json from a
+# `segweights run` in polygon mode with normalization = "per_source".
+dir = "weights_out"
+weight = "pop"
+
+[tree]
+root = "montecarlo_root"
+# The directory grammar is declared, not assumed. The historical layout
+# would be levels = ["batch", "rcp", "gcm", "iam", "ssp"]; any names,
+# order, and depth work. Leaves live at root/<level values...>/filename,
+# and the expected set is the cross product of [tree.expect].
+levels = ["batch", "gcm"]
+filename = "damages.parquet"
+
+[tree.expect]
+batch = ["batch0", "batch1"]
+gcm = ["gcm_a", "gcm_b"]
+
+[data]
+format = "parquet"
+value_col = "value"
+# Declared, never inferred: extensive (weighted sum), intensive
+# (weighted mean), or ratio (aggregate numerator and denominator, then
+# divide; set denominator_col).
+kind = "extensive"
+# Vintage of the geometry the leaf data is keyed on; must match the
+# weights artifact's recorded source version.
+version = "world-combo-201710"
+
+[stats]
+# Sample dimensions are pooled flat (see stats module docstring for what
+# that assumes about GCM weighting). They are usually tree levels.
+sample_dims = ["batch", "gcm"]
+time_col = "year"
+windows = [[2040, 2059], [2080, 2099]]
+quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
+include_mean = true
+
+[output]
+dir = "pipeline_out"
+write_leaves = true
+
+[run]
+n_workers = 1

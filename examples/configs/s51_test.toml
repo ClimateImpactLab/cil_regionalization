@@ -1,0 +1,75 @@
+# s51 test-mode config.
+#
+# Five tiny hierids; a populous one (ABW, Aruba), two more for breadth
+# (BMU Bermuda, AND Andorra) and two slots for hierids the runner
+# discovers as smallest-area at runtime so the nearest_cell path is
+# actually exercised against real data.
+#
+# Output goes to ./data/out/s51_test/ (gitignored). NEVER GCS.
+
+[project]
+name = "s51_test"
+description = "s51 test-mode: a handful of hierids, including nearest_cell candidates"
+
+[regions]
+table = "compute-impactlab.spatial_aggregation.clustered_impactlab-world-combo-2017_geometries_20221012"
+id_fields = ["hierid"]
+# The runner extends this list at runtime with the smallest-area hierids
+# it discovers via a one-off cheap query (filtered WHERE geometry IS NOT
+# NULL). The committed list below is the always-present baseline.
+#
+# Verified hierids in world-combo-2017. This list is the SINGLE
+# SOURCE OF TRUTH for test fixtures; `tests/conftest.py` reads it back
+# so the two cannot drift. Naming patterns and counts are profiled in
+# `notebooks/02_gcp_connectivity.ipynb` (section "Regions table
+# profile"); numbers are measured there, never transcribed here.
+# Use `segweights regions find '<pattern>' <config>` to resolve any
+# unfamiliar id; do not hardcode bare ISO3 codes without verifying.
+keep = { hierid = [
+    "ABW",                         # bare_only: small island, populated
+    "AND.Ra5cc0db7a54d1bb3",       # single_remainder_only: Andorra
+    "BHR.5",                       # subregions_only: Bahrain admin region
+    "BMU.R676c07148ce9acd1",       # single_remainder_only: Bermuda
+    "MAF",                         # bare_only: St. Martin (French side)
+] }
+# Same skip policies as the full s51 config; exercise both paths under
+# test even when current data has nothing to skip.
+on_null_geometry = "skip"
+on_unknown_id = "skip"
+
+[grid]
+mode = "generate"
+resolution = 1.0
+offset = "center"
+lon_convention = "[-180,180)"
+
+[[weights]]
+name = "pop"
+table = "compute-impactlab.gridded_population_of_the_world.GPW_UN_WPP_Adjusted_Population_Count_2015_v4_10"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "bigquery"
+coverage = "pixel_centroid"
+
+[backend.bigquery]
+project = "compute-impactlab"
+temp_dataset = "temp_workspace"
+dry_run_byte_ceiling = 10_000_000_000  # 10 GB; admits one GPW scan
+staging_uri = "gs://impactlab-data-scratch/scadavidsanchez/climate-and-damages-aggregation/staging/"
+cache_temp_tables = false  # clean up after every test-mode run
+use_bqstorage = false
+
+[output]
+# Local dir, gitignored. The runner refuses to point at GCS in test mode.
+dir = "../../data/out/s51_test/"
+format = "parquet"
+# False in test mode: the test config is committed and reviewable, so
+# every test-mode run can proceed without --yes.
+confirm_cost = false
+
+[validation]
+sum_tolerance = 1.0e-6

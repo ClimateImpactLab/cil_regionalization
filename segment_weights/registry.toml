@@ -1,0 +1,25 @@
+# Registry of published weight artifacts.
+#
+# Maps short artifact names to Zenodo records and file names. The fetch
+# layer reads this file, then any file named by SEGMENT_WEIGHTS_REGISTRY,
+# then any registry_path argument; later entries replace earlier ones of
+# the same name. Adding a published artifact is an edit here (or in a
+# local overlay), never a code change.
+#
+# Entry format:
+#
+#   [artifacts.gadm20-adm1-per-destination]
+#   record = "1234567"                  # Zenodo record id, or a DOI like
+#                                       # "10.5281/zenodo.1234567"
+#   parquet = "ir_adm1_per_destination.parquet"
+#   manifest = "ir_adm1_per_destination.manifest.json"
+#   # base_url = "https://sandbox.zenodo.org"   # only for test records
+#
+# parquet and manifest name the files inside the record and default to
+# "weights.parquet" and "weights.manifest.json". No entries ship yet:
+# the records are not published. Fetching by explicit record id works
+# without any entry.
+
+schema = 1
+
+[artifacts]

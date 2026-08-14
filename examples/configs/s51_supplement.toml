@@ -1,0 +1,69 @@
+# Second pass of the s51 run: the 17 regions whose geometry is NULL in
+# the BigQuery table get their geometry from the source shapefile
+# instead, with the same weights and method as the rest.
+# Run with: python examples/s51/supplement.py [--yes]
+
+[project]
+name = "s51_supplement"
+description = "17 NULL-geometry hierids via BQ backend + source shapefile"
+
+[regions]
+# Canonical source shapefile (the ORIGINAL, never a "-fixed" variant).
+# Located via a gcsfs probe of the bucket; .prj missing, the
+# RegionSet loader sets EPSG:4326 explicitly.
+path = "gs://impactlab-data/spatial/shapefiles/source/impactlab/world-combo-new/agglomerated-world-new.shp"
+id_fields = ["hierid"]
+# Default 'repair' policy: invalid geometries (if any) are fixed with
+# shapely.make_valid and logged into manifest.extra.repaired_geometry_regions
+# for full provenance. The user's cilresearch read confirmed all 17 are
+# already valid; the policy is defense in depth.
+on_invalid_geometry = "repair"
+# Every one of the 17 must exist in the shapefile and parse to a real
+# geometry. Any failure here is stop-and-report: a missing supplement
+# region is a real problem, not something to silently skip.
+on_null_geometry = "error"
+on_unknown_id = "error"
+# keep is populated at runtime from the full-run manifest's
+# null_geometry_regions field; the runner refuses to proceed without
+# it.
+
+[grid]
+# IDENTICAL to s51.toml; same convention, same offset, same resolution.
+mode = "generate"
+resolution = 1.0
+offset = "center"
+lon_convention = "[-180,180)"
+
+[[weights]]
+name = "pop"
+table = "compute-impactlab.gridded_population_of_the_world.GPW_UN_WPP_Adjusted_Population_Count_2015_v4_10"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "bigquery"
+coverage = "pixel_centroid"
+
+[backend.bigquery]
+project = "compute-impactlab"
+temp_dataset = "temp_workspace"
+# Far more than 17 small geometries need; lower it once a run has
+# recorded the real cost.
+dry_run_byte_ceiling = 10_000_000_000
+staging_uri = "gs://impactlab-data-scratch/scadavidsanchez/climate-and-damages-aggregation/staging/"
+# Cache the temp geometry table: the dry_run -> compute pair reuses the
+# uploaded geometries.
+cache_temp_tables = true
+use_bqstorage = false
+
+[output]
+dir = "gs://impactlab-data-scratch/scadavidsanchez/climate-and-damages-aggregation/segment_weights/s51/supplement/"
+format = "parquet"
+# Production mode: explicit confirmation required (either set false in
+# this file or pass --yes on the runner).
+confirm_cost = true
+
+[validation]
+sum_tolerance = 1.0e-6

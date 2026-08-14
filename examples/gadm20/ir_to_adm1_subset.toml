@@ -1,0 +1,66 @@
+# First real-geometry IR to ADM1 weight run: five-country subset.
+#
+# Allocation weights (per_source) from impact regions onto the dissolved
+# GADM 2.0 ADM1 layer, carrying both area and population so the
+# allocation choice stays comparable without regenerating geometry.
+#
+# The subset picks conditions, not easy cases:
+#   THA : the largest table-derived count of ADM1-straddling IRs (13),
+#         so the straddler machinery gets real work.
+#   BRA : many IRs (about 2,000) over 27 ADM1 units; large polygons and
+#         heavy per-unit sums.
+#   MDV : small island nation, a single undivided (MDV, 0) target unit,
+#         and absent from the reference crosswalk entirely, so a case
+#         the old pipeline could not represent at all.
+#   FJI : crosses the antimeridian as a canonical two-sided multipolygon;
+#         exercises the no-split polygon path at the dateline.
+#   NPL : contains the (NPL, 0) target unit kept for the Dhaualagiri
+#         source defect documented in the dissolve driver.
+#
+# Zero-overlap sources are expected (the IR file is global, the targets
+# are five countries), so on_zero_overlap is explicitly "skip" per the
+# documented subset-run convention.
+#
+# Paths are the cluster's canonical locations; the dissolved ADM1 layer
+# and the output live under the gitignored data directory next to this
+# repo checkout.
+
+normalization = "per_source"
+
+[project]
+name = "ir_adm1_subset"
+description = "IR to GADM 2.0 ADM1 allocation weights, five-country subset"
+
+[regions]
+path = "../../data/targets/gadm20/adm1.parquet"
+id_fields = ["ISO", "ID_1"]
+version = "gadm-2.0-impactmap-copy-2025"
+
+[regions.keep]
+ISO = ["THA", "BRA", "MDV", "FJI", "NPL"]
+
+[source]
+path = "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
+id_fields = ["hierid"]
+version = "world-combo-201710"
+on_invalid_geometry = "repair"
+on_zero_overlap = "skip"
+
+[[weights]]
+name = "pop"
+raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "local"
+coverage = "exact_fraction"
+
+[output]
+dir = "../../data/weights/ir_adm1_subset"
+format = "parquet"
+
+[validation]
+sum_tolerance = 1e-6

@@ -1,0 +1,74 @@
+# Local-backend twin of the s51 BigQuery deliverable.
+#
+# Produces a canonical-schema weights parquet using the local backend
+# on the EXACT same shapefile + grid + weight set that the s51 BQ run
+# consumed, so the two outputs are directly comparable cell-for-cell.
+#
+# Pairs with examples/cross_backend_recipe/compare.py and notebook 11
+# to characterize the agreement against `validation.cross_backend_tolerance`.
+#
+# Env (use exactly):
+#   module load python
+#   source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
+#
+# Test first (caps to 3 regions, ~1 minute), then full:
+#   segweights run examples/cross_backend_recipe/local_world_combo_2017.toml --test-mode
+#   segweights run examples/cross_backend_recipe/local_world_combo_2017.toml
+
+[project]
+name = "cross_backend_local_world_combo_2017"
+description = "Local twin of the s51 BQ deliverable for cross-backend comparison"
+
+[regions]
+# Same source shapefile the s51 supplement consumed: world-combo-2017
+# canonical IR shape. No .prj; RegionSet sets EPSG:4326 at load. The
+# `gs://` path is streamed into a temp dir by `_read_remote_regions`
+# (no /vsigs/ credentials needed).
+path = "gs://impactlab-data/spatial/shapefiles/source/impactlab/world-combo-new/agglomerated-world-new.shp"
+id_fields = ["hierid"]
+on_invalid_geometry = "repair"
+on_null_geometry = "skip"
+on_unknown_id = "error"
+
+[grid]
+# Match the s51 BQ deliverable: 1.0 deg, center offset, lon [-180, 180).
+mode = "generate"
+resolution = 1.0
+offset = "center"
+lon_convention = "[-180,180)"
+
+[[weights]]
+name = "pop"
+# GPW v4 r10 UN-WPP-adjusted population count, 2015. The BQ s51 run
+# used the GPW point table; the local backend integrates the raster
+# directly. The two integrations are not bit-identical (raster sum vs
+# point sum on the same pixel footprint) but agree to the cross-backend
+# tolerance after normalization. See notebook 11 for the breakdown.
+raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015.tif"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "local"
+coverage = "exact_fraction"
+
+# LocalCluster Dask on the cil node, same shape as the rcc_crops run.
+[backend.local]
+dask = "local"
+n_workers = 32
+threads_per_worker = 2
+
+[output]
+dir = "data/out/cross_backend_recipe"
+format = "parquet"
+confirm_cost = false
+
+[validation]
+sum_tolerance = 1e-6
+# The tolerance the cross-backend characterization reports against.
+# 1e-3 is the locked default from the project rules and matches the
+# Stage 4 tiny-scale cross-backend test; the full s51 scale typically
+# sits comfortably below it.
+cross_backend_tolerance = 1e-3

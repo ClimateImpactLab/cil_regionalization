@@ -1,0 +1,653 @@
+{
+  "backend": "local",
+  "config_hash": "658c8c435e24a7a4768ec52f346b881e4c00926d4bc20ce6b962c1549c238b24",
+  "coverage": "exact_fraction",
+  "extra": {
+    "empty_region_count": 0,
+    "empty_regions": [],
+    "min_segment_area": {
+      "max_discarded_share": 7.945089372078937e-09,
+      "segments_dropped": 10500,
+      "threshold_m2": 1.0,
+      "units_fully_dropped": []
+    },
+    "near_domain_edge_regions": [
+      {
+        "ID_1": 0,
+        "ID_2": 0,
+        "ISO": "ATA",
+        "overshoot_degrees": 1.525878903407829e-05
+      },
+      {
+        "ID_1": 3,
+        "ID_2": 10,
+        "ISO": "FJI",
+        "overshoot_degrees": 3.410605131648481e-13
+      },
+      {
+        "ID_1": 3,
+        "ID_2": 11,
+        "ISO": "FJI",
+        "overshoot_degrees": 3.410605131648481e-13
+      },
+      {
+        "ID_1": 14,
+        "ID_2": 401,
+        "ISO": "RUS",
+        "overshoot_degrees": 3.410605131648481e-13
+      }
+    ],
+    "near_domain_edge_source_units": [
+      {
+        "hierid": "RUS.14.401.401",
+        "overshoot_degrees": 3.410605131648481e-13
+      },
+      {
+        "hierid": "FJI.R13886963f95ae1bc",
+        "overshoot_degrees": 3.410605131648481e-13
+      },
+      {
+        "hierid": "ATA",
+        "overshoot_degrees": 1.525878903407829e-05
+      }
+    ],
+    "repaired_geometry_source_units": [
+      {
+        "hierid": "CAN.11.259.R480a1d7d4371ace9"
+      },
+      {
+        "hierid": "CAN.2.38.R6e33085594a3166d"
+      },
+      {
+        "hierid": "CAN.1.15.R33d50744b19c2741"
+      },
+      {
+        "hierid": "CAN.4"
+      },
+      {
+        "hierid": "CAN.3.62.Rad867304d09a475e"
+      },
+      {
+        "hierid": "CAN.2.32.R54106f31e3a8aafc"
+      },
+      {
+        "hierid": "CAN.11.177.R38c24e0894ce8973"
+      },
+      {
+        "hierid": "CAN.9.148.Rbbea866f149de3d3"
+      },
+      {
+        "hierid": "CAN.5"
+      },
+      {
+        "hierid": "CAN.12"
+      },
+      {
+        "hierid": "CAN.2.34.Rc8c8ba34d66c2c46"
+      },
+      {
+        "hierid": "CAN.11.179.Ra628164061ec9d3b"
+      },
+      {
+        "hierid": "CAN.3.48.R05e54cd9ccb1c0cc"
+      },
+      {
+        "hierid": "CAN.2.22.R5d75b3b14877b06d"
+      },
+      {
+        "hierid": "CAN.3.54"
+      },
+      {
+        "hierid": "CAN.2.33.R753f24f3d6444a80"
+      },
+      {
+        "hierid": "CAN.2.29.R2210cff5640c5348"
+      },
+      {
+        "hierid": "CAN.1.13.Re9534afbf7382948"
+      },
+      {
+        "hierid": "CAN.2.Rf350b540d74ba255"
+      },
+      {
+        "hierid": "CAN.11.254.R43e2f675c10fcdb3"
+      },
+      {
+        "hierid": "CAN.1.R2ed81e6ef22f1e54"
+      },
+      {
+        "hierid": "CAN.9.152.R09ee56bbcbb09bbd"
+      },
+      {
+        "hierid": "CAN.11.268.Rc71b803bc4235090"
+      },
+      {
+        "hierid": "CAN.9.Re3b801d78a09c2bd"
+      },
+      {
+        "hierid": "CAN.11.R4f9df3ecb2af0605"
+      },
+      {
+        "hierid": "CHE.6"
+      },
+      {
+        "hierid": "JPN.44.R7513c0b85caa5be8"
+      },
+      {
+        "hierid": "JPN.40.R8097b06b0841ccfc"
+      },
+      {
+        "hierid": "JPN.45.Ra28803278a678687"
+      },
+      {
+        "hierid": "JPN.33.Rfd399de91eb14194"
+      },
+      {
+        "hierid": "JPN.38.R60a9c2ead4c498a2"
+      },
+      {
+        "hierid": "JPN.5.R39311148271ffd54"
+      },
+      {
+        "hierid": "JPN.8.Rfc8b2cb4435090f5"
+      },
+      {
+        "hierid": "JPN.14.R78628906f36f7adc"
+      },
+      {
+        "hierid": "JPN.25.R3fb5061cc644edc2"
+      },
+      {
+        "hierid": "TZA.2.8"
+      },
+      {
+        "hierid": "URY.R1ab758674653eea9"
+      },
+      {
+        "hierid": "LSO.R43efad340adc9191"
+      },
+      {
+        "hierid": "KEN.6.26"
+      },
+      {
+        "hierid": "KOR.13.R0b419343b963bd96"
+      },
+      {
+        "hierid": "TUR.Rf5bddc17863cbcb4"
+      },
+      {
+        "hierid": "DOM.R7e8a5b7bcd0223dc"
+      },
+      {
+        "hierid": "UKR.26.R879ddb1d5b166c16"
+      },
+      {
+        "hierid": "MLI.8.39"
+      },
+      {
+        "hierid": "MLI.6.29"
+      },
+      {
+        "hierid": "RUS.49.R5b4b994965686436"
+      },
+      {
+        "hierid": "SWE.10"
+      },
+      {
+        "hierid": "VNM.2.23.Rf3147f16482f4a98"
+      },
+      {
+        "hierid": "VNM.1.12"
+      },
+      {
+        "hierid": "VNM.8.R159f92cd9929d8ac"
+      },
+      {
+        "hierid": "VNM.3.32"
+      },
+      {
+        "hierid": "VNM.4.43"
+      },
+      {
+        "hierid": "VNM.2.20.R1e4f623973c063b9"
+      },
+      {
+        "hierid": "VNM.5.Rce21fe05f76f4c90"
+      },
+      {
+        "hierid": "VNM.2.16.Rf8faf9f53c316fac"
+      },
+      {
+        "hierid": "VNM.6.51.R0829aa65c918c44a"
+      },
+      {
+        "hierid": "VNM.2.21.Rc5e6ecb6ecee6d9e"
+      },
+      {
+        "hierid": "VNM.1.8"
+      },
+      {
+        "hierid": "VNM.2.20.R6fe89b6a356f6765"
+      },
+      {
+        "hierid": "VNM.6.50.R2584212349acd14f"
+      },
+      {
+        "hierid": "UGA.45"
+      },
+      {
+        "hierid": "UGA.34"
+      },
+      {
+        "hierid": "UGA.14"
+      },
+      {
+        "hierid": "UGA.38"
+      },
+      {
+        "hierid": "BRA.10.R2025ec7d0497f5de"
+      },
+      {
+        "hierid": "BRA.17.R859d5132220a5f62"
+      },
+      {
+        "hierid": "PAN.9"
+      },
+      {
+        "hierid": "PAN.4"
+      },
+      {
+        "hierid": "PAN.12"
+      },
+      {
+        "hierid": "PAN.1"
+      },
+      {
+        "hierid": "PAN.3"
+      },
+      {
+        "hierid": "PAN.2"
+      },
+      {
+        "hierid": "ECU.10.95.R08b8aa135980abba"
+      },
+      {
+        "hierid": "ECU.10.R254b7e03f728f184"
+      },
+      {
+        "hierid": "ECU.Rf900637fae055fd5"
+      },
+      {
+        "hierid": "AUS.6.Re502acb75eb58160"
+      },
+      {
+        "hierid": "SLV.6"
+      },
+      {
+        "hierid": "SLV.12"
+      },
+      {
+        "hierid": "SLV.14"
+      },
+      {
+        "hierid": "HTI.8.32"
+      },
+      {
+        "hierid": "HTI.R7e0567d57faef6b0"
+      },
+      {
+        "hierid": "HTI.3.R76f0fc524adb207d"
+      },
+      {
+        "hierid": "SLE.4.13"
+      },
+      {
+        "hierid": "PHL.60.1223.Rfd5422eed0ba54c2"
+      },
+      {
+        "hierid": "PHL.61.1242"
+      },
+      {
+        "hierid": "PHL.19"
+      },
+      {
+        "hierid": "PHL.65"
+      },
+      {
+        "hierid": "PHL.82"
+      },
+      {
+        "hierid": "PHL.27"
+      },
+      {
+        "hierid": "PHL.9"
+      },
+      {
+        "hierid": "PHL.2"
+      },
+      {
+        "hierid": "PHL.45"
+      },
+      {
+        "hierid": "PHL.R2491bb96bf418643"
+      },
+      {
+        "hierid": "PHL.20.Rd15d2b8d88f11673"
+      },
+      {
+        "hierid": "PHL.18.Rae34da20a4843879"
+      },
+      {
+        "hierid": "PHL.36.R8416a7c533d39164"
+      },
+      {
+        "hierid": "PHL.59.Rdc968de25307563d"
+      },
+      {
+        "hierid": "PHL.47.955.Rf7fb64512597c906"
+      },
+      {
+        "hierid": "PHL.47.955.R30e583eacfc122a3"
+      },
+      {
+        "hierid": "PHL.R70fafdd83aae3965"
+      },
+      {
+        "hierid": "PHL.18.Rbf29dbcb049a3d0c"
+      },
+      {
+        "hierid": "PHL.66.Rbeeff4d13d87d0d4"
+      },
+      {
+        "hierid": "THA.16.237.R58d86561f8ce7897"
+      },
+      {
+        "hierid": "THA.28.R861a020fcedc486a"
+      },
+      {
+        "hierid": "THA.37"
+      },
+      {
+        "hierid": "THA.14"
+      },
+      {
+        "hierid": "THA.66"
+      },
+      {
+        "hierid": "THA.13.Rcae34415f81a8be3"
+      },
+      {
+        "hierid": "THA.73.R2cb78ed3864e88cd"
+      },
+      {
+        "hierid": "THA.69.Re0c0b3f414b8e0a6"
+      },
+      {
+        "hierid": "THA.78"
+      },
+      {
+        "hierid": "THA.12"
+      },
+      {
+        "hierid": "THA.16.Rcb6d490f7fb08381"
+      },
+      {
+        "hierid": "THA.R5b9fb52e33d31e31"
+      },
+      {
+        "hierid": "THA.44"
+      },
+      {
+        "hierid": "THA.16.R430de9a9802fae19"
+      },
+      {
+        "hierid": "THA.62.R56d82111b9ea0279"
+      },
+      {
+        "hierid": "THA.20"
+      },
+      {
+        "hierid": "THA.Re5095fc31c672de8"
+      },
+      {
+        "hierid": "THA.34.Rceb9e31fa34ccce8"
+      },
+      {
+        "hierid": "THA.72.Rd30568abf0640d8c"
+      },
+      {
+        "hierid": "THA.Rcc8b41877bc3de74"
+      },
+      {
+        "hierid": "THA.R2109d325ad513f78"
+      },
+      {
+        "hierid": "THA.54.Rd5003882bc5e26a3"
+      },
+      {
+        "hierid": "THA.10"
+      },
+      {
+        "hierid": "THA.Rddcf04a793312740"
+      },
+      {
+        "hierid": "THA.54.R37911155dc5a6885"
+      },
+      {
+        "hierid": "THA.73.R5d05a0ab71c843be"
+      },
+      {
+        "hierid": "THA.56.R4c749e7b439b1b6a"
+      },
+      {
+        "hierid": "THA.11"
+      },
+      {
+        "hierid": "THA.R0012a7f8f3a43a35"
+      },
+      {
+        "hierid": "THA.28.Ra7e59b8c042d571c"
+      },
+      {
+        "hierid": "THA.R9c2940332dc7d5c1"
+      },
+      {
+        "hierid": "THA.18"
+      },
+      {
+        "hierid": "THA.15"
+      },
+      {
+        "hierid": "THA.Re2cee62652611218"
+      },
+      {
+        "hierid": "THA.43"
+      },
+      {
+        "hierid": "THA.R58bccb46b89e6f74"
+      },
+      {
+        "hierid": "THA.28.R678ebb4740bb1671"
+      },
+      {
+        "hierid": "PRT.2"
+      },
+      {
+        "hierid": "PRT.13"
+      },
+      {
+        "hierid": "EST.R517223a810af0fb6"
+      },
+      {
+        "hierid": "ESP.5.23"
+      },
+      {
+        "hierid": "BDI.3"
+      },
+      {
+        "hierid": "FJI.R13886963f95ae1bc"
+      },
+      {
+        "hierid": "MDG.3.8.36"
+      },
+      {
+        "hierid": "MDG.2.5.22"
+      },
+      {
+        "hierid": "MDG.6.22.106"
+      },
+      {
+        "hierid": "MDG.6.20.95"
+      },
+      {
+        "hierid": "MDG.4.14.63"
+      },
+      {
+        "hierid": "MDG.5.18.88"
+      },
+      {
+        "hierid": "MDG.4.13.56"
+      },
+      {
+        "hierid": "ITA.13.69"
+      },
+      {
+        "hierid": "ITA.13.64"
+      },
+      {
+        "hierid": "NPL.2.5.28"
+      },
+      {
+        "hierid": "NPL.4.9.46"
+      },
+      {
+        "hierid": "NPL.4.10.51"
+      },
+      {
+        "hierid": "VEN.21.Rbef4a8817c7ac2c0"
+      },
+      {
+        "hierid": "DEU.2.10.Re83c19217082ae1b"
+      },
+      {
+        "hierid": "MEX.25.R71636c92d83910a7"
+      },
+      {
+        "hierid": "MEX.31.R55093d70b4d963ad"
+      },
+      {
+        "hierid": "MEX.30.Rb6e794dbd8d5acd9"
+      },
+      {
+        "hierid": "PRK.5.Rb3d7939f4cb535c1"
+      },
+      {
+        "hierid": "LKA.14.Rdb0db83132a5a423"
+      },
+      {
+        "hierid": "LKA.9.R1e2a7bd69f839c60"
+      },
+      {
+        "hierid": "LKA.24.R60c325785ebd3600"
+      },
+      {
+        "hierid": "GUY.1"
+      },
+      {
+        "hierid": "GUY.3"
+      },
+      {
+        "hierid": "GUY.7"
+      },
+      {
+        "hierid": "HND.6"
+      },
+      {
+        "hierid": "HND.1"
+      },
+      {
+        "hierid": "HND.17"
+      },
+      {
+        "hierid": "NIC.2"
+      },
+      {
+        "hierid": "NIC.4"
+      },
+      {
+        "hierid": "NIC.6"
+      },
+      {
+        "hierid": "NIC.17"
+      }
+    ],
+    "subset": "Colombia slice of the global ir_adm2_full artifact for the self-contained example; provenance fields describe the full generation run, accounting fields this subset",
+    "zero_overlap_count": 0,
+    "zero_overlap_source_units": []
+  },
+  "fallback_counts": {
+    "area": {
+      "native": 24378
+    },
+    "pop": {
+      "area_fallback": 37,
+      "native": 24341
+    }
+  },
+  "grid_mode": null,
+  "grid_resolution": null,
+  "id_fields": [
+    "ISO",
+    "ID_1",
+    "ID_2"
+  ],
+  "inputs": {
+    "geometry:regions": "b17b93854929f699ea1e35d965c50ad673b2a852b1e6a1bb2ca882c0541dbf16",
+    "geometry:source": "48950bd807cd8008c1b8f89aef5c05f2db5bee02b8285d44783c27345910f88c",
+    "weight:pop": "825600dd31691a1f7cbace62b59a6a431490400f9a865c5138e94c589787dd54"
+  },
+  "lon_convention": null,
+  "normalization": "per_source",
+  "outputs": {
+    "weights.parquet": "9312cb792b9585b1c1e7d6eeb6bdeb64cacf5b1a0988330468223023dc12a307"
+  },
+  "package_versions": {
+    "exactextract": "0.3.0",
+    "geopandas": "1.1.3",
+    "numpy": "2.4.6",
+    "pandas": "3.0.3",
+    "pyarrow": "24.0.0",
+    "pydantic": "2.13.4",
+    "pyproj": "3.7.2",
+    "rasterio": "1.4.4",
+    "segment_weights": "0.1.0",
+    "shapely": "2.1.2"
+  },
+  "partial_coverage": {
+    "count": 0,
+    "target_subset": false,
+    "threshold": 0.999,
+    "units": [],
+    "units_truncated": false
+  },
+  "python_version": "3.11.14",
+  "regions_version": "gadm-2.0-impactmap-copy-2025",
+  "row_counts": {
+    "regions": 1065,
+    "source_units": 500,
+    "total": 1065
+  },
+  "source_coverage": {},
+  "source_key_columns": [
+    "hierid"
+  ],
+  "source_mode": "polygons",
+  "source_version": "world-combo-201710",
+  "timing_seconds": {
+    "compute_total": 824.1937398330192
+  },
+  "weight_names": [
+    "pop",
+    "area"
+  ]
+}
