@@ -19,11 +19,17 @@ import pandas as pd
 import pytest
 
 # Even the mocked tests construct BigQueryBackend, whose import guard
-# needs the client library present. Skip the module cleanly in
-# environments without the [bigquery] extra instead of failing 54 tests
-# with the (correct) missing-extra error.
-pytest.importorskip(
-    "google.cloud.bigquery",
+# needs the client library present. Without the [bigquery] extra the
+# whole module skips, and it skips as its full test count rather than
+# one collapsed module entry, so the summary always shows how many
+# tests the missing extra hides. A module-level importorskip would
+# report the same situation as a single skip, which once let a broken
+# fixture hide behind a green count.
+import importlib.util
+
+_HAS_BIGQUERY = importlib.util.find_spec("google.cloud.bigquery") is not None
+pytestmark = pytest.mark.skipif(
+    not _HAS_BIGQUERY,
     reason="BigQuery tests need the [bigquery] extra installed",
 )
 
@@ -61,6 +67,7 @@ def _bq_cfg(**overrides) -> Config:
         "backend": {
             "kind": "bigquery",
             "coverage": "pixel_centroid",
+            "bigquery": {"staging_uri": "gs://example-staging/segment-weights/"},
         },
         "output": {"dir": "/tmp/segweights_bq_test"},
     }
