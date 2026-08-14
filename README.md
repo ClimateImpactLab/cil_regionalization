@@ -73,15 +73,24 @@ other job.
 
 ## A complete worked example
 
-`examples/colombia/` aggregates real Monte Carlo output for Colombia
+`examples/aggregation/` aggregates real Monte Carlo output for Colombia
 to departments and municipalities, both variable kinds and both
-directions, from a small extract committed in the repository (about
-1.6 MB). Its README shows the printed output, so what comes out is readable
-without running it. Start there.
+directions, fetching the published weights by name and reading a small
+committed Monte Carlo extract (about 1.6 MB). Its README shows the
+printed output, so what comes out is readable without running it.
+Start there.
 
 ## Installation
 
-Clone the repository and install it like any Python package:
+Install straight from GitHub:
+
+```
+pip install "git+https://github.com/ClimateImpactLab/REPOSITORY.git"
+pip install "segment_weights[netcdf] @ git+https://github.com/ClimateImpactLab/REPOSITORY.git"
+```
+
+(the URL is a placeholder until the repository moves to the Climate
+Impact Lab organisation), or from a clone:
 
 ```
 pip install .                # library and CLI
@@ -91,12 +100,12 @@ pip install '.[netcdf]'      # also read NetCDF Monte Carlo trees
 or `uv pip install .` in a uv environment. The geospatial stack
 (geopandas, shapely, rasterio, exactextract) installs with it; all of
 these ship wheels on Linux and macOS. Add `[netcdf]` to read NetCDF
-Monte Carlo trees, which the production mortality and labor trees are.
+Monte Carlo trees, which the full mortality and labor trees are.
 `[bigquery]` adds the BigQuery generation backend, `[dev]` adds pytest.
 Python 3.10 or newer.
 
-The `envs/` directory and `examples/montecarlo/production/` exist to
-reproduce our production runs on the University of Chicago RCC cluster;
+The `envs/` directory and `examples/montecarlo/runs/` exist to
+reproduce the runs behind the published results on the University of Chicago RCC cluster;
 they are not part of installing or using the package.
 
 ## Generating weights
@@ -107,7 +116,27 @@ run <config.toml>` writes the weights parquet plus a manifest that
 records where everything came from, with checksums. `segweights
 validate <config.toml>` checks a config without computing anything.
 Worked configurations, including the GADM target preparation and the
-full production runs, live under `examples/`.
+full generation runs, live under `examples/`.
+
+Weight files built on different target vintages are not
+interchangeable. GADM 2.0 and GADM 4.1 have different unit universes
+and different keys, and results built on one cannot be compared with
+results built on the other; each vintage is published as its own
+record, and every manifest states which vintage it was built against.
+
+The published weights were built against two GADM vintages, recorded
+in every manifest by their vintage labels: GADM 2.0 (label
+`gadm-2.0-impactmap-copy-2025`; a processed copy of the combined GADM
+2.0 shapefile) and GADM 4.1 (label `gadm-4.10-impactmap-copy-2022`;
+the gadm_410.gpkg GeoPackage as distributed by GADM). Anyone can
+obtain the same versions from GADM directly.
+
+The dissolved target layers themselves are large (840 MB for GADM 2.0,
+about 2 GB for GADM 4.1) and are not distributed, since GADM restricts
+redistribution. Anyone who needs them regenerates them with the
+dissolve scripts under `examples/gadm20/` and `examples/gadm41/`; the
+targets manifest records the source file's checksum, so a regenerated
+set can be confirmed to start from the same input.
 
 ## Where the detail lives
 

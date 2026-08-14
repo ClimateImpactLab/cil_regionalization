@@ -4,11 +4,12 @@ The fixtures here are intentionally tiny and deterministic so the suite
 runs in well under a second and so that expected weight values can be
 reasoned about by hand.
 
-`S51_TEST_HIERIDS` is read back from `examples/configs/s51_test.toml`
-so that test fixtures and the example config cannot drift apart. The
-canonical list lives in the TOML (which has the explanatory comment
-block about world-combo-2017's hierid naming patterns); the tests
-follow it.
+`S51_TEST_HIERIDS` is the verified five-hierid test universe from the
+world-combo-2017 impact region set, chosen to cover its three naming
+shapes: a bare ISO3 country (ABW, MAF), an R-suffixed clustering
+remainder (AND, BMU), and a dotted subdivision (BHR.5). The list is a
+measured fact about that vintage, inlined here so the test suite is
+self contained.
 """
 from __future__ import annotations
 
@@ -16,29 +17,13 @@ import os
 import sys
 from pathlib import Path
 
-if sys.version_info >= (3, 11):
-    import tomllib as _tomllib
-else:  # pragma: no cover
-    import tomli as _tomllib
-
-
-_REPO = Path(__file__).resolve().parents[1]
-_S51_TEST_TOML = _REPO / "examples" / "configs" / "s51_test.toml"
-
-
-def _load_s51_test_hierids() -> tuple[str, ...]:
-    """Read the verified hierid keep list from `examples/configs/s51_test.toml`.
-
-    Single source of truth. If the example config moves to new ids
-    (e.g., a future IR vintage), every test fixture that imports this
-    constant updates automatically.
-    """
-    with _S51_TEST_TOML.open("rb") as f:
-        data = _tomllib.load(f)
-    return tuple(data["regions"]["keep"]["hierid"])
-
-
-S51_TEST_HIERIDS: tuple[str, ...] = _load_s51_test_hierids()
+S51_TEST_HIERIDS: tuple[str, ...] = (
+    "ABW",
+    "AND.Ra5cc0db7a54d1bb3",
+    "BHR.5",
+    "BMU.R676c07148ce9acd1",
+    "MAF",
+)
 
 # Conda envs sometimes inherit PROJ_LIB from the base env pointing at the
 # wrong proj.db; correct that before geopandas imports pyproj.
@@ -213,3 +198,40 @@ def synthetic_fraction_raster(tmp_path: Path) -> Path:
     ) as ds:
         ds.write(data, 1)
     return p
+
+
+def _extra_missing(module_name: str) -> bool:
+    """True when the optional module is genuinely absent. Robust to test
+    pollution: a test may plant a stub in sys.modules, and find_spec
+    raises on modules without __spec__."""
+    import importlib.util
+    import sys
+
+    if sys.modules.get(module_name) is not None:
+        return False
+    try:
+        return importlib.util.find_spec(module_name) is None
+    except (ImportError, ValueError):
+        return True
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """State missing optional extras in plain words. A pass count that
+    silently excludes a skipped module reads as full coverage; this
+    makes the gap explicit in every summary."""
+    gaps = []
+    if _extra_missing("google.cloud.bigquery"):
+        gaps.append(
+            "the [bigquery] extra is not installed: every test in "
+            "tests/integration/test_bigquery_backend.py was skipped"
+        )
+    if _extra_missing("xarray"):
+        gaps.append(
+            "the [netcdf] extra is not installed: the NetCDF leaf and "
+            "pipeline tests were skipped"
+        )
+    for gap in gaps:
+        terminalreporter.write_line(
+            f"COVERAGE GAP: {gap}; this pass count does not cover that code.",
+            yellow=True,
+        )

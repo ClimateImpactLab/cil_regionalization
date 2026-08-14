@@ -1,21 +1,21 @@
-# Production run: mortality damages, ADM2, rcp85.
+# Production run: mortality damages, ADM1, rcp85.
 #
 # One pipeline run per rcp per target level. The GCM list is declared
 # per rcp because the surrogate surrogate_GFDL-ESM2G_06 exists only
 # under rcp85; a shared cross-product declaration would (correctly)
 # refuse to run. 33 GCMs x 15 batches x 2 iams = 990 leaves.
 #
-# Windows and statistics are shared by every production run: three
+# Windows and statistics are shared by every full run: three
 # windows matching the richest shipped 2025 output, and the shipped
 # eight statistics (mean plus q05, q17, q25, q50, q75, q83, q95) for
 # comparability with those files.
 
 [weights]
-dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/weights/ir_adm2_full"
+dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/weights/ir_adm1_full"
 weight = "pop"
 
 [tree]
-# Location of the input damages tree at the time of the production
+# Location of the input damages tree at the time of the full
 # runs. This is input data the caller supplies; update the path if the
 # tree moves.
 root = "/project/cil/home_dirs/scadavidsanchez/repos/impact-map-data/mortality/current/data/montecarlo_original"
@@ -78,7 +78,7 @@ quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
 include_mean = true
 
 [output]
-dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/pipeline_runs/mortality_adm2_rcp85"
+dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/pipeline_runs/mortality_adm1_rcp85"
 write_leaves = true
 
 [run]

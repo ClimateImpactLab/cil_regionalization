@@ -1,0 +1,43 @@
+# Full global IR to GADM 4.1 adm1 weights, per_source.
+#
+# Parallel to the GADM 2.0 configuration of the same direction. Weights
+# built on GADM 4.1 are not interchangeable with weights built on GADM
+# 2.0: different unit universes, different keys, and results built on
+# one cannot be compared with results built on the other.
+
+normalization = "per_source"
+
+[project]
+name = "gadm41_adm1_per_source"
+description = "IR to GADM 4.1 adm1 weights, per_source; not interchangeable with GADM 2.0 weights (different unit universes and keys)"
+
+[regions]
+path = "../../data/targets/gadm41/adm1.parquet"
+id_fields = ["GID_0", "GID_1"]
+version = "gadm-4.10-impactmap-copy-2022"
+
+[source]
+path = "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
+id_fields = ["hierid"]
+version = "world-combo-201710"
+on_invalid_geometry = "repair"
+on_zero_overlap = "skip"
+
+[[weights]]
+name = "pop"
+raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "local"
+coverage = "exact_fraction"
+
+[output]
+dir = "../../data/weights/gadm41_adm1_per_source"
+format = "parquet"
+
+[validation]
+sum_tolerance = 1e-6

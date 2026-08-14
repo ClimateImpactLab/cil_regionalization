@@ -1,0 +1,49 @@
+# Zenodo record definition for the impact region shapefile.
+# Consumed by scripts/publish_zenodo.py; see its docstring for usage.
+# Publish this record first: the weight records reference its DOI.
+# The description and zip README name the cil_regionalization package
+# and the Climate Impact Lab GitHub organisation: at the repository
+# move, check these against the final names. Published record
+# descriptions are editable on Zenodo without creating a new version.
+
+files_dir = "data/zenodo_upload/ir_regions"
+title = "Climate Impact Lab impact regions, world-combo-201710"
+version = "1.0.0"
+keywords = [
+    "climate impacts",
+    "impact regions",
+    "spatial aggregation",
+    "region boundaries",
+    "shapefile",
+]
+
+description = """
+The Climate Impact Lab impact region boundaries, vintage world-combo-201710: 24,378 regions covering global land, built by agglomerating administrative units into regions of comparable population for climate impact projection. This is Climate Impact Lab geometry and carries no redistribution restriction.
+
+The shapefile has three components (.shp, .shx, .dbf), zipped. There is no .prj sidecar; coordinates are longitude and latitude on WGS84 (EPSG:4326). The identifying attribute is hierid, an opaque string key. Region ids mix bare ISO3 country codes, dotted hierarchical codes, and R-suffixed clustering remainders; treat them as join keys, not as parseable structure.
+
+The Climate Impact Lab aggregation weight records (impact region to GADM administrative units) are derived from this file and reference it: the weight manifests record this file's checksum as their source geometry input. Anyone regenerating weights, mapping results, or building weights against a new target geometry starts from this file.
+
+To use with the cil_regionalization package from the Climate Impact Lab GitHub organisation, unzip and point a generation config's source path at the .shp; the loader sets the coordinate system explicitly. The file is a plain shapefile and can equally be read by any GIS tool.
+"""
+
+files = [
+    "agglomerated-world-new.shp",
+    "agglomerated-world-new.shx",
+    "agglomerated-world-new.dbf",
+]
+
+# The shapefile components are useless individually; publish the zip only.
+loose = false
+
+[zip]
+name = "world-combo-201710_impact_regions.zip"
+readme = """
+Climate Impact Lab impact regions, vintage world-combo-201710.
+
+24,378 regions covering global land, used as the source geometry for
+the Climate Impact Lab aggregation weight records. Three shapefile
+components; no .prj is distributed, and coordinates are longitude and
+latitude on WGS84 (EPSG:4326). The identifying attribute is hierid, an
+opaque string key.
+"""

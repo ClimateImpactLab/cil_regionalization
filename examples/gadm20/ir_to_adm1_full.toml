@@ -1,7 +1,7 @@
 # Full global IR to ADM1 allocation weights.
 #
 # The configuration that produced data/weights/ir_adm1_full (run
-# serially; 692 seconds and 2.1 GB peak on the first production run).
+# serially; 692 seconds and 2.1 GB peak on the first full run).
 # Both area and pop weights are carried so the allocation choice stays
 # comparable without regenerating geometry. on_zero_overlap stays
 # "skip" so a source unit overlapping no target in a global run is

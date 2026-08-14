@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the pinned production environment with uv, for the University of
+# Build the pinned cluster environment with uv, for the University of
 # Chicago RCC cluster (midway3). The module names below are that
 # cluster's; on any other machine, install with pip as the main README
 # describes.

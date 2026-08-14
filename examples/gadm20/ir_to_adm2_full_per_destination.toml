@@ -1,7 +1,7 @@
 # Full global IR to ADM2 mean weights (per_destination).
 #
 # The configuration that produced data/weights/ir_adm2_full_per_destination (run
-# serially; 893 seconds and 2.3 GB peak on the first production run,
+# serially; 893 seconds and 2.3 GB peak on the first full run,
 # strongly sublinear against the 12.5 fold larger target count). See
 # ir_to_adm1_full.toml for the shared policy choices.
 

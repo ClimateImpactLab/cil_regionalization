@@ -158,7 +158,7 @@ class TestRegionsFindBigQuery:
 
         gcloud_pkg = sys.modules.setdefault("google.cloud", types.ModuleType("google.cloud"))
         monkeypatch.setattr(gcloud_pkg, "bigquery", fake_bq, raising=False)
-        sys.modules["google.cloud.bigquery"] = fake_bq
+        monkeypatch.setitem(sys.modules, "google.cloud.bigquery", fake_bq)
 
         cfg_path = tmp_path / "cfg.toml"
         cfg_path.write_text(

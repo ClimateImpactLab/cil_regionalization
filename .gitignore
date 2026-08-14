@@ -273,7 +273,7 @@ service-account.json
 *.parquet
 !tests/data/**/*.csv
 !tests/data/**/*.parquet
-!examples/colombia/data/**/*.parquet
+!examples/aggregation/data/**/*.parquet
 
 # notebook execution artifacts
 .ipynb_checkpoints/
@@ -285,7 +285,7 @@ dask-worker-space/
 # scratch probes
 scratch/
 
-# cluster job logs from production runs
+# cluster job logs
 /segweights_mortality_*.out
 
 # local exploration notebook

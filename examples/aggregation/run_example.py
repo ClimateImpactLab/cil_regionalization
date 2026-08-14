@@ -5,18 +5,19 @@ the aggregation mechanics. It is not a published dataset, and the
 numbers it produces are not results: two Monte Carlo draws out of
 hundreds, one climate model out of dozens.
 
-Everything it reads is committed under examples/colombia/data (about
-1.6 MB): Colombia's 500 impact regions, its 32 ADM1 departments (this
-GADM 2.0 vintage predates the 33rd), and its 1,065 ADM2
-municipalities. Two Monte Carlo batches, one climate model
-(GFDL-ESM2G), rcp85, iam low, SSP3, in the canonical
-batch/rcp/gcm/iam/ssp tree grammar. Needs the base package plus the
-[netcdf] extra. It reads committed weight slices so it works offline;
-outside this example the one difference is fetching the published
-global weight file instead:
+The Monte Carlo extract is committed under examples/aggregation/data
+(about 1.6 MB): Colombia's 500 impact regions, its 32 ADM1 departments
+(this GADM 2.0 vintage predates the 33rd), and its 1,065 ADM2
+municipalities. Two batches, one climate model (GFDL-ESM2G), rcp85,
+iam low, SSP3, in the canonical batch/rcp/gcm/iam/ssp tree grammar.
+Needs the base package plus the [netcdf] extra.
 
-    from segment_weights import fetch_weights
-    artifact = fetch_weights("gadm20-adm1-per-destination")
+The weights are fetched from the published Zenodo records by name,
+which is what any real use looks like; the application is restricted
+to the Colombian regions present in the data, the honest way to apply
+a global weight file to a country subset. With --offline the committed
+Colombia slices are used instead and no network is touched; useful
+where the records are unreachable.
 
 Two variables for the same country, different in kind:
 
@@ -35,6 +36,7 @@ quantiles, so those lines show the mechanics, not results.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -56,17 +58,40 @@ BATCHES = ("batch0", "batch1")
 LEVELS = "rcp85/GFDL-ESM2G/low/SSP3"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="use the committed Colombia weight slices instead of fetching",
+    )
+    args = parser.parse_args(argv)
+
     print("The tree this example reads:")
     for f in sorted(DATA.rglob("*.nc4")):
         print(f"  {f.relative_to(DATA)}")
     print()
 
-    # Committed Colombia slices; a real user fetches the global weight files
-    # (see the module docstring) and everything below stays the same.
-    per_destination = WeightsArtifact.load(DATA / "weights" / "adm1_per_destination")
-    per_source = WeightsArtifact.load(DATA / "weights" / "adm1_per_source")
-    adm2_per_source = WeightsArtifact.load(DATA / "weights" / "adm2_per_source")
+    if args.offline:
+        per_destination = WeightsArtifact.load(DATA / "weights" / "adm1_per_destination")
+        per_source = WeightsArtifact.load(DATA / "weights" / "adm1_per_source")
+        adm2_per_source = WeightsArtifact.load(DATA / "weights" / "adm2_per_source")
+        restrict = None
+    else:
+        from segment_weights import fetch_weights
+
+        per_destination = fetch_weights("gadm20-adm1-per-destination")
+        per_source = fetch_weights("gadm20-adm1-per-source")
+        adm2_per_source = fetch_weights("gadm20-adm2-per-source")
+        # The fetched weights are global; the data is one country. The
+        # restriction declares that subset explicitly, and the coverage
+        # checks stay strict within it.
+        first_leaf = DATA / "montecarlo" / BATCHES[0] / LEVELS / "mortality_damages_IR_batch.nc4"
+        col = read_netcdf_leaf(
+            first_leaf, variables=["total_damages"],
+            region_dim="region", region_col="hierid",
+        )
+        restrict = {(h,) for h in col["hierid"].unique()}
 
     # 1. Physical rate, intensive, per_destination, pop weighted mean.
     # The raw files store region labels as a 'regions' variable on an
@@ -89,6 +114,7 @@ def main() -> int:
             weight="pop",
             value_col="rebased",
             data_version=DATA_VERSION,
+            restrict_to_sources=restrict,
         )
         rate_frames.append(applied.frame.assign(batch=batch))
     rates = pd.concat(rate_frames, ignore_index=True)
@@ -117,6 +143,7 @@ def main() -> int:
             weight="pop",
             value_col="total_damages",
             data_version=DATA_VERSION,
+            restrict_to_sources=restrict,
         )
         damage_frames.append(applied.frame.assign(batch=batch))
     damages = pd.concat(damage_frames, ignore_index=True)
@@ -147,10 +174,12 @@ def main() -> int:
         weight="pop",
         value_col="total_damages",
         data_version=DATA_VERSION,
+        restrict_to_sources=restrict,
     )
     print("Monetized damages at ADM2 (1,065 municipalities from the same")
     print("500 impact regions; same kind, same checks, finer weights):")
     w = adm2_per_source.frame
+    w = w[w["hierid"].isin(data_b0["hierid"].unique())]
     widest = w.groupby("hierid").size().idxmax()
     split = w[w["hierid"] == widest][["ISO", "ID_1", "ID_2", "popwt"]]
     print(f"  region {widest} splits across {len(split)} municipalities;")

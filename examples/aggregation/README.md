@@ -7,39 +7,40 @@ hundreds, one climate model out of dozens.
 
 The example aggregates Monte Carlo output from impact regions to
 Colombian departments (ADM1) and municipalities (ADM2), both variable
-kinds and both weight directions, using only committed data (about
-1.6 MB).
+kinds and both weight directions. The Monte Carlo extract is committed
+(about 1.6 MB); the weights are fetched from the published Zenodo
+records by name, which is what any real use looks like.
 
 ```
-python examples/colombia/run_colombia_example.py
+python examples/aggregation/run_example.py            # fetches weights
+python examples/aggregation/run_example.py --offline  # committed slices
 ```
 
-Requirements: the package with the `[netcdf]` extra.
+Requirements: the package with the `[netcdf]` extra, and network access
+for the default mode. Both modes produce identical output.
 
 ## The code, in brief
 
 ```python
-from segment_weights.apply import WeightsArtifact, apply_weights
+from segment_weights import fetch_weights, apply_weights
 from segment_weights.netcdf_io import read_netcdf_leaf
-from segment_weights.stats import summarize_samples
 
-artifact = WeightsArtifact.load("examples/colombia/data/weights/adm1_per_source")
+weights = fetch_weights("gadm20-adm1-per-source")
 data = read_netcdf_leaf(leaf_path, variables=["total_damages"],
                         region_dim="region", region_col="hierid",
                         kind="extensive")
-result = apply_weights(artifact, data, kind="extensive", weight="pop",
+result = apply_weights(weights, data, kind="extensive", weight="pop",
                        value_col="total_damages",
-                       data_version="world-combo-201710")
+                       data_version="world-combo-201710",
+                       restrict_to_sources={(h,) for h in data["hierid"].unique()})
 ```
 
-The example loads committed Colombia slices so it runs offline. Outside
-it, a real user fetches the published global weight file instead and
-nothing else changes:
-
-```python
-from segment_weights import fetch_weights
-artifact = fetch_weights("gadm20-adm1-per-source")
-```
+The fetched weights are global and the data covers one country, so the
+application declares the subset with `restrict_to_sources`; the
+coverage checks stay strict within it. With `--offline` the example
+loads committed Colombia slices instead (`WeightsArtifact.load` on the
+directories under `data/weights/`) and needs no restriction, since the
+slices already match the data.
 
 The `data_version` string names the impact region geometry vintage the
 data was built on; `apply_weights` refuses a value that differs from
@@ -63,9 +64,9 @@ has two different variables in two different trees:
   is a share of each impact region's total, and the shares must add
   back up.
 
-`weights/` carries the Colombia slice of the global weight files at both
-levels and in both directions. Each manifest records that it is a
-subset and carries a checksum of the sliced file.
+`weights/` carries the Colombia slice of the global weight files at
+both levels and in both directions, used by `--offline`. Each manifest
+records that it is a subset and carries a checksum of the sliced file.
 
 ## What it prints
 
@@ -127,7 +128,7 @@ between the smallest and largest rate among its own impact regions.
 
 The quantiles are printed to show where statistics happen, which is
 last, after spatial aggregation and the window mean. Two draws cannot
-support a 5th or 95th percentile; a production run pools hundreds.
+support a 5th or 95th percentile; a full run pools hundreds.
 
 ## Everything else is the same moves
 

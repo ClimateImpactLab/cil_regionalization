@@ -47,6 +47,11 @@ class Manifest:
     python_version: str
     # "grid" or "polygons": which geometry supplied the source units.
     source_mode: str = "grid"
+    # The config's project name and description, carried verbatim so a
+    # weight file states what it is for in its own words (including any
+    # compatibility statement the config author wrote).
+    project_name: str | None = None
+    project_description: str | None = None
     # Vintage labels from the config: regions.version (the target side,
     # required in polygon mode) and source.version (the polygon source
     # side). None for grid runs that do not declare them.
@@ -145,6 +150,8 @@ def build_manifest(cfg: Config) -> Manifest:
         config_hash=hash_config(cfg),
         backend=cfg.backend.kind,
         coverage=cfg.backend.coverage,
+        project_name=cfg.project.name,
+        project_description=cfg.project.description,
         lon_convention=cfg.grid.lon_convention if cfg.grid is not None else None,
         grid_mode=cfg.grid.mode if cfg.grid is not None else None,
         grid_resolution=cfg.grid.resolution if cfg.grid is not None else None,

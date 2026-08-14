@@ -1,6 +1,6 @@
 # Cluster environment
 
-This directory is for running the production pipelines on the
+This directory is for running the full pipeline runs on the
 University of Chicago RCC cluster (midway3). It is not the normal way
 to install this package; that is `pip install`, described in the main
 README. Most readers never need anything here.

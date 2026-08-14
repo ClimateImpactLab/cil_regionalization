@@ -5,7 +5,7 @@
 # under rcp85; a shared cross-product declaration would (correctly)
 # refuse to run. 32 GCMs x 15 batches x 2 iams = 960 leaves.
 #
-# Windows and statistics are shared by every production run: three
+# Windows and statistics are shared by every full run: three
 # windows matching the richest shipped 2025 output, and the shipped
 # eight statistics (mean plus q05, q17, q25, q50, q75, q83, q95) for
 # comparability with those files.
@@ -15,7 +15,7 @@ dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregat
 weight = "pop"
 
 [tree]
-# Location of the input damages tree at the time of the production
+# Location of the input damages tree at the time of the full
 # runs. This is input data the caller supplies; update the path if the
 # tree moves.
 root = "/project/cil/home_dirs/scadavidsanchez/repos/impact-map-data/mortality/current/data/montecarlo_original"
