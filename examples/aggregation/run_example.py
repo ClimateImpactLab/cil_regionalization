@@ -1,23 +1,23 @@
 """Colombia end to end: both variable kinds, both weight directions.
 
-The committed data is a small illustrative extract for demonstrating
-the aggregation mechanics. It is not a published dataset, and the
-numbers it produces are not results: two Monte Carlo draws out of
-hundreds, one climate model out of dozens.
+The committed data is a small sample for demonstrating the aggregation
+mechanics. It is not a published dataset, and the numbers it produces
+are not results: one Monte Carlo batch out of fifteen.
 
-The Monte Carlo extract is committed under examples/aggregation/data
-(about 2.5 MB): Colombia's 500 impact regions, its 32 ADM1 departments
-(this GADM 2.0 version predates the 33rd), and its 1,065 ADM2
-municipalities. Two batches, one climate model (GFDL-ESM2G), rcp85,
-iam low, SSP3, in the canonical batch/rcp/gcm/iam/ssp tree grammar.
-Needs the base package plus the [netcdf] extra.
+Everything it reads is committed under examples/aggregation/data (about
+23 MB): Colombia's 500 impact regions, its 32 ADM1 departments (this
+GADM 2.0 version predates the 33rd), and its 1,065 ADM2
+municipalities. The monetized damages sample is one batch across all
+33 climate models (rcp85, iam low, SSP3), in the standard
+batch/rcp/gcm/iam/ssp tree grammar. The physical rates sample is
+smaller, two batches of one model (GFDL-ESM2G), because the tree
+holding the rates is still being regenerated. Needs the base package
+plus the [netcdf] extra. It reads committed weight slices so it works
+offline; outside this example the one difference is fetching the
+published global weight file instead:
 
-The weights are fetched from the published Zenodo records by name,
-which is what any real use looks like; the application is restricted
-to the Colombian regions present in the data, the honest way to apply
-a global weight file to a country subset. With --offline the committed
-Colombia slices are used instead and no network is touched; useful
-where the records are unreachable.
+    import cil_regionalization as cilreg
+    weights = cilreg.fetch_weights("gadm20-adm1-per-destination")
 
 Two variables for the same country, different in kind:
 
@@ -31,8 +31,7 @@ Two variables for the same country, different in kind:
 ADM1 shows both kinds; ADM2 shows the allocation again where it does
 visible work, because in Colombia an impact region is a grouping of
 municipalities and one region's total spreads across as many as 90 of
-them. Statistics pool the two batches; two draws cannot support
-quantiles, so those lines show the mechanics, not results.
+them. Statistics pool the 33 climate models, each aggregated first.
 """
 from __future__ import annotations
 
@@ -54,8 +53,9 @@ DATA = _HERE / "data"
 # refuses data whose version differs from the one the weight file
 # records (source_version on the loaded weights shows it).
 DATA_VERSION = "world-combo-201710"
-BATCHES = ("batch0", "batch1")
-LEVELS = "rcp85/GFDL-ESM2G/low/SSP3"
+RATE_BATCHES = ("batch0", "batch1")
+RATE_LEVELS = "rcp85/GFDL-ESM2G/low/SSP3"
+DAMAGES_BATCH = DATA / "montecarlo" / "batch0" / "rcp85"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,9 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    print("The tree this example reads:")
-    for f in sorted(DATA.rglob("*.nc4")):
-        print(f"  {f.relative_to(DATA)}")
+    gcms = sorted(p.name for p in DAMAGES_BATCH.iterdir() if p.is_dir())
+    print("The tree this example reads: one damages leaf per climate model,")
+    print(f"  montecarlo/batch0/rcp85/<gcm>/low/SSP3/ for {len(gcms)} models,")
+    print("plus the physical rate leaves,")
+    for b in RATE_BATCHES:
+        print(f"  montecarlo/{b}/{RATE_LEVELS}/Agespec_interaction_response-combined.nc4")
     print()
 
     if args.offline:
@@ -86,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         # The fetched weights are global; the data is one country. The
         # restriction declares that subset explicitly, and the coverage
         # checks stay strict within it.
-        first_leaf = DATA / "montecarlo" / BATCHES[0] / LEVELS / "mortality_damages_IR_batch.nc4"
+        first_leaf = DAMAGES_BATCH / gcms[0] / "low" / "SSP3" / "mortality_damages_IR_batch.nc4"
         col = read_netcdf_leaf(
             first_leaf, variables=["total_damages"],
             region_dim="region", region_col="hierid",
@@ -97,8 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     # The raw files store region labels as a 'regions' variable on an
     # unlabeled dimension; the caller promotes them to the key column.
     rate_frames = []
-    for batch in BATCHES:
-        leaf = DATA / "montecarlo" / batch / LEVELS / "Agespec_interaction_response-combined.nc4"
+    for batch in RATE_BATCHES:
+        leaf = DATA / "montecarlo" / batch / RATE_LEVELS / "Agespec_interaction_response-combined.nc4"
         raw = read_netcdf_leaf(
             leaf,
             variables=["rebased", "regions"],
@@ -124,11 +127,12 @@ def main(argv: list[str] | None = None) -> int:
     print(show.sort_values("rebased").head(5).to_string(index=False))
     print(f"  ... {show['rebased'].size} departments, both batches computed\n")
 
-    # 2. Monetized damages, extensive, per_source, allocation with mass
-    # balance proven per batch inside apply_weights.
+    # 2. Monetized damages, extensive, per_source: aggregate every
+    # climate model's draw, then use one model for the single-draw
+    # printouts below.
     damage_frames = []
-    for batch in BATCHES:
-        leaf = DATA / "montecarlo" / batch / LEVELS / "mortality_damages_IR_batch.nc4"
+    for gcm in gcms:
+        leaf = DAMAGES_BATCH / gcm / "low" / "SSP3" / "mortality_damages_IR_batch.nc4"
         data = read_netcdf_leaf(
             leaf,
             variables=["total_damages"],
@@ -145,31 +149,32 @@ def main(argv: list[str] | None = None) -> int:
             data_version=DATA_VERSION,
             restrict_to_sources=restrict,
         )
-        damage_frames.append(applied.frame.assign(batch=batch))
+        damage_frames.append(applied.frame.assign(gcm=gcm))
     damages = pd.concat(damage_frames, ignore_index=True)
+    one_draw = damages[damages["gcm"] == "GFDL-ESM2G"]
     print("Monetized damages at ADM1 (2019 USD, extensive, allocated shares")
     print("sum to each impact region's total; mass balance checked):")
-    show = damages[(damages["year"] == 2099) & (damages["batch"] == "batch0")]
+    show = one_draw[one_draw["year"] == 2099]
     print(show.sort_values("total_damages", ascending=False).head(5).to_string(index=False))
     total_ir = read_netcdf_leaf(
-        DATA / "montecarlo" / "batch0" / LEVELS / "mortality_damages_IR_batch.nc4",
+        DAMAGES_BATCH / "GFDL-ESM2G" / "low" / "SSP3" / "mortality_damages_IR_batch.nc4",
         variables=["total_damages"], region_dim="region", region_col="hierid",
     ).query("year == 2099")["total_damages"].sum()
     print(f"  sum over departments {show['total_damages'].sum():.6e} "
           f"= sum over impact regions {total_ir:.6e}\n")
 
     # 3. The same damages at ADM2, where the split is visible: in this
-    # version a Colombian impact region is a grouping of municipalities,
-    # so one region's total spreads across up to 90 of them by
-    # population share, and the shares sum to one per region.
-    data_b0 = read_netcdf_leaf(
-        DATA / "montecarlo" / "batch0" / LEVELS / "mortality_damages_IR_batch.nc4",
+    # geometry version a Colombian impact region is a grouping of
+    # municipalities, so one region's total spreads across up to 90 of
+    # them by population share, and the shares sum to one per region.
+    data_one = read_netcdf_leaf(
+        DAMAGES_BATCH / "GFDL-ESM2G" / "low" / "SSP3" / "mortality_damages_IR_batch.nc4",
         variables=["total_damages"], region_dim="region", region_col="hierid",
         kind="extensive",
     )
     adm2 = apply_weights(
         adm2_per_source,
-        data_b0,
+        data_one,
         kind="extensive",
         weight="pop",
         value_col="total_damages",
@@ -179,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     print("Monetized damages at ADM2 (1,065 municipalities from the same")
     print("500 impact regions; same kind, same checks, finer weights):")
     w = adm2_per_source.frame
-    w = w[w["hierid"].isin(data_b0["hierid"].unique())]
+    w = w[w["hierid"].isin(data_one["hierid"].unique())]
     widest = w.groupby("hierid").size().idxmax()
     split = w[w["hierid"] == widest][["ISO", "ID_1", "ID_2", "popwt"]]
     print(f"  region {widest} splits across {len(split)} municipalities;")
@@ -192,18 +197,17 @@ def main(argv: list[str] | None = None) -> int:
 
     # 4. Statistics over the Monte Carlo sample. Spatial aggregation
     # happened first, above; the window mean and pooled statistics come
-    # last. Two batches are far too few for meaningful quantiles; the
-    # numbers below demonstrate the mechanics only.
+    # last. The 33 climate models are the draws.
     stats = summarize_samples(
         damages,
-        sample_dims=["batch"],
+        sample_dims=["gcm"],
         time_col="year",
         window=(2080, 2099),
         value_col="total_damages",
         quantiles=[0.05, 0.5, 0.95],
     )
-    print("Statistics over the two batches (window mean 2080-2099, then")
-    print("pooled; with 2 draws these quantiles are mechanics, not results):")
+    print("Statistics over the 33 climate models (window mean 2080-2099,")
+    print("then pooled):")
     one = stats[stats["ID_1"] == stats["ID_1"].iloc[0]]
     print(one.to_string(index=False))
     return 0

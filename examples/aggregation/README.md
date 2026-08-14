@@ -3,25 +3,30 @@
 This example aggregates a small sample of real Monte Carlo mortality
 projections for Colombia, from impact regions to departments (ADM1)
 and municipalities (ADM2), covering both variable kinds and both
-weight directions. It is a sample, not the complete output: two Monte
-Carlo draws out of hundreds, one climate model out of dozens, so the
-numbers demonstrate the mechanics and are not results.
+weight directions. It is a sample, not the complete output: one Monte
+Carlo batch out of fifteen, across all 33 climate models (rcp85,
+SSP3), so the numbers demonstrate the mechanics and are not results.
 
-The Monte Carlo sample is committed here (about 2.5 MB). The weights
+The Monte Carlo sample is committed here (about 23 MB). The weights
 come from the published Zenodo records, fetched by name, which is what
 any real use looks like.
 
 Start with the notebook, `aggregation_colombia.ipynb`. It fetches the
-weights, aggregates one draw, maps the result by department in dollars
-and as percent of GDP (the `ratio` kind, using the GDP embedded in the
-same projection files), and pools statistics, with all output readable
-inline. Beyond the `[netcdf]`
+weights, aggregates one draw and maps it, shows percent of GDP (the
+`ratio` kind, using the GDP embedded in the same projection files),
+pools statistics across the 33 climate models, maps a pooled quantile
+next to the single draw, plots the spread of draws behind the
+quantiles, and shows what changes at country and municipality level.
+All output is readable inline. Beyond the `[netcdf]`
 extra it needs `matplotlib` for the map (`pip install matplotlib`);
 there is no separate extra for that, since it is the only plotting use
 in the package.
 
-The script covers the same case plus ADM2 and rates, from the command
-line:
+The script runs the physical rates (the intensive kind, which the
+notebook only describes) plus the damages at both levels, from the
+command line. Its rates sample is two batches of one model
+(GFDL-ESM2G), because the tree holding the rates is still being
+regenerated:
 
 ```
 python examples/aggregation/run_example.py            # fetches weights
@@ -65,10 +70,10 @@ that is how a mismatched pairing of weights and data gets caught.
 
 Colombia has 500 impact regions, 32 ADM1 departments in this GADM 2.0
 version (the country later gained a 33rd), and 1,065 ADM2
-municipalities. The Monte Carlo sample is two batches for one climate
-model (GFDL-ESM2G, rcp85, iam low, SSP3), in the standard tree
-grammar, with two files per leaf directory because the same country
-has two different variables in two different trees:
+municipalities. The damages sample is one batch across all 33 climate
+models (rcp85, iam low, SSP3), one leaf per model, in the standard
+tree grammar. The rates sample is two batches of one model. The two
+variables come from two different trees:
 
 - `Agespec_interaction_response-combined.nc4`: the physical mortality
   rate (`rebased`, deaths per person per year). A rate is intensive:
@@ -85,11 +90,11 @@ records that it is a subset and carries a checksum of the sliced file.
 ## What it prints
 
 ```
-The tree this example reads:
+The tree this example reads: one damages leaf per climate model,
+  montecarlo/batch0/rcp85/<gcm>/low/SSP3/ for 33 models,
+plus the physical rate leaves,
   montecarlo/batch0/rcp85/GFDL-ESM2G/low/SSP3/Agespec_interaction_response-combined.nc4
-  montecarlo/batch0/rcp85/GFDL-ESM2G/low/SSP3/mortality_damages_IR_batch.nc4
   montecarlo/batch1/rcp85/GFDL-ESM2G/low/SSP3/Agespec_interaction_response-combined.nc4
-  montecarlo/batch1/rcp85/GFDL-ESM2G/low/SSP3/mortality_damages_IR_batch.nc4
 
 Physical rate at ADM1 (deaths per person per year, intensive,
 population weighted mean over each department's impact regions):
@@ -103,12 +108,12 @@ COL     7  2099 -0.001107 batch0
 
 Monetized damages at ADM1 (2019 USD, extensive, allocated shares
 sum to each impact region's total; mass balance checked):
-ISO  ID_1  year  total_damages  batch
-COL    15  2099  -3.912271e+07 batch0
-COL    31  2099  -8.851429e+07 batch0
-COL    32  2099  -1.399679e+08 batch0
-COL     1  2099  -1.678937e+08 batch0
-COL    26  2099  -1.982496e+08 batch0
+ISO  ID_1  year  total_damages        gcm
+COL    15  2099  -3.912271e+07 GFDL-ESM2G
+COL    31  2099  -8.851429e+07 GFDL-ESM2G
+COL    32  2099  -1.399679e+08 GFDL-ESM2G
+COL     1  2099  -1.678937e+08 GFDL-ESM2G
+COL    26  2099  -1.982496e+08 GFDL-ESM2G
   sum over departments -1.774214e+11 = sum over impact regions -1.774214e+11
 
 Monetized damages at ADM2 (1,065 municipalities from the same
@@ -122,13 +127,13 @@ COL     6   252 0.034370
   shares sum to 1.000000
   2099 sum over municipalities -1.774214e+11 matches the impact region sum
 
-Statistics over the two batches (window mean 2080-2099, then
-pooled; with 2 draws these quantiles are mechanics, not results):
+Statistics over the 33 climate models (window mean 2080-2099,
+then pooled):
 ISO  ID_1 statistic  total_damages
-COL     1      mean  -4.022969e+07
-COL     1       q05  -1.483635e+08
-COL     1       q50  -4.022969e+07
-COL     1       q95   6.790414e+07
+COL     1      mean   7.524689e+08
+COL     1       q05  -2.574818e+08
+COL     1       q50   1.070259e+08
+COL     1       q95   2.382266e+09
 ```
 
 The ADM2 section is where the weights do visible work. In this version
@@ -141,8 +146,9 @@ nothing, and the check there is that every department value lies
 between the smallest and largest rate among its own impact regions.
 
 The quantiles are printed to show where statistics happen: last, after
-spatial aggregation and the window mean. Two draws cannot support a
-5th or 95th percentile; a full run pools hundreds.
+spatial aggregation and the window mean. With 33 climate models the
+spread is real: this cool model's draw is negative while the 95th
+percentile across models is positive. A full run also pools batches.
 
 ## Other combinations
 

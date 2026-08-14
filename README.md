@@ -118,12 +118,13 @@ plausible wrong numbers.
 ## Worked example
 
 `examples/aggregation/` aggregates a small sample of real Monte Carlo
-mortality projections (not the complete output: two draws, one climate
-model) for Colombia, fetching the published weights by name and
-reading a committed 2.5 MB sample. Start with the notebook,
-`aggregation_colombia.ipynb`: it runs the aggregation, shows percent
-of GDP with the `ratio` kind, and maps the results by department, with
-all output readable inline (the maps need `matplotlib`). The script `run_example.py` covers the same case plus
+mortality projections (not the complete output: one batch of fifteen,
+across all 33 climate models) for Colombia, fetching the published
+weights by name and reading a committed 23 MB sample. Start with the notebook,
+`aggregation_colombia.ipynb`: it maps a single draw and a pooled
+quantile side by side, shows percent of GDP with the `ratio` kind, and
+plots the spread of draws behind the statistics, with all output
+readable inline (the plots need `matplotlib`). The script `run_example.py` covers the same case plus
 municipalities and rates from the command line, and its README shows
 the full printed output.
 
