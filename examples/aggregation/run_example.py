@@ -58,6 +58,13 @@ RATE_LEVELS = "rcp85/GFDL-ESM2G/low/SSP3"
 DAMAGES_BATCH = DATA / "montecarlo" / "batch0" / "rcp85"
 
 
+def _names() -> "pd.DataFrame":
+    """Department names from the committed plotting layer, display only."""
+    return pd.read_parquet(
+        DATA / "col_adm1_plot.parquet", columns=["ISO", "ID_1", "NAME_1"]
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -121,10 +128,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         rate_frames.append(applied.frame.assign(batch=batch))
     rates = pd.concat(rate_frames, ignore_index=True)
+    names = _names()
     print("Physical rate at ADM1 (deaths per person per year, intensive,")
     print("population weighted mean over each department's impact regions):")
     show = rates[(rates["year"] == 2099) & (rates["batch"] == "batch0")]
-    print(show.sort_values("rebased").head(5).to_string(index=False))
+    show = show.merge(names, on=["ISO", "ID_1"])
+    print(show.sort_values("rebased").head(5)[["NAME_1", "year", "rebased"]].to_string(index=False))
     print(f"  ... {show['rebased'].size} departments, both batches computed\n")
 
     # 2. Monetized damages, extensive, per_source: aggregate every
@@ -154,8 +163,8 @@ def main(argv: list[str] | None = None) -> int:
     one_draw = damages[damages["gcm"] == "GFDL-ESM2G"]
     print("Monetized damages at ADM1 (2019 USD, extensive, allocated shares")
     print("sum to each impact region's total; mass balance checked):")
-    show = one_draw[one_draw["year"] == 2099]
-    print(show.sort_values("total_damages", ascending=False).head(5).to_string(index=False))
+    show = one_draw[one_draw["year"] == 2099].merge(names, on=["ISO", "ID_1"])
+    print(show.sort_values("total_damages", ascending=False).head(5)[["NAME_1", "year", "total_damages", "gcm"]].to_string(index=False))
     total_ir = read_netcdf_leaf(
         DAMAGES_BATCH / "GFDL-ESM2G" / "low" / "SSP3" / "mortality_damages_IR_batch.nc4",
         variables=["total_damages"], region_dim="region", region_col="hierid",
@@ -186,7 +195,9 @@ def main(argv: list[str] | None = None) -> int:
     w = adm2_per_source.frame
     w = w[w["hierid"].isin(data_one["hierid"].unique())]
     widest = w.groupby("hierid").size().idxmax()
-    split = w[w["hierid"] == widest][["ISO", "ID_1", "ID_2", "popwt"]]
+    split = w[w["hierid"] == widest][["ISO", "ID_1", "ID_2", "popwt"]].merge(
+        names, on=["ISO", "ID_1"]
+    )[["NAME_1", "ID_2", "popwt"]]
     print(f"  region {widest} splits across {len(split)} municipalities;")
     print("  its largest population shares:")
     print(split.sort_values("popwt", ascending=False).head(3).to_string(index=False))
@@ -208,8 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     print("Statistics over the 33 climate models (window mean 2080-2099,")
     print("then pooled):")
-    one = stats[stats["ID_1"] == stats["ID_1"].iloc[0]]
-    print(one.to_string(index=False))
+    stats = stats.merge(names, on=["ISO", "ID_1"])
+    one = stats[stats["NAME_1"] == "Antioquia"]
+    print(one[["NAME_1", "statistic", "total_damages"]].to_string(index=False))
     return 0
 
 
