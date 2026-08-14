@@ -18,13 +18,11 @@ keywords = [
 ]
 
 description = """
-The Climate Impact Lab impact region boundaries, vintage world-combo-201710: 24,378 regions covering global land, built by agglomerating administrative units into regions of comparable population for climate impact projection. This is Climate Impact Lab geometry and carries no redistribution restriction.
+The Climate Impact Lab impact region boundaries, vintage world-combo-201710: 24,378 regions covering global land, built by agglomerating administrative units into regions of comparable population.
 
-The shapefile has three components (.shp, .shx, .dbf), zipped. There is no .prj sidecar; coordinates are longitude and latitude on WGS84 (EPSG:4326). The identifying attribute is hierid, an opaque string key. Region ids mix bare ISO3 country codes, dotted hierarchical codes, and R-suffixed clustering remainders; treat them as join keys, not as parseable structure.
+Three things the file does not say itself: there is no .prj, and coordinates are longitude and latitude on WGS84 (EPSG:4326); the identifying attribute is hierid; hierid is an opaque key whose apparent structure varies across regions and should not be parsed.
 
-The Climate Impact Lab aggregation weight records (impact region to GADM administrative units) are derived from this file and reference it: the weight manifests record this file's checksum as their source geometry input. Anyone regenerating weights, mapping results, or building weights against a new target geometry starts from this file.
-
-To use with the cil_regionalization package from the Climate Impact Lab GitHub organisation, unzip and point a generation config's source path at the .shp; the loader sets the coordinate system explicitly. The file is a plain shapefile and can equally be read by any GIS tool.
+Unzip and read like any shapefile. The cil_regionalization package (Climate Impact Lab GitHub organisation) uses it as the source geometry for weight generation.
 """
 
 files = [
@@ -39,11 +37,8 @@ loose = false
 [zip]
 name = "world-combo-201710_impact_regions.zip"
 readme = """
-Climate Impact Lab impact regions, vintage world-combo-201710.
-
-24,378 regions covering global land, used as the source geometry for
-the Climate Impact Lab aggregation weight records. Three shapefile
-components; no .prj is distributed, and coordinates are longitude and
-latitude on WGS84 (EPSG:4326). The identifying attribute is hierid, an
-opaque string key.
+Climate Impact Lab impact regions, vintage world-combo-201710:
+24,378 regions covering global land. No .prj is included; coordinates
+are longitude and latitude on WGS84 (EPSG:4326). The identifying
+attribute is hierid, an opaque key not to be parsed.
 """

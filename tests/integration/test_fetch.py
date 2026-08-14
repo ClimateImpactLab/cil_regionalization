@@ -275,9 +275,16 @@ class TestFailurePaths:
 
 
 class TestRegistry:
-    def test_packaged_registry_ships_no_entries_yet(self, monkeypatch):
+    def test_packaged_registry_ships_published_records(self, monkeypatch):
         monkeypatch.delenv("SEGMENT_WEIGHTS_REGISTRY", raising=False)
-        assert load_registry() == {}
+        entries = load_registry()
+        for name in (
+            "gadm20-adm1-per-source",
+            "gadm20-adm1-per-destination",
+            "gadm20-adm2-per-source",
+            "gadm20-adm2-per-destination",
+        ):
+            assert entries[name].record == "21934155"
 
     def test_local_registry_resolves_name(self, served, tmp_path):
         reg = tmp_path / "registry.toml"

@@ -1,25 +1,25 @@
-# Colombia, end to end
+# Worked example: Colombia
 
-The data in this directory is a small illustrative extract for
-demonstrating the aggregation mechanics. It is not a published dataset,
-and the numbers below are not results: two Monte Carlo draws out of
-hundreds, one climate model out of dozens.
+This example aggregates a small sample of real Monte Carlo mortality
+projections for Colombia, from impact regions to departments (ADM1)
+and municipalities (ADM2), covering both variable kinds and both
+weight directions. It is a sample, not the complete output: two Monte
+Carlo draws out of hundreds, one climate model out of dozens, so the
+numbers demonstrate the mechanics and are not results.
 
-The example aggregates Monte Carlo output from impact regions to
-Colombian departments (ADM1) and municipalities (ADM2), both variable
-kinds and both weight directions. The Monte Carlo extract is committed
-(about 1.6 MB); the weights are fetched from the published Zenodo
-records by name, which is what any real use looks like.
+The Monte Carlo sample is committed here (about 1.6 MB). The weights
+come from the published Zenodo records, fetched by name, which is what
+any real use looks like.
 
 ```
 python examples/aggregation/run_example.py            # fetches weights
 python examples/aggregation/run_example.py --offline  # committed slices
 ```
 
-Requirements: the package with the `[netcdf]` extra, and network access
-for the default mode. Both modes produce identical output.
+You need the package with the `[netcdf]` extra, and network access for
+the default mode. Both modes produce identical output.
 
-## The code, in brief
+## Quick example
 
 ```python
 from segment_weights import fetch_weights, apply_weights
@@ -35,24 +35,24 @@ result = apply_weights(weights, data, kind="extensive", weight="pop",
                        restrict_to_sources={(h,) for h in data["hierid"].unique()})
 ```
 
-The fetched weights are global and the data covers one country, so the
-application declares the subset with `restrict_to_sources`; the
-coverage checks stay strict within it. With `--offline` the example
-loads committed Colombia slices instead (`WeightsArtifact.load` on the
-directories under `data/weights/`) and needs no restriction, since the
-slices already match the data.
+The fetched weights are global and the data covers one country, so
+`restrict_to_sources` declares the subset; the coverage checks stay
+strict within it. With `--offline` the example loads committed
+Colombia slices instead (`WeightsArtifact.load` on the directories
+under `data/weights/`) and needs no restriction, since the slices
+already match the data.
 
-The `data_version` string names the impact region geometry vintage the
-data was built on; `apply_weights` refuses a value that differs from
-the `source_version` the weight file records, which is how a mismatched
-weights and data pairing fails before it produces numbers.
+`data_version` names the impact region geometry vintage the data was
+built on. If it differs from the `source_version` the weight file
+records, `apply_weights` raises an error before producing numbers;
+that is how a mismatched pairing of weights and data gets caught.
 
-## What is in the extract
+## What is in the sample
 
 Colombia has 500 impact regions, 32 ADM1 departments in this GADM 2.0
 vintage (the country later gained a 33rd), and 1,065 ADM2
-municipalities. The Monte Carlo slice is two batches for one climate
-model (GFDL-ESM2G, rcp85, iam low, SSP3), in the canonical tree
+municipalities. The Monte Carlo sample is two batches for one climate
+model (GFDL-ESM2G, rcp85, iam low, SSP3), in the standard tree
 grammar, with two files per leaf directory because the same country
 has two different variables in two different trees:
 
@@ -117,25 +117,24 @@ COL     1       q50  -4.022969e+07
 COL     1       q95   6.790414e+07
 ```
 
-The ADM2 section is where the weights do visible work: in this vintage
+The ADM2 section is where the weights do visible work. In this vintage
 a Colombian impact region is a grouping of municipalities, so one
 region's total spreads across up to 90 of them by population share,
 the shares sum to one, and the municipality totals still add back to
 the region totals. The last line of each damages section is that mass
-balance identity. The rates have no such identity; an average conserves
+balance identity. Rates have no such identity; an average conserves
 nothing, and the check there is that every department value lies
 between the smallest and largest rate among its own impact regions.
 
-The quantiles are printed to show where statistics happen, which is
-last, after spatial aggregation and the window mean. Two draws cannot
-support a 5th or 95th percentile; a full run pools hundreds.
+The quantiles are printed to show where statistics happen: last, after
+spatial aggregation and the window mean. Two draws cannot support a
+5th or 95th percentile; a full run pools hundreds.
 
-## Everything else is the same moves
+## Other combinations
 
-ADM0 is this example with coarser weights; a physical rate at ADM2
-is the intensive move with the `adm2_per_destination` weight file, also
-included in the extract. Switching between rates and dollars is a
-change of `kind` and weight direction, and the library checks the
-pairing, so the wrong combination fails instead of producing a
-plausible wrong number. Those variants are deliberately not built out
-here.
+ADM0 is this example with coarser weights. A physical rate at ADM2 is
+the intensive case with the `adm2_per_destination` weight file, also
+included here. Switching between rates and dollars is a change of
+`kind` and weight direction, and the library checks that pairing, so
+the wrong combination raises an error instead of producing a plausible
+wrong number. Those variants are deliberately not built out.

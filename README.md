@@ -1,14 +1,14 @@
 # climate-and-damages-aggregations
 
-Climate impact results come at impact region level; analyses need
-them at country, state, or district level. This does that step:
-published weight files describe how impact regions overlap
-administrative units, and the library applies them.
+Climate impact results come at impact region level, but most analyses
+need them at country, state, or district level. This package does that
+aggregation step. Published weight files describe how impact regions
+overlap administrative units; the library downloads them, applies them
+to your data, and computes statistics. It can also generate new weight
+files between any two sets of geometries when the published ones do
+not cover your case.
 
-It also generates new weight files between any two sets of geometries,
-for cases the published ones do not cover.
-
-## The short version
+## Quick example
 
 ```python
 from segment_weights import fetch_weights, apply_weights, summarize_samples
@@ -26,22 +26,66 @@ stats = summarize_samples(
 )
 ```
 
-`my_draws` is a long table: one row per impact region and year (and
-batch, model, whatever else), with the region id in a `hierid` column.
-`fetch_weights` downloads the weight file from its Zenodo record,
-checks it against the checksum recorded when it was generated, caches
-it, and hands it back ready to use. The other two lines aggregate and
-then summarize.
+`my_draws` is a long table: one row per impact region and year (plus
+batch, model, and whatever other columns your sample has), with the
+region id in a `hierid` column. `fetch_weights` downloads the weight
+file from its Zenodo record, checks it against the checksum recorded
+when it was generated, caches it under `~/.cache/segment_weights`, and
+returns it ready to use. The other two calls aggregate and then
+summarize.
 
-The same flow works from the command line: `segweights fetch <name>`
+The same works from the command line: `segweights fetch <name>`
 downloads and prints the cached path, `segweights cache list` and
 `segweights cache clear` manage the cache, and `segweights pipeline
 <config.toml>` runs a whole Monte Carlo tree from one config file.
 
-## Which weight file, which kind
+## How it works
 
-One question decides the pairing: does adding the variable across
-regions produce a meaningful total?
+![The pipeline: geometries and rasters go into weight generation,
+which produces weight files; weight files plus impact region draws go
+through application, then statistics, then results.](imgs/pipeline.svg)
+
+The top lane happens once per pair of geometries: intersect the
+administrative boundaries, the impact regions, and a population
+raster, and record what share of each intersection carries. The result
+is a weights parquet plus a manifest that says exactly what produced
+it, published on Zenodo. The bottom lane is what you do day to day:
+fetch the weight file, apply it to your Monte Carlo draws, compute
+statistics at the end.
+
+Both aggregation operations are the same multiply and add; what
+differs is which way the weights are normalized. For a total (dollars,
+deaths), each region's value is split between the units it touches,
+and the pieces must add back up:
+
+    value(u) = sum over r of w(r, u) * value(r),
+    where the w(r, u) for one region r sum to 1
+
+For an average (a death rate, a temperature), each unit's value is the
+population weighted mean over the regions inside it:
+
+    value(u) = sum over r of w(r, u) * value(r),
+    where the w(r, u) for one unit u sum to 1
+
+Order matters for quantiles, because quantiles do not pass through
+sums: the 95th percentile of a sum is not the sum of 95th percentiles.
+Adding up per-region quantiles assumes every region has its worst draw
+at the same time, which overstates the tails. So the pipeline
+aggregates each Monte Carlo draw separately and takes quantiles only
+at the end, and the statistics stage rejects input that already
+contains quantiles.
+
+To use published weights you provide three things: your draws in the
+long form above, the `kind` of your variable, and `data_version`, the
+impact region vintage your data was built on. If the vintage does not
+match what the weight file records, `apply_weights` raises an error
+before producing any numbers, because weights and data built on
+different geometries silently misallocate.
+
+## Choosing the right type of weights
+
+Ask one question: does adding your variable across regions produce a
+meaningful total?
 
 Dollars, deaths, people, tons of crops: yes. Those are totals, and a
 region's total gets split between the administrative units it touches.
@@ -58,31 +102,30 @@ unit's value is the average over the regions inside it. Use a
 | Rates, temperatures, shares | `...-per-destination` | `intensive` | An average is taken over the regions in each unit |
 | A ratio needed at the target level, like percent of GDP | `...-per-source` | `ratio` | Sum the numerator and denominator separately, divide after |
 
-The library checks the declared `kind` against the weight file's recorded
-direction and refuses a mismatch, rather than producing a plausible
-wrong number.
+The two directions exist because a weight answers one of two different
+questions. When an impact region straddles two departments, either you
+are splitting that region's total between them, so its shares must sum
+to one across the departments, or you are averaging over the regions
+that make up one department, so the shares must sum to one within the
+department. Same intersections, different normalization, and a file
+built one way cannot do the other job. The library checks the `kind`
+you declare against the direction the weight file records and raises
+an error on a mismatch, since getting this wrong by hand produces
+plausible wrong numbers.
 
-The two directions exist because a weight has to answer one of two
-different questions. When an impact region straddles two departments,
-either the region's total is being split between them, in which case
-its shares must sum to one across the departments, or department
-values are being averaged over the regions inside them, in which case
-the shares must sum to one within each department. Same intersections,
-different normalization, and a file built one way cannot serve the
-other job.
+## Worked example
 
-## A complete worked example
-
-`examples/aggregation/` aggregates real Monte Carlo output for Colombia
-to departments and municipalities, both variable kinds and both
-directions, fetching the published weights by name and reading a small
-committed Monte Carlo extract (about 1.6 MB). Its README shows the
-printed output, so what comes out is readable without running it.
-Start there.
+`examples/aggregation/` aggregates a small sample of real Monte Carlo
+mortality projections (not the complete output: two draws, one climate
+model) for Colombia, to departments and municipalities, covering both
+variable kinds and both weight directions. It fetches the published
+weights by name and reads a committed 1.6 MB sample, so it runs in
+seconds. Its README shows the full printed output, so you can see what
+comes out without running anything. Start there.
 
 ## Installation
 
-Install straight from GitHub:
+Straight from GitHub:
 
 ```
 pip install "git+https://github.com/ClimateImpactLab/REPOSITORY.git"
@@ -97,18 +140,19 @@ pip install .                # library and CLI
 pip install '.[netcdf]'      # also read NetCDF Monte Carlo trees
 ```
 
-or `uv pip install .` in a uv environment. The geospatial stack
-(geopandas, shapely, rasterio, exactextract) installs with it; all of
-these ship wheels on Linux and macOS. Add `[netcdf]` to read NetCDF
-Monte Carlo trees, which the full mortality and labor trees are.
-`[bigquery]` adds the BigQuery generation backend, `[dev]` adds pytest.
-Python 3.10 or newer.
+`uv pip install .` works the same way in a uv environment. The
+geospatial stack (geopandas, shapely, rasterio, exactextract) installs
+with it; all of these ship wheels on Linux and macOS. Add `[netcdf]`
+to read NetCDF Monte Carlo trees, which the full mortality and labor
+trees are. `[bigquery]` adds the BigQuery generation backend, `[dev]`
+adds pytest. Python 3.10 or newer.
 
 The `envs/` directory and `examples/montecarlo/runs/` exist to
-reproduce the runs behind the published results on the University of Chicago RCC cluster;
-they are not part of installing or using the package.
+reproduce the runs behind the published results on the University of
+Chicago RCC cluster; they are not part of installing or using the
+package.
 
-## Generating weights
+## Generating new weights
 
 A TOML config names the target geometry, the source geometry or grid,
 the weighting rasters, and the normalization direction. `segweights
@@ -121,27 +165,23 @@ full generation runs, live under `examples/`.
 Weight files built on different target vintages are not
 interchangeable. GADM 2.0 and GADM 4.1 have different unit universes
 and different keys, and results built on one cannot be compared with
-results built on the other; each vintage is published as its own
+results built on the other. Each vintage is published as its own
 record, and every manifest states which vintage it was built against.
 
 The published weights were built against two GADM vintages, recorded
 in every manifest by their vintage labels: GADM 2.0 (label
-`gadm-2.0-impactmap-copy-2025`; a processed copy of the combined GADM
-2.0 shapefile) and GADM 4.1 (label `gadm-4.10-impactmap-copy-2022`;
-the gadm_410.gpkg GeoPackage as distributed by GADM). Anyone can
-obtain the same versions from GADM directly.
+`gadm-2.0-impactmap-copy-2025`, a processed copy of the combined GADM
+2.0 shapefile) and GADM 4.1 (label `gadm-4.10-impactmap-copy-2022`,
+the gadm_410.gpkg GeoPackage as distributed by GADM). You can obtain
+the same versions from GADM directly. The dissolved target layers are
+large (840 MB for GADM 2.0, about 2 GB for GADM 4.1) and are not
+distributed, since GADM restricts redistribution; regenerate them with
+the dissolve scripts under `examples/gadm20/` and `examples/gadm41/`.
+The targets manifest records the source file's checksum, so you can
+confirm a regenerated set started from the same input.
 
-The dissolved target layers themselves are large (840 MB for GADM 2.0,
-about 2 GB for GADM 4.1) and are not distributed, since GADM restricts
-redistribution. Anyone who needs them regenerates them with the
-dissolve scripts under `examples/gadm20/` and `examples/gadm41/`; the
-targets manifest records the source file's checksum, so a regenerated
-set can be confirmed to start from the same input.
+## More detail
 
-## Where the detail lives
-
-`docs/how-it-works.md` is one page: the pipeline as a diagram, the
-mathematics in three formulas, and what a caller supplies.
 `fetch_weights`, `apply_weights`, `summarize_samples`,
 `WeightsArtifact`, and `load_config` are the supported API, re-exported
-at the package root; everything else is internal and may change.
+at the package root. Everything else is internal and may change.

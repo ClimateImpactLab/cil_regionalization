@@ -19,17 +19,13 @@ keywords = [
 ]
 
 description = """
-Weights for aggregating climate impact results from Climate Impact Lab impact regions to GADM 2.0 administrative units, at ADM1 (state or province) and ADM2 (district) level.
+Weights for aggregating Climate Impact Lab impact region results to GADM 2.0 administrative units, at ADM1 (state or province) and ADM2 (district) level.
 
-An impact region often straddles more than one administrative unit. These files record how each region's area and population divide across the units it touches, so that region-level results can be aggregated honestly. Each level comes in two forms, because a weight answers one of two different questions. The per_source files split a region's total between the units it touches, and the shares sum to one across each region; use them for extensive quantities, things whose sum is meaningful, like dollars, deaths, or people. The per_destination files average over the regions inside each unit, and the shares sum to one within each unit; use them for intensive quantities, things you average, like rates or temperatures. A file built one way cannot serve the other job, and the accompanying software checks the pairing.
+Each level comes in two directions, and the choice matters. The per_source files split a region's total between the units it touches (shares sum to one per region); use them for totals like dollars or deaths. The per_destination files average over the regions inside each unit (shares sum to one per unit); use them for averages like rates or temperatures. One direction cannot do the other's job, and weights built on other GADM vintages are not comparable with these.
 
-Each artifact is a parquet table plus a manifest. The manifest records the geometry vintages, the column roles, the normalization direction, a SHA256 checksum of the parquet, and the full provenance of the generation run, including two recorded editorial decisions: two duplicate unnamed fragments in Sverdlovsk oblast were excluded, and intersection slivers under one square metre (largest share of any region: 8e-9) were dropped.
+Each artifact is a parquet table plus a manifest carrying provenance and a SHA256 checksum of the parquet. Source geometry: world-combo-201710, 24,378 impact regions. Target: GADM 2.0, vintage label gadm-2.0-impactmap-copy-2025, population weights from GPW v4r10 (2015).
 
-Source geometry: the world-combo-201710 impact region set, 24,378 regions. Target geometry: GADM 2.0 (vintage label gadm-2.0-impactmap-copy-2025), 253 countries, 3,428 ADM1 units, 42,726 ADM2 units. Population weights are built from GPW v4r10 (2015, 30 arc second); area weights are geodesic on the WGS84 ellipsoid.
-
-This record covers GADM 2.0 specifically. Weights for other target vintages, such as GADM 4.1, are published as separate records, because the unit universes and keys differ and outputs built on different vintages cannot be compared. Results reproduce Climate Impact Lab deliverables built on the GADM 2.0 universe.
-
-To use: install the cil_regionalization package from the Climate Impact Lab GitHub organisation, then fetch_weights("gadm20-adm1-per-source") (or the other three names) downloads, verifies against the manifest checksum, caches, and returns the weights ready for apply_weights. The files are plain parquet and JSON and can equally be read by any tool.
+With the cil_regionalization package (Climate Impact Lab GitHub organisation): fetch_weights("gadm20-adm1-per-source"), and likewise for the other three names.
 """
 
 # Registry name to file stem; also defines the expected staged files.
@@ -43,31 +39,19 @@ gadm20-adm2-per-destination = "ir_adm2_per_destination"
 [zip]
 name = "gadm20_aggregation_weights.zip"
 readme = """
-Impact region to GADM 2.0 administrative unit aggregation weights.
+Impact region to GADM 2.0 aggregation weights. Each folder holds one
+weight file pair: weights.parquet and weights.manifest.json (provenance
+plus a SHA256 of the parquet). The folder name is the name the
+cil_regionalization package fetches it by.
 
-Each folder is one weight file pair: weights.parquet (the weights) and
-weights.manifest.json (provenance, column roles, and a SHA256 checksum
-of the parquet). The folder name is also the name the segment_weights
-package fetches it by.
-
-Which to use: the per_source folders split an impact region's total
-between the administrative units it touches; use them for quantities
-whose sum is meaningful (dollars, deaths, people). The per_destination
-folders average over the regions inside each unit; use them for
-quantities you average (rates, temperatures). The two are not
-interchangeable.
-
-adm1 is state or province level (3,428 units), adm2 is district level
-(42,726 units), on GADM 2.0. Weights built on other GADM vintages are
-separate records and cannot be compared with these.
-
-Built by the Climate Impact Lab cil_regionalization package, which
-also applies them: load a folder with
-WeightsArtifact.load(folder) or fetch by name with fetch_weights.
+per_source folders split a region's total between the units it touches:
+use for totals (dollars, deaths). per_destination folders average over
+the regions inside each unit: use for averages (rates, temperatures).
+adm1 is state or province level, adm2 is district level, on GADM 2.0.
 """
 
 # Fill in after the impact region shapefile record exists, then
 # republish metadata (new version or edit in the browser).
 [[related_identifiers]]
-identifier = "REPLACE-WITH-IR-SHAPEFILE-DOI"
+identifier = "10.5281/zenodo.21934131"
 relation = "isDerivedFrom"
