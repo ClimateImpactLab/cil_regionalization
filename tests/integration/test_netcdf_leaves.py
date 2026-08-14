@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from segment_weights.apply import WeightsArtifact, apply_weights
-from segment_weights.schema import OutputSchema, SourceUnits
+from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.schema import OutputSchema, SourceUnits
 
 SOURCE_VERSION = "units-v1"
 
@@ -73,7 +73,7 @@ def _write_netcdf(
 class TestReaderRoundTrip:
     def test_netcdf_equals_parquet_by_value(self, tmp_path):
         pytest.importorskip("xarray")
-        from segment_weights.netcdf_io import read_netcdf_leaf
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
 
         frame = _leaf_frame()
         nc = tmp_path / "leaf.nc4"
@@ -104,7 +104,7 @@ class TestReaderRoundTrip:
 
     def test_region_dim_name_is_configurable(self, tmp_path):
         pytest.importorskip("xarray")
-        from segment_weights.netcdf_io import read_netcdf_leaf
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
 
         nc = tmp_path / "leaf.nc4"
         _write_netcdf(
@@ -124,7 +124,7 @@ class TestReaderRoundTrip:
         artifact's order; no reordering or reindexing happens in the
         reader, and the keyed join makes the result identical anyway."""
         pytest.importorskip("xarray")
-        from segment_weights.netcdf_io import read_netcdf_leaf
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
 
         frame = _leaf_frame()
         forward = tmp_path / "forward.nc4"
@@ -152,7 +152,7 @@ class TestReaderRoundTrip:
 
     def test_nan_values_pass_through_unfilled(self, tmp_path):
         pytest.importorskip("xarray")
-        from segment_weights.netcdf_io import read_netcdf_leaf
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
 
         frame = _leaf_frame()
         frame.loc[
@@ -168,7 +168,7 @@ class TestReaderRoundTrip:
 
     def test_unknown_variable_names_available(self, tmp_path):
         pytest.importorskip("xarray")
-        from segment_weights.netcdf_io import read_netcdf_leaf
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
 
         nc = tmp_path / "leaf.nc4"
         _write_netcdf(nc, _leaf_frame(), region_dim="unit_id")
@@ -182,7 +182,7 @@ class TestReaderRoundTrip:
 
     def test_unknown_region_dim_names_dimensions(self, tmp_path):
         pytest.importorskip("xarray")
-        from segment_weights.netcdf_io import read_netcdf_leaf
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
 
         nc = tmp_path / "leaf.nc4"
         _write_netcdf(nc, _leaf_frame(), region_dim="unit_id")
@@ -197,10 +197,10 @@ class TestReaderRoundTrip:
 
 class TestMissingDependency:
     def test_actionable_message_without_xarray(self, monkeypatch, tmp_path):
-        from segment_weights import netcdf_io
+        from cil_regionalization import netcdf_io
 
         monkeypatch.setitem(sys.modules, "xarray", None)
-        with pytest.raises(ImportError, match=r"segment_weights\[netcdf\]"):
+        with pytest.raises(ImportError, match=r"cil_regionalization\[netcdf\]"):
             netcdf_io.read_netcdf_leaf(
                 tmp_path / "leaf.nc4",
                 variables=["value"],
@@ -211,7 +211,7 @@ class TestMissingDependency:
 
 class TestPipelineConfigValidation:
     def test_netcdf_requires_region_dim(self):
-        from segment_weights.pipelines.montecarlo import DataConfig
+        from cil_regionalization.pipelines.montecarlo import DataConfig
 
         with pytest.raises(ValueError, match="region_dim"):
             DataConfig.model_validate(
@@ -219,7 +219,7 @@ class TestPipelineConfigValidation:
             )
 
     def test_region_dim_forbidden_for_parquet(self):
-        from segment_weights.pipelines.montecarlo import DataConfig
+        from cil_regionalization.pipelines.montecarlo import DataConfig
 
         with pytest.raises(ValueError, match="only meaningful"):
             DataConfig.model_validate(
@@ -232,7 +232,7 @@ class TestPipelineConfigValidation:
             )
 
     def test_composite_key_artifact_rejected(self, tmp_path):
-        from segment_weights.pipelines.montecarlo import DataConfig, _read_leaf
+        from cil_regionalization.pipelines.montecarlo import DataConfig, _read_leaf
 
         cfg = DataConfig.model_validate(
             {
@@ -267,7 +267,7 @@ class TestUnitsBackstop:
 
     def test_percent_units_refused_for_extensive(self, tmp_path):
         xr = pytest.importorskip("xarray")
-        from segment_weights.netcdf_io import read_netcdf_leaf
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
 
         ds = xr.Dataset(
             {"share": (["unit_id", "year"], [[0.1, 0.2]])},

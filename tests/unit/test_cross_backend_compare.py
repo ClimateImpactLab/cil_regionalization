@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from segment_weights.cross_backend_compare import (
+from cil_regionalization.cross_backend_compare import (
     CrossBackendReport,
     compare_outputs,
     load_canonical_parquet,

@@ -2,7 +2,7 @@
 
 One-time preparation for IR-to-ADM weight generation, kept as a
 documented, rerunnable script. The generic dissolve machinery lives in
-`segment_weights.dissolve`; this driver holds only the GADM 2.0 facts.
+`cil_regionalization.dissolve`; this driver holds only the GADM 2.0 facts.
 
 Source
 ------
@@ -79,7 +79,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
-from segment_weights.dissolve import LevelSpec, prepare_target_layers
+from cil_regionalization.dissolve import LevelSpec, prepare_target_layers
 
 _DEFAULT_OUT = _ROOT / "data" / "targets" / "gadm20"
 _DEFAULT_VERSION = "gadm-2.0-impactmap-copy-2025"

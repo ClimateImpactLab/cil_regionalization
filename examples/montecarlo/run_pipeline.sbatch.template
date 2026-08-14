@@ -4,20 +4,20 @@
 #
 # The template calls the real entry point and contains no business
 # logic: everything the run does is declared in the pipeline TOML.
-#SBATCH --job-name=segweights-montecarlo
+#SBATCH --job-name=cilreg-montecarlo
 #SBATCH --account=<account>
 #SBATCH --partition=<partition>
 #SBATCH --cpus-per-task=<n_cpus>
 #SBATCH --mem=<memory>
 #SBATCH --time=<walltime>
-#SBATCH --output=segweights_montecarlo_%j.out
+#SBATCH --output=cilreg_montecarlo_%j.out
 
-# Activate the environment that has segment_weights installed.
+# Activate the environment that has cil_regionalization installed.
 # <environment activation goes here>
 
 set -euo pipefail
 
 CONFIG=<path to pipeline TOML>
 
-python -m segment_weights.pipelines.montecarlo "$CONFIG" --dry-run
-python -m segment_weights.pipelines.montecarlo "$CONFIG"
+python -m cil_regionalization.pipelines.montecarlo "$CONFIG" --dry-run
+python -m cil_regionalization.pipelines.montecarlo "$CONFIG"

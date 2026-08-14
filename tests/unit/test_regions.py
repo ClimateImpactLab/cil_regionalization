@@ -8,8 +8,8 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import Polygon, box
 
-from segment_weights.config import RegionsConfig
-from segment_weights.regions import RegionSet
+from cil_regionalization.config import RegionsConfig
+from cil_regionalization.regions import RegionSet
 
 
 class TestLocalLoad:
@@ -88,7 +88,7 @@ class TestInvalidGeometry:
             id_fields=["region_id"],
             on_invalid_geometry="repair",
         )
-        with caplog.at_level(logging.INFO, logger="segment_weights.regions"):
+        with caplog.at_level(logging.INFO, logger="cil_regionalization.regions"):
             rs = RegionSet.from_config(cfg)
         assert len(rs) == 2  # both kept
         assert rs.gdf.geometry.is_valid.all()
@@ -101,7 +101,7 @@ class TestInvalidGeometry:
             id_fields=["region_id"],
             on_invalid_geometry="skip",
         )
-        with caplog.at_level(logging.INFO, logger="segment_weights.regions"):
+        with caplog.at_level(logging.INFO, logger="cil_regionalization.regions"):
             rs = RegionSet.from_config(cfg)
         assert len(rs) == 1
         kept = next(rs.iter_regions())[0]["region_id"]

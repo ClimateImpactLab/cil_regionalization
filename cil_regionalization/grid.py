@@ -36,7 +36,7 @@ import numpy as np
 import shapely
 from shapely.geometry import Polygon
 
-from segment_weights.config import GridConfig
+from cil_regionalization.config import GridConfig
 
 _LAT_ORIGIN = -90.0
 _LAT_SPAN = 180.0

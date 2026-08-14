@@ -45,7 +45,7 @@ import geopandas as gpd
 import pandas as pd
 import shapely
 
-from segment_weights.manifest import collect_package_versions, hash_file
+from cil_regionalization.manifest import collect_package_versions, hash_file
 
 
 def _planar_area(geometry: gpd.GeoSeries) -> pd.Series:

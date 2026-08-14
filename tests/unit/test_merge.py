@@ -4,12 +4,12 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from segment_weights.merge import (
+from cil_regionalization.merge import (
     SOURCE_BIGQUERY,
     SOURCE_SHAPEFILE_SUPPLEMENT,
     merge_weights,
 )
-from segment_weights.schema import OutputSchema
+from cil_regionalization.schema import OutputSchema
 
 
 def _row(hid: str, ix: int, iy: int, popwt: float, areawt: float) -> dict:

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from segment_weights.legacy_compare import (
+from cil_regionalization.legacy_compare import (
     ComparisonReport,
     compare_weights,
     load_legacy_csv,

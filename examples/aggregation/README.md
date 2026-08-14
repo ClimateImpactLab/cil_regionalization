@@ -11,6 +11,16 @@ The Monte Carlo sample is committed here (about 1.6 MB). The weights
 come from the published Zenodo records, fetched by name, which is what
 any real use looks like.
 
+Start with the notebook, `aggregation_colombia.ipynb`. It fetches the
+weights, aggregates one draw, maps the result by department, and pools
+statistics, with all output readable inline. Beyond the `[netcdf]`
+extra it needs `matplotlib` for the map (`pip install matplotlib`);
+there is no separate extra for that, since it is the only plotting use
+in the package.
+
+The script covers the same case plus ADM2 and rates, from the command
+line:
+
 ```
 python examples/aggregation/run_example.py            # fetches weights
 python examples/aggregation/run_example.py --offline  # committed slices
@@ -18,21 +28,23 @@ python examples/aggregation/run_example.py --offline  # committed slices
 
 You need the package with the `[netcdf]` extra, and network access for
 the default mode. Both modes produce identical output.
+`data/col_adm1_plot.parquet` is a small plotting layer for the map:
+the impact region polygons (Climate Impact Lab geometry, published on
+Zenodo) dissolved by department and simplified, for display only.
 
 ## Quick example
 
 ```python
-from segment_weights import fetch_weights, apply_weights
-from segment_weights.netcdf_io import read_netcdf_leaf
+import cil_regionalization as cilreg
 
-weights = fetch_weights("gadm20-adm1-per-source")
-data = read_netcdf_leaf(leaf_path, variables=["total_damages"],
-                        region_dim="region", region_col="hierid",
-                        kind="extensive")
-result = apply_weights(weights, data, kind="extensive", weight="pop",
-                       value_col="total_damages",
-                       data_version="world-combo-201710",
-                       restrict_to_sources={(h,) for h in data["hierid"].unique()})
+weights = cilreg.fetch_weights("gadm20-adm1-per-source")
+data = cilreg.read_netcdf_leaf(leaf_path, variables=["total_damages"],
+                               region_dim="region", region_col="hierid",
+                               kind="extensive")
+result = cilreg.apply_weights(weights, data, kind="extensive", weight="pop",
+                              value_col="total_damages",
+                              data_version="world-combo-201710",
+                              restrict_to_sources={(h,) for h in data["hierid"].unique()})
 ```
 
 The fetched weights are global and the data covers one country, so

@@ -9,7 +9,7 @@ which is always inside the polygon, unlike a raw centroid).
 
 The synthesized row carries `popwt = areawt = 1.0` and method label
 `nearest_cell` for every weight in the output schema. This replaces the
-legacy 1e-5 dummy-weight hack from `refs/create_segment_weights.py`.
+legacy 1e-5 dummy-weight hack from `refs/create_cil_regionalization.py`.
 That approach is deliberately banned here: a magic near-zero weight
 pollutes normalization and hides missing coverage, where a marked
 `nearest_cell` row keeps the accounting explicit and countable.
@@ -24,8 +24,8 @@ from typing import Iterable
 import pandas as pd
 import shapely
 
-from segment_weights.grid import GridSpec
-from segment_weights.schema import method_column, raw_column, weight_column
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.schema import method_column, raw_column, weight_column
 
 
 NEAREST_CELL = "nearest_cell"

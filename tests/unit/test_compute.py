@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from segment_weights.compute import dask_client_for
-from segment_weights.config import LocalBackendOptions
+from cil_regionalization.compute import dask_client_for
+from cil_regionalization.config import LocalBackendOptions
 
 
 class TestDaskOff:

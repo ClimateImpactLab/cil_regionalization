@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from segment_weights.config import WeightConfig
-from segment_weights.weights import WeightSpec, from_config_list
+from cil_regionalization.config import WeightConfig
+from cil_regionalization.weights import WeightSpec, from_config_list
 
 
 def test_is_area_flag():

@@ -31,11 +31,11 @@ import geopandas as gpd
 import pandas as pd
 import pytest
 
-from segment_weights.backends.local import LocalBackend
-from segment_weights.config import Config
-from segment_weights.grid import GridSpec
-from segment_weights.regions import RegionSet
-from segment_weights.weights import from_config_list
+from cil_regionalization.backends.local import LocalBackend
+from cil_regionalization.config import Config
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.regions import RegionSet
+from cil_regionalization.weights import from_config_list
 
 
 # --------------------------------------------------------------------------
@@ -337,7 +337,7 @@ class TestCrossBackendArea:
     def test_schemas_match(
         self, bq_client, _real_geometries: Path, tmp_path: Path
     ):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         result_local = _run_local(
             _area_only_local_cfg(_real_geometries, tmp_path / "local")
@@ -354,7 +354,7 @@ class TestCrossBackendArea:
     def test_region_cell_index_sets_match(
         self, bq_client, _real_geometries: Path, tmp_path: Path
     ):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         result_local = _run_local(
             _area_only_local_cfg(_real_geometries, tmp_path / "local")
@@ -397,7 +397,7 @@ class TestCrossBackendArea:
     def test_areawt_agrees_within_tolerance(
         self, bq_client, _real_geometries: Path, tmp_path: Path
     ):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         cfg_local = _area_only_local_cfg(
             _real_geometries, tmp_path / "local"
@@ -466,7 +466,7 @@ class TestCrossBackendArea:
         Region-boundary edges (planar shapely vs spherical BQ) remain
         the irreducible residual; 1e-4 is the headroom for that.
         """
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         cfg_local = _area_only_local_cfg(
             _real_geometries, tmp_path / "local"

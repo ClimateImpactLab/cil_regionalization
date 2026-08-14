@@ -6,7 +6,7 @@ install the package; that is `pip install`, described in the main
 README. Most readers never need anything here.
 
 The environment lives at
-`/project/cil/home_dirs/rcc/envs/segment_weights_py311`, a shared
+`/project/cil/home_dirs/rcc/envs/cil_regionalization_py311`, a shared
 group path on that cluster, pinned and built fresh with uv rather than
 layered over the group's shared conda stack.
 
@@ -37,7 +37,7 @@ The script creates the venv on Python 3.11 and installs
 `exactextract` first, in its own step, because it is the one package
 that may lack a platform wheel; if that is where things break, the
 script stops immediately and says so. It then installs the pins,
-installs `segment_weights` editable without re-resolving dependencies,
+installs `cil_regionalization` editable without re-resolving dependencies,
 runs an import check, runs the full test suite, and writes the freeze
 file. It will not overwrite an existing environment.
 

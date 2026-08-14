@@ -18,7 +18,7 @@ set -euo pipefail
 # Where the environment is created. The default is the group's shared
 # environment directory on the cluster; point it elsewhere if you are
 # not building the shared one.
-ENV="${SEGMENT_WEIGHTS_ENV:-/project/cil/home_dirs/rcc/envs/segment_weights_py311}"
+ENV="${CIL_REGIONALIZATION_ENV:-/project/cil/home_dirs/rcc/envs/cil_regionalization_py311}"
 # The repository root, resolved from this script's own location.
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -57,7 +57,7 @@ uv pip install -r "$REPO/envs/requirements-cluster.txt"
 uv pip install --no-deps -e "$REPO"
 
 echo "== import check =="
-python -c "import segment_weights, exactextract, geopandas, rasterio, xarray, netCDF4, pyarrow; print('imports OK')"
+python -c "import cil_regionalization, exactextract, geopandas, rasterio, xarray, netCDF4, pyarrow; print('imports OK')"
 
 echo "== test suite =="
 python -m pytest "$REPO/tests" -q

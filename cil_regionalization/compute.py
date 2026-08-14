@@ -25,7 +25,7 @@ import contextlib
 import logging
 from typing import Iterator, Optional
 
-from segment_weights.config import LocalBackendOptions
+from cil_regionalization.config import LocalBackendOptions
 
 
 logger = logging.getLogger(__name__)

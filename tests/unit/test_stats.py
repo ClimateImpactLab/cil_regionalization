@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from segment_weights.stats import summarize_samples
+from cil_regionalization.stats import summarize_samples
 
 
 def _frame(rows: list[dict]) -> pd.DataFrame:
@@ -336,7 +336,7 @@ class TestStagedEquivalence:
         return _frame(rows)
 
     def test_reduce_then_pool_equals_pool_then_reduce(self):
-        from segment_weights.stats import pooled_statistics, window_means
+        from cil_regionalization.stats import pooled_statistics, window_means
 
         df = self._draws()
         windows = [(2050, 2052), (2080, 2081)]
@@ -390,7 +390,7 @@ class TestWindowMeansGuards:
         )
 
     def test_already_reduced_input_refused(self):
-        from segment_weights.stats import window_means
+        from cil_regionalization.stats import window_means
 
         reduced = window_means(
             self._tiny(), time_col="epoch", windows=[(2050, 2051)]
@@ -403,14 +403,14 @@ class TestWindowMeansGuards:
             window_means(reduced, time_col="window", windows=[(2050, 2050)])
 
     def test_presummarized_input_refused(self):
-        from segment_weights.stats import window_means
+        from cil_regionalization.stats import window_means
 
         df = self._tiny().assign(statistic="q50")
         with pytest.raises(ValueError, match="comonotone"):
             window_means(df, time_col="epoch", windows=[(2050, 2051)])
 
     def test_duplicate_window_labels_refused(self):
-        from segment_weights.stats import window_means
+        from cil_regionalization.stats import window_means
 
         with pytest.raises(ValueError, match="duplicate window labels"):
             window_means(
@@ -420,7 +420,7 @@ class TestWindowMeansGuards:
             )
 
     def test_empty_window_raises_per_window(self):
-        from segment_weights.stats import window_means
+        from cil_regionalization.stats import window_means
 
         with pytest.raises(ValueError, match="selects no rows"):
             window_means(
@@ -432,14 +432,14 @@ class TestWindowMeansGuards:
 
 class TestPooledStatisticsGuards:
     def test_presummarized_input_refused(self):
-        from segment_weights.stats import pooled_statistics
+        from cil_regionalization.stats import pooled_statistics
 
         df = _frame([{"zeppelin": "d1", "statistic": "q50", "value": 1.0}])
         with pytest.raises(ValueError, match="comonotone"):
             pooled_statistics(df, sample_dims=["zeppelin"])
 
     def test_matches_summarize_samples_shape(self):
-        from segment_weights.stats import pooled_statistics
+        from cil_regionalization.stats import pooled_statistics
 
         df = _frame(
             [

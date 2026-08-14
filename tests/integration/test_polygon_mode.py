@@ -30,10 +30,10 @@ import pandas as pd
 import pytest
 from shapely.geometry import MultiPolygon, box
 
-from segment_weights.backends.local import LocalBackend
-from segment_weights.config import Config
-from segment_weights.regions import RegionSet
-from segment_weights.weights import from_config_list
+from cil_regionalization.backends.local import LocalBackend
+from cil_regionalization.config import Config
+from cil_regionalization.regions import RegionSet
+from cil_regionalization.weights import from_config_list
 
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -411,7 +411,7 @@ class TestCliPolygonMode:
     def test_run_end_to_end_from_toml(
         self, targets_level1, source_units, tmp_path, capsys
     ):
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         out_dir = tmp_path / "out"
         cfg_path = tmp_path / "polygon.toml"
@@ -531,7 +531,7 @@ class TestMixedGeometryNormalization:
             Polygon,
         )
 
-        from segment_weights.backends.local import _as_multipolygons
+        from cil_regionalization.backends.local import _as_multipolygons
 
         poly = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
         mixed = GeometryCollection(

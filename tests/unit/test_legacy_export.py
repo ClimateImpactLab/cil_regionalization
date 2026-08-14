@@ -8,12 +8,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from segment_weights.legacy_export import (
+from cil_regionalization.legacy_export import (
     LEGACY_COLUMNS,
     to_legacy_frame,
     write_legacy_csv,
 )
-from segment_weights.schema import OutputSchema
+from cil_regionalization.schema import OutputSchema
 
 
 @dataclass

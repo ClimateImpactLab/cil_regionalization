@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "segment_weights"
+name = "cil_regionalization"
 version = "0.1.0"
 description = "Config-driven segment weights mapping climate grid cells to regions, with local and BigQuery backends producing identical schemas."
 requires-python = ">=3.10"
@@ -46,14 +46,14 @@ dev = [
 ]
 
 [project.scripts]
-segweights = "segment_weights.cli:main"
+cilreg = "cil_regionalization.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["segment_weights*"]
+include = ["cil_regionalization*"]
 exclude = ["tests*", "refs*", "scratch*", "data*"]
 
 [tool.setuptools.package-data]
-segment_weights = ["registry.toml"]
+cil_regionalization = ["registry.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

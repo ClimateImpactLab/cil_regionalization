@@ -11,7 +11,7 @@ import copy
 import pytest
 from pydantic import ValidationError
 
-from segment_weights.config import Config, load_config
+from cil_regionalization.config import Config, load_config
 
 
 def _local_cfg() -> dict:

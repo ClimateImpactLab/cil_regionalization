@@ -6,13 +6,13 @@
 # against this file's directory.
 #
 # Dry run first:
-#   python -m segment_weights.pipelines.montecarlo pipeline_example.toml --dry-run
+#   python -m cil_regionalization.pipelines.montecarlo pipeline_example.toml --dry-run
 # Then:
-#   python -m segment_weights.pipelines.montecarlo pipeline_example.toml
+#   python -m cil_regionalization.pipelines.montecarlo pipeline_example.toml
 
 [weights]
 # Directory holding weights.parquet + weights.manifest.json from a
-# `segweights run` in polygon mode with normalization = "per_source".
+# `cilreg run` in polygon mode with normalization = "per_source".
 dir = "weights_out"
 weight = "pop"
 

@@ -1,4 +1,4 @@
-"""`segweights regions find <pattern> <config>` CLI subcommand.
+"""`cilreg regions find <pattern> <config>` CLI subcommand.
 
 Cheap LIKE search against the configured regions source. Helps users
 resolve hierids in this IR vintage's mixed naming patterns (bare ISO3,
@@ -82,7 +82,7 @@ dir = "{tmp_path}/out"
 
 class TestRegionsFindLocal:
     def test_exact_match(self, tmp_path, capsys):
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _write_local_cfg(tmp_path)
         rc = main(["regions", "find", "ABW", str(cfg)])
@@ -93,7 +93,7 @@ class TestRegionsFindLocal:
 
     def test_wildcard_finds_remainder_suffix(self, tmp_path, capsys):
         """A bare 'AND' wouldn't match; 'AND%' surfaces the remainder form."""
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _write_local_cfg(tmp_path)
         rc = main(["regions", "find", "AND%", str(cfg)])
@@ -103,7 +103,7 @@ class TestRegionsFindLocal:
 
     def test_wildcard_finds_multiple_bhr(self, tmp_path, capsys):
         """BHR has both BHR.5 and BHR.R...; the LIKE finds both."""
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _write_local_cfg(tmp_path)
         rc = main(["regions", "find", "BHR%", str(cfg)])
@@ -113,7 +113,7 @@ class TestRegionsFindLocal:
         assert "BHR.Rf0a1304585646a1c" in out
 
     def test_no_match_returns_zero_and_prints_message(self, tmp_path, capsys):
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _write_local_cfg(tmp_path)
         rc = main(["regions", "find", "NOT_A_REGION", str(cfg)])
@@ -122,7 +122,7 @@ class TestRegionsFindLocal:
         assert "no matches" in out
 
     def test_limit_caps_output(self, tmp_path, capsys):
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _write_local_cfg(tmp_path)
         rc = main(["regions", "find", "%", str(cfg), "--limit", "3"])
@@ -138,7 +138,7 @@ class TestRegionsFindBigQuery:
     parameter, and the location lookup."""
 
     def test_issues_parameterized_like_query(self, tmp_path, monkeypatch, capsys):
-        from segment_weights import cli
+        from cil_regionalization import cli
 
         # Stub the bigquery module import inside _regions_find_bq.
         fake_bq = MagicMock()

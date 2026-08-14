@@ -26,9 +26,9 @@ import itertools
 import pandas as pd
 import pytest
 
-from segment_weights.apply import WeightsArtifact, apply_weights
-from segment_weights.config import SourceUnitPolicies
-from segment_weights.schema import OutputSchema, SourceUnits
+from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.config import SourceUnitPolicies
+from cil_regionalization.schema import OutputSchema, SourceUnits
 
 SOURCE_VERSION = "units-v1"
 
@@ -214,7 +214,7 @@ class TestQualifiedKeys:
     def test_api_has_no_name_join_parameter(self):
         import inspect
 
-        from segment_weights import apply as apply_module
+        from cil_regionalization import apply as apply_module
 
         params = inspect.signature(apply_module.apply_weights).parameters
         assert "name" not in params
@@ -485,11 +485,11 @@ class TestArtifactRoundTrip:
         import geopandas as gpd
         from shapely.geometry import box
 
-        from segment_weights.backends.local import LocalBackend
-        from segment_weights.config import Config
-        from segment_weights.io import write_result
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.local import LocalBackend
+        from cil_regionalization.config import Config
+        from cil_regionalization.io import write_result
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         targets = gpd.GeoDataFrame(
             {

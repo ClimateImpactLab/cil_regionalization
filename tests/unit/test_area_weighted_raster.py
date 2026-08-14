@@ -16,7 +16,7 @@ from pyproj import Geod
 from rasterio.transform import from_origin
 import shapely.geometry as sg
 
-from segment_weights.backends.local import _materialize_area_weighted_raster
+from cil_regionalization.backends.local import _materialize_area_weighted_raster
 
 
 @pytest.fixture

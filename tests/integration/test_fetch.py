@@ -17,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from segment_weights.fetch import (
+from cil_regionalization.fetch import (
     ChecksumMismatchError,
     FetchError,
     IncompleteDownloadError,
@@ -196,7 +196,7 @@ class TestFetchRoundTrip:
 
 class TestFailurePaths:
     def test_unknown_name_lists_known(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("SEGMENT_WEIGHTS_REGISTRY", raising=False)
+        monkeypatch.delenv("CIL_REGIONALIZATION_REGISTRY", raising=False)
         with pytest.raises(UnknownArtifactError, match="registry knows"):
             fetch_weights("no-such-artifact", cache_dir=tmp_path / "cache")
 
@@ -276,7 +276,7 @@ class TestFailurePaths:
 
 class TestRegistry:
     def test_packaged_registry_ships_published_records(self, monkeypatch):
-        monkeypatch.delenv("SEGMENT_WEIGHTS_REGISTRY", raising=False)
+        monkeypatch.delenv("CIL_REGIONALIZATION_REGISTRY", raising=False)
         entries = load_registry()
         for name in (
             "gadm20-adm1-per-source",
@@ -308,7 +308,7 @@ class TestRegistry:
             f'record = "{RECORD_ID}"\n'
             f'base_url = "{served.base_url}"\n'
         )
-        monkeypatch.setenv("SEGMENT_WEIGHTS_REGISTRY", str(reg))
+        monkeypatch.setenv("CIL_REGIONALIZATION_REGISTRY", str(reg))
         entries = load_registry()
         assert "env-weights" in entries
 

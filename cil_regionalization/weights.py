@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from segment_weights.config import FallbackPolicy, WeightConfig, WeightKind
+from cil_regionalization.config import FallbackPolicy, WeightConfig, WeightKind
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ target geometry version, with Zenodo's own record versioning carrying
 corrections. Which records exist is data, not code: the packaged
 ``registry.toml`` maps short artifact names to record and file names,
 and a caller can extend or replace it with a local registry file (the
-``registry_path`` argument or the ``SEGMENT_WEIGHTS_REGISTRY``
+``registry_path`` argument or the ``CIL_REGIONALIZATION_REGISTRY``
 environment variable) without any code change. A record identifier can
 also be given directly, bypassing the registry entirely.
 
@@ -19,14 +19,14 @@ than to whatever was uploaded. A failure at either layer deletes the
 partial download and raises; nothing unverified ever lands in the cache
 under its final name.
 
-The cache lives under ``~/.cache/segment_weights`` (respecting
+The cache lives under ``~/.cache/cil_regionalization`` (respecting
 ``XDG_CACHE_HOME``, overridable via the ``cache_dir`` argument or
-``SEGMENT_WEIGHTS_CACHE``), one directory per record and artifact,
+``CIL_REGIONALIZATION_CACHE``), one directory per record and artifact,
 holding the canonical ``weights.parquet`` and ``weights.manifest.json``
 that `WeightsArtifact.load` reads. Cached artifacts are re-verified
 against the cached manifest on every use; a corrupt cache entry raises
 instead of loading. ``list_cached`` and ``clear_cache`` (or
-``segweights cache list|clear``) show and remove cache contents.
+``cilreg cache list|clear``) show and remove cache contents.
 """
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -41,12 +42,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+
+def _ssl_context() -> ssl.SSLContext:
+    """An SSL context that finds a CA bundle on hosts whose OpenSSL has
+    none configured (some cluster environments). certifi's bundle is
+    used when available; otherwise the system default."""
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - exercised only on 3.10
     import tomli as tomllib
 
-from segment_weights.apply import WeightsArtifact
+from cil_regionalization.apply import WeightsArtifact
 
 DEFAULT_BASE_URL = "https://zenodo.org"
 _CHUNK = 1 << 20
@@ -95,13 +108,13 @@ def load_registry(registry_path: str | Path | None = None) -> dict[str, Registry
     """Load the artifact registry: packaged entries, then overlays.
 
     Order: the packaged ``registry.toml``, then the file named by the
-    ``SEGMENT_WEIGHTS_REGISTRY`` environment variable if set, then
+    ``CIL_REGIONALIZATION_REGISTRY`` environment variable if set, then
     ``registry_path`` if given. Later entries replace earlier ones of the
     same name, so a local registry can both add artifacts and repoint
     existing names.
     """
     paths: list[Path] = [_packaged_registry_path()]
-    env = os.environ.get("SEGMENT_WEIGHTS_REGISTRY")
+    env = os.environ.get("CIL_REGIONALIZATION_REGISTRY")
     if env:
         paths.append(Path(env))
     if registry_path is not None:
@@ -131,12 +144,12 @@ def load_registry(registry_path: str | Path | None = None) -> dict[str, Registry
 
 
 def default_cache_dir() -> Path:
-    env = os.environ.get("SEGMENT_WEIGHTS_CACHE")
+    env = os.environ.get("CIL_REGIONALIZATION_CACHE")
     if env:
         return Path(env)
     xdg = os.environ.get("XDG_CACHE_HOME")
     base = Path(xdg) if xdg else Path("~/.cache").expanduser()
-    return base / "segment_weights"
+    return base / "cil_regionalization"
 
 
 def _sha256(path: Path) -> str:
@@ -157,7 +170,7 @@ def _md5(path: Path) -> str:
 
 def _get_json(url: str) -> dict[str, Any]:
     try:
-        with urllib.request.urlopen(url) as resp:
+        with urllib.request.urlopen(url, context=_ssl_context()) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         raise FetchError(f"GET {url} failed: HTTP {e.code} {e.reason}") from e
@@ -181,7 +194,7 @@ def _record_files(entry: RegistryEntry) -> dict[str, dict[str, Any]]:
 def _download(url: str, dest: Path, *, expected_size: int | None) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with urllib.request.urlopen(url) as resp, dest.open("wb") as out:
+        with urllib.request.urlopen(url, context=_ssl_context()) as resp, dest.open("wb") as out:
             shutil.copyfileobj(resp, out, _CHUNK)
     except urllib.error.HTTPError as e:
         dest.unlink(missing_ok=True)
@@ -298,7 +311,7 @@ def fetch_weights(
             raise ChecksumMismatchError(
                 f"cached artifact at {target} fails verification "
                 f"(sha256 {actual}, manifest records {expected}); clear it "
-                f"with clear_cache() or 'segweights cache clear' and refetch"
+                f"with clear_cache() or 'cilreg cache clear' and refetch"
             )
         return WeightsArtifact.load(target)
 

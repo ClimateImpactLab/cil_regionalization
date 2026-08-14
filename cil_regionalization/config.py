@@ -1,4 +1,4 @@
-"""Configuration models for segment_weights.
+"""Configuration models for cil_regionalization.
 
 A run is described by a single TOML file. The schema below validates that file
 up front and raises errors whose messages name the offending config key, so the
@@ -414,7 +414,7 @@ class Config(_Strict):
 
 
 def load_config(path: str | Path) -> Config:
-    """Load and validate a segment_weights config from a TOML file.
+    """Load and validate a cil_regionalization config from a TOML file.
 
     Relative paths in `regions.path`, `source.path`, `weights[].raster`,
     and `output.dir` are resolved against the config file's directory so the same config

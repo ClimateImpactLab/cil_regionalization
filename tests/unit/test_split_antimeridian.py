@@ -9,7 +9,7 @@ from __future__ import annotations
 import shapely
 import shapely.geometry as sg
 
-from segment_weights.backends.local import _split_at_antimeridian
+from cil_regionalization.backends.local import _split_at_antimeridian
 
 
 class TestSplitCriterion:

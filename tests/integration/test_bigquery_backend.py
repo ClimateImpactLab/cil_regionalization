@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     reason="BigQuery tests need the [bigquery] extra installed",
 )
 
-from segment_weights.config import Config
+from cil_regionalization.config import Config
 
 
 _IR_TABLE = (
@@ -69,7 +69,7 @@ def _bq_cfg(**overrides) -> Config:
             "coverage": "pixel_centroid",
             "bigquery": {"staging_uri": "gs://example-staging/segment-weights/"},
         },
-        "output": {"dir": "/tmp/segweights_bq_test"},
+        "output": {"dir": "/tmp/cilreg_bq_test"},
     }
     for key, val in overrides.items():
         d[key] = val
@@ -113,18 +113,18 @@ def _client_with_locations(
 
 class TestImport:
     def test_module_importable_with_extra(self):
-        from segment_weights.backends.bigquery import BigQueryBackend  # noqa
+        from cil_regionalization.backends.bigquery import BigQueryBackend  # noqa
 
 
 class TestLocationResolution:
     def _backend(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         return BigQueryBackend()
 
     def _specs(self, cfg: Config):
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         regions = RegionSet.from_config(cfg.regions)
         weights = [w for w in from_config_list(cfg.weights) if not w.is_area]
@@ -174,14 +174,14 @@ class TestLocationResolution:
 
 class TestGeometryFetch:
     def _backend(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         return BigQueryBackend()
 
     def test_sql_targets_only_ir_table(self):
         """The geometry fetch must reference exactly the IR table; never
         the weight table, never the temp dataset."""
-        from segment_weights.regions import RegionSet
+        from cil_regionalization.regions import RegionSet
 
         cfg = _bq_cfg()
         regions = RegionSet.from_config(cfg.regions)
@@ -203,7 +203,7 @@ class TestGeometryFetch:
         assert "ST_ASTEXT(geometry)" in sql
 
     def test_passes_ir_location_to_query(self):
-        from segment_weights.regions import RegionSet
+        from cil_regionalization.regions import RegionSet
 
         cfg = _bq_cfg()
         regions = RegionSet.from_config(cfg.regions)
@@ -218,7 +218,7 @@ class TestGeometryFetch:
 
     def test_hierids_passed_as_array_parameter(self):
         from google.cloud import bigquery
-        from segment_weights.regions import RegionSet
+        from cil_regionalization.regions import RegionSet
 
         cfg = _bq_cfg()
         regions = RegionSet.from_config(cfg.regions)
@@ -246,7 +246,7 @@ class TestGeometryFetch:
 
 class TestGeometryContentHash:
     def test_deterministic(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         df = pd.DataFrame(
             {
@@ -260,7 +260,7 @@ class TestGeometryContentHash:
         assert h1 == h2
 
     def test_order_invariant(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         df1 = pd.DataFrame(
             {
@@ -276,7 +276,7 @@ class TestGeometryContentHash:
         )
 
     def test_changes_with_content(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         df1 = pd.DataFrame(
             {"hierid": ["A"], "geometry": ["POLYGON((0 0,1 0,1 1,0 1,0 0))"]}
@@ -293,10 +293,10 @@ class TestGeometryContentHash:
 
 class TestMainSql:
     def _build(self, cfg: Config | None = None):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         cfg = cfg or _bq_cfg()
         backend = BigQueryBackend()
@@ -304,7 +304,7 @@ class TestMainSql:
         grid = GridSpec.from_config(cfg.grid)
         weights = from_config_list(cfg.weights)
         temp_table = (
-            "compute-impactlab.temp_workspace.segweights_geom_deadbeefdeadbeef"
+            "compute-impactlab.temp_workspace.cilreg_geom_deadbeefdeadbeef"
         )
         sql = backend._build_main_sql(temp_table, regions, grid, weights, cfg)
         return sql, temp_table
@@ -452,7 +452,7 @@ class TestToDataframeHelper:
     """Every download goes through `_to_dataframe`; the flag is forwarded."""
 
     def test_default_passes_false(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         backend = BigQueryBackend()
         cfg = _bq_cfg()
@@ -464,7 +464,7 @@ class TestToDataframeHelper:
         )
 
     def test_override_true_forwards(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         backend = BigQueryBackend()
         d = _bq_cfg().model_dump()
@@ -483,7 +483,7 @@ class TestToDataframeHelper:
 
 class TestDryRunGate:
     def test_under_ceiling_returns_bytes(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         backend = BigQueryBackend()
         client = MagicMock()
@@ -491,7 +491,7 @@ class TestDryRunGate:
         assert backend._dry_run_bytes(client, "SELECT 1", "US") == 5_000_000_000
 
     def test_dry_run_passes_location(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         backend = BigQueryBackend()
         client = MagicMock()
@@ -591,10 +591,10 @@ class TestTempTableLifecycle:
         so the load can never fail on geometry content (the 2022 failure
         mode swallowed by SAFE.; we now repair loudly in the spherical
         domain at parse time)."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         self._mock_gcsfs(monkeypatch)
         client = self._full_client()
@@ -621,10 +621,10 @@ class TestTempTableLifecycle:
     def test_temp_table_name_carries_v2_marker(self, monkeypatch):
         """The schema/SQL change makes old GEOGRAPHY-schema temp tables
         non-reusable; the table-name prefix bump invalidates the cache."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         self._mock_gcsfs(monkeypatch)
         client = self._full_client()
@@ -638,7 +638,7 @@ class TestTempTableLifecycle:
         backend.compute(regions, grid, weights, cfg)
 
         load_dest = client.load_table_from_uri.call_args.args[1]
-        assert "segweights_geom_v2_" in load_dest, (
+        assert "cilreg_geom_v2_" in load_dest, (
             f"temp table name {load_dest!r} does not carry the v2 marker; "
             "old GEOGRAPHY-schema tables would be wrongly reused"
         )
@@ -648,10 +648,10 @@ class TestTempTableLifecycle:
         WKT rows triggered deterministic BQ 500 internalError; Parquet
         handles the payload natively. Geometries are NEVER simplified
         for the load."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         self._mock_gcsfs(monkeypatch)
         client = self._full_client()
@@ -677,10 +677,10 @@ class TestTempTableLifecycle:
         )
 
     def test_load_job_targets_temp_workspace(self, monkeypatch):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         self._mock_gcsfs(monkeypatch)
         client = self._full_client()
@@ -698,14 +698,14 @@ class TestTempTableLifecycle:
         load_call = client.load_table_from_uri.call_args
         assert load_call is not None
         dest_table = load_call.args[1]
-        assert "compute-impactlab.temp_workspace.segweights_geom_" in dest_table
+        assert "compute-impactlab.temp_workspace.cilreg_geom_" in dest_table
         assert load_call.kwargs["location"] == "US"
 
     def test_main_query_uses_compute_location(self, monkeypatch):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         self._mock_gcsfs(monkeypatch)
         client = self._full_client()
@@ -730,10 +730,10 @@ class TestTempTableLifecycle:
         pytest.fail("combined query was not issued")
 
     def test_cleanup_runs_on_success(self, monkeypatch):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         self._mock_gcsfs(monkeypatch)
         client = self._full_client()
@@ -748,7 +748,7 @@ class TestTempTableLifecycle:
 
         client.delete_table.assert_called_once()
         delete_table_id = client.delete_table.call_args.args[0]
-        assert "compute-impactlab.temp_workspace.segweights_geom_" in delete_table_id
+        assert "compute-impactlab.temp_workspace.cilreg_geom_" in delete_table_id
         # Manifest records the download path so future runs can diff
         # against it if the readSessionUser role is ever granted.
         assert result.manifest.extra["bq_used_bqstorage"] is False
@@ -757,10 +757,10 @@ class TestTempTableLifecycle:
 
     def test_cleanup_runs_on_dry_run_failure(self, monkeypatch):
         """If the dry-run gate raises, the finally block still deletes."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         self._mock_gcsfs(monkeypatch)
         client = self._full_client(dry_bytes=20_000_000_000)  # > 10 GB ceiling
@@ -776,10 +776,10 @@ class TestTempTableLifecycle:
         client.delete_table.assert_called_once()
 
     def test_cache_temp_tables_skips_cleanup(self, monkeypatch):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         self._mock_gcsfs(monkeypatch)
         client = self._full_client()
@@ -838,8 +838,8 @@ class TestShapefileSourcePath:
 
     def test_fetch_geometries_skips_ir_query(self, tmp_path):
         """With a path-loaded gdf, no SQL is issued to fetch geometries."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.regions import RegionSet
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.regions import RegionSet
         from unittest.mock import MagicMock
 
         cfg = self._cfg(self._gdf_parquet(tmp_path))
@@ -855,8 +855,8 @@ class TestShapefileSourcePath:
             assert wkt_str.startswith("POLYGON")
 
     def test_pre_check_from_gdf_detects_unknown_and_null(self, tmp_path):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.regions import RegionSet
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.regions import RegionSet
 
         cfg = self._cfg(
             self._gdf_parquet(tmp_path),
@@ -874,10 +874,10 @@ class TestShapefileSourcePath:
         assert null_ids == []
 
     def test_repair_log_surfaces_to_manifest(self, tmp_path, monkeypatch):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
         client = TestTempTableLifecycle()._full_client()
@@ -901,9 +901,9 @@ class TestShapefileSourcePath:
         assert "regions_table" not in result.manifest.inputs
 
     def test_resolve_locations_skips_ir(self, tmp_path):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         cfg = self._cfg(self._gdf_parquet(tmp_path))
         regions = RegionSet.from_config(cfg.regions)
@@ -924,8 +924,8 @@ class TestLoadRetry:
     support with a concrete reference."""
 
     def _backend_with_no_real_sleep(self, monkeypatch):
-        from segment_weights.backends import bigquery as bq_module
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends import bigquery as bq_module
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         # Strip the actual sleep so retry-loop tests run fast.
         monkeypatch.setattr(bq_module.time, "sleep", lambda s: None)
@@ -953,7 +953,7 @@ class TestLoadRetry:
             succeeding,
         ]
 
-        with caplog.at_level("WARNING", logger="segment_weights.backends.bigquery"):
+        with caplog.at_level("WARNING", logger="cil_regionalization.backends.bigquery"):
             backend._run_load_with_retry(
                 client,
                 "gs://x/y.parquet",
@@ -979,7 +979,7 @@ class TestLoadRetry:
         failing.result.side_effect = InternalServerError("simulated 500")
         client.load_table_from_uri.return_value = failing
 
-        with caplog.at_level("ERROR", logger="segment_weights.backends.bigquery"):
+        with caplog.at_level("ERROR", logger="cil_regionalization.backends.bigquery"):
             with pytest.raises(InternalServerError):
                 backend._run_load_with_retry(
                     client,
@@ -998,7 +998,7 @@ class TestLoadRetry:
 
     def test_does_not_retry_on_schema_error(self, monkeypatch):
         """Non-transient failures fail fast; retrying won't help."""
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
         from google.api_core.exceptions import BadRequest
 
         backend = self._backend_with_no_real_sleep(monkeypatch)
@@ -1025,7 +1025,7 @@ class TestLoadRetry:
         """Pre-load logs name the staging size, row count, and max
         per-row WKT length so support escalations have a concrete
         payload reference."""
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         # Stub gcsfs and pretend the load succeeds on the first try.
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
@@ -1048,7 +1048,7 @@ class TestLoadRetry:
                 ],
             }
         )
-        with caplog.at_level("INFO", logger="segment_weights.backends.bigquery"):
+        with caplog.at_level("INFO", logger="cil_regionalization.backends.bigquery"):
             backend._upload_temp_table(
                 client, geom_df, "temp_workspace.tbl", "hierid", cfg, "US"
             )
@@ -1064,14 +1064,14 @@ class TestUnknownIdHandling:
     the coverage assertion. The pre-check surfaces them earlier."""
 
     def _backend(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         return BigQueryBackend()
 
     def test_default_policy_errors_listing_ids(self, monkeypatch):
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
         client = TestTempTableLifecycle()._full_client(
@@ -1092,9 +1092,9 @@ class TestUnknownIdHandling:
         assert "BMU" in msg
 
     def test_skip_policy_records_to_manifest(self, monkeypatch):
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
         client = TestTempTableLifecycle()._full_client(
@@ -1113,9 +1113,9 @@ class TestUnknownIdHandling:
         assert result.manifest.extra["unknown_id_regions"] == ["AND"]
 
     def test_both_null_and_unknown_skipped_together(self, monkeypatch):
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
         client = TestTempTableLifecycle()._full_client(
@@ -1141,18 +1141,18 @@ class TestNullGeometryHandling:
     honor `regions.on_null_geometry` ('error' default, 'skip' for s51)."""
 
     def _backend(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         return BigQueryBackend()
 
     def _specs(self, cfg: Config):
-        from segment_weights.regions import RegionSet
+        from cil_regionalization.regions import RegionSet
 
         return RegionSet.from_config(cfg.regions)
 
     def test_default_policy_errors_listing_hierids(self, monkeypatch):
-        from segment_weights.grid import GridSpec
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
         client = TestTempTableLifecycle()._full_client(
@@ -1173,8 +1173,8 @@ class TestNullGeometryHandling:
         assert "DEU.2.10.Re83c19217082ae1b" in msg
 
     def test_skip_policy_records_to_manifest(self, monkeypatch):
-        from segment_weights.grid import GridSpec
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
         client = TestTempTableLifecycle()._full_client(
@@ -1193,8 +1193,8 @@ class TestNullGeometryHandling:
         assert result.manifest.extra["null_geometry_regions"] == ["CAN.5"]
 
     def test_fetch_sql_filters_null_geometry(self):
-        from segment_weights.grid import GridSpec
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.weights import from_config_list
 
         cfg = _bq_cfg()
         regions = self._specs(cfg)
@@ -1212,7 +1212,7 @@ class TestNullGeometryHandling:
         """Defense in depth: if a NULL geometry reaches the staging writer
         (upstream filter broken), fail with the offending hierid rather
         than the cryptic load-job BadRequest."""
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         gcsfs_mock = MagicMock()
         fs = MagicMock()
@@ -1262,10 +1262,10 @@ class TestAssembleResult:
         )
 
     def test_area_fallback_marks_zero_pop_region(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         cfg = _bq_cfg()
         backend = BigQueryBackend()
@@ -1305,10 +1305,10 @@ class TestAssembleResult:
 
 class TestConfigRejections:
     def test_rejects_exact_fraction(self):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         d = _bq_cfg().model_dump()
         d["backend"]["coverage"] = "exact_fraction"
@@ -1323,7 +1323,7 @@ class TestConfigRejections:
         """The supplement run feeds a shapefile / geoparquet through the
         BQ pipeline (Stage 6). The BQ backend used to refuse `regions.path`;
         it now treats it as a valid alternative geometry source."""
-        from segment_weights.regions import RegionSet
+        from cil_regionalization.regions import RegionSet
         import geopandas as gpd
         from shapely.geometry import box
 
@@ -1382,16 +1382,16 @@ class TestRealBackend:
 
     def test_dry_run_under_ceiling(self, bq_client, tmp_path):
         """The combined query scans GPW (~6 GB); 10 GB ceiling admits it."""
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         backend = BigQueryBackend()
         cfg = self._cfg(tmp_path)
         # We can't easily isolate the dry-run path without running the upload,
         # so go end-to-end and assert the manifest captured a sub-ceiling cost.
         result = backend.compute(
-            __import__("segment_weights").regions.RegionSet.from_config(cfg.regions),
-            __import__("segment_weights").grid.GridSpec.from_config(cfg.grid),
-            __import__("segment_weights").weights.from_config_list(cfg.weights),
+            __import__("cil_regionalization").regions.RegionSet.from_config(cfg.regions),
+            __import__("cil_regionalization").grid.GridSpec.from_config(cfg.grid),
+            __import__("cil_regionalization").weights.from_config_list(cfg.weights),
             cfg,
         )
         assert (
@@ -1400,10 +1400,10 @@ class TestRealBackend:
         )
 
     def test_tiny_run_sum_to_one(self, bq_client, tmp_path):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         cfg = self._cfg(tmp_path)
         backend = BigQueryBackend()
@@ -1427,10 +1427,10 @@ class TestRealBackend:
         hierid must be in the result. This test exercises that invariant
         against real data, which is what the user's Stage 5 spec asked for.
         """
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         # Find the 5 smallest hierids cheaply. The IR table is 0.88 GB.
         # WHERE geometry IS NOT NULL; without it NULL geometries sort first
@@ -1485,10 +1485,10 @@ class TestRealBackend:
     def test_null_geometry_error_default(self, bq_client, tmp_path):
         """A known NULL hierid in the keep list aborts under the default
         policy with the hierid named in the error message."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         # CAN.5 is one of the 17 NULL hierids the user measured. Include
         # ABW (valid) so the failure must be NULL-driven, not "no hierids".
@@ -1508,10 +1508,10 @@ class TestRealBackend:
     def test_unknown_id_error_default(self, bq_client, tmp_path):
         """A clearly nonsensical id in keep aborts under default policy
         with the id named in the error message."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         d = _bq_cfg().model_dump()
         d["regions"]["keep"] = {"hierid": ["ABW", "NOT_A_REGION"]}
@@ -1537,10 +1537,10 @@ class TestRealBackend:
             (c) at least one cell with popwt > 0 for USA.2.69 (Aleutians
                 are populated, ~8k people).
         """
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         d = _bq_cfg().model_dump()
         d["regions"]["keep"] = {"hierid": ["USA.2.69"]}
@@ -1571,10 +1571,10 @@ class TestRealBackend:
         )
 
     def test_unknown_id_skip_records_to_manifest(self, bq_client, tmp_path):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         d = _bq_cfg().model_dump()
         d["regions"]["keep"] = {"hierid": ["ABW", "NOT_A_REGION"]}
@@ -1594,10 +1594,10 @@ class TestRealBackend:
     def test_null_geometry_skip_records_to_manifest(self, bq_client, tmp_path):
         """Skip policy excludes NULL hierids and records them in the
         manifest; coverage of the requested set = output + null_skipped."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         d = _bq_cfg().model_dump()
         d["regions"]["keep"] = {"hierid": ["ABW", "CAN.5"]}
@@ -1631,10 +1631,10 @@ class TestRealBackend:
         =>TRUE) the load succeeds, parsing repairs the spherical-
         invalid edges, and the result passes sum-to-1 + grid
         invariants."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         cfg = Config.model_validate(
             {
@@ -1685,10 +1685,10 @@ class TestRealBackend:
     def test_dry_run_public_api(self, bq_client, tmp_path):
         """`dry_run()` is a public method runners can use for the
         interactive ``confirm before running'' pattern."""
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
 
         cfg = self._cfg(tmp_path)
         backend = BigQueryBackend()
@@ -1698,14 +1698,14 @@ class TestRealBackend:
         info = backend.dry_run(regions, grid, weights, cfg)
         assert info["bytes_estimate"] > 0
         assert info["compute_location"] == "US"
-        assert "temp_workspace.segweights_geom_" in info["temp_table"]
+        assert "temp_workspace.cilreg_geom_" in info["temp_table"]
         assert info["bytes_estimate"] < cfg.backend.bigquery.dry_run_byte_ceiling
 
     def test_temp_table_cleaned_up(self, bq_client, tmp_path):
-        from segment_weights.backends.bigquery import BigQueryBackend
-        from segment_weights.grid import GridSpec
-        from segment_weights.regions import RegionSet
-        from segment_weights.weights import from_config_list
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
         from google.api_core.exceptions import NotFound
 
         cfg = self._cfg(tmp_path)

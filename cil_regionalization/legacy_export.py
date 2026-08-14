@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from segment_weights.backends.base import WeightsResult
+from cil_regionalization.backends.base import WeightsResult
 
 
 logger = logging.getLogger(__name__)

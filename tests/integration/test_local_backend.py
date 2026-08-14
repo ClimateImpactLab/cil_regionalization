@@ -24,14 +24,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from segment_weights.backends.local import LocalBackend
-from segment_weights.config import Config
-from segment_weights.fallback import count_methods
-from segment_weights.grid import GridSpec
-from segment_weights.regions import RegionSet
-from segment_weights.schema import OutputSchema
-from segment_weights.validate import check_sum_to_one
-from segment_weights.weights import from_config_list
+from cil_regionalization.backends.local import LocalBackend
+from cil_regionalization.config import Config
+from cil_regionalization.fallback import count_methods
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.regions import RegionSet
+from cil_regionalization.schema import OutputSchema
+from cil_regionalization.validate import check_sum_to_one
+from cil_regionalization.weights import from_config_list
 
 
 def _cfg(
@@ -625,7 +625,7 @@ class TestIoRoundTrip:
     def test_writes_parquet_and_manifest(
         self, three_region_geoparquet, synthetic_raster, tmp_path
     ):
-        from segment_weights.io import write_result
+        from cil_regionalization.io import write_result
 
         cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path)
         result = _run(cfg)
@@ -639,7 +639,7 @@ class TestIoRoundTrip:
     def test_writes_both_formats(
         self, three_region_geoparquet, synthetic_raster, tmp_path
     ):
-        from segment_weights.io import write_result
+        from cil_regionalization.io import write_result
 
         cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path)
         result = _run(cfg)
@@ -652,7 +652,7 @@ class TestCli:
     def test_validate_passes(
         self, three_region_geoparquet, synthetic_raster, tmp_path, capsys
     ):
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path / "out")
         cfg_path = tmp_path / "cfg.toml"
@@ -665,7 +665,7 @@ class TestCli:
     def test_validate_flags_missing_raster(
         self, three_region_geoparquet, tmp_path, capsys
     ):
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _cfg(
             three_region_geoparquet,
@@ -682,7 +682,7 @@ class TestCli:
     def test_run_end_to_end(
         self, three_region_geoparquet, synthetic_raster, tmp_path, capsys
     ):
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path / "out")
         cfg_path = tmp_path / "cfg.toml"
@@ -697,7 +697,7 @@ class TestCli:
     def test_run_test_mode_caps_regions(
         self, three_region_geoparquet, synthetic_raster, tmp_path, capsys
     ):
-        from segment_weights.cli import main
+        from cil_regionalization.cli import main
 
         cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path / "out")
         cfg_path = tmp_path / "cfg.toml"
@@ -711,15 +711,15 @@ class TestCli:
 
 
 class TestCliLegacyCsv:
-    """`segweights run --legacy-csv` writes weights_legacy.csv next to the
+    """`cilreg run --legacy-csv` writes weights_legacy.csv next to the
     canonical output in the 13-column schema. Pinned end-to-end since the
     CLI wiring is otherwise untested outside the run smoke."""
 
     def test_legacy_csv_written_alongside_parquet(
         self, three_region_gdf, synthetic_fraction_raster, synthetic_raster, tmp_path, capsys
     ):
-        from segment_weights.cli import main
-        from segment_weights.legacy_export import LEGACY_COLUMNS
+        from cil_regionalization.cli import main
+        from cil_regionalization.legacy_export import LEGACY_COLUMNS
         import geopandas as gpd
 
         # Rename the synthetic fixture's id column to hierid for legacy schema.

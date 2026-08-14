@@ -2,7 +2,7 @@
 
 Optional dependency, handled the way the BigQuery backend handles its
 extra: importing this module is always safe, and the reader raises a
-message naming ``segment_weights[netcdf]`` when xarray is absent.
+message naming ``cil_regionalization[netcdf]`` when xarray is absent.
 
 The reader is deliberately dumb. It selects the requested variables,
 flattens every dimension combination to one row, and renames the
@@ -31,7 +31,7 @@ def _import_xarray():
     except ImportError as e:
         raise ImportError(
             "reading NetCDF leaves requires the [netcdf] extra; "
-            "pip install 'segment_weights[netcdf]'"
+            "pip install 'cil_regionalization[netcdf]'"
         ) from e
     return xarray
 

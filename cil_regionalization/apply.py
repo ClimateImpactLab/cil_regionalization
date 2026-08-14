@@ -66,16 +66,16 @@ from typing import Iterable, Literal
 
 import pandas as pd
 
-from segment_weights.backends.base import WeightsResult
-from segment_weights.config import SourceUnitPolicies
-from segment_weights.schema import (
+from cil_regionalization.backends.base import WeightsResult
+from cil_regionalization.config import SourceUnitPolicies
+from cil_regionalization.schema import (
     GRID_CELLS,
     OutputSchema,
     SourceUnits,
     require_normalization,
     weight_column,
 )
-from segment_weights.validate import (
+from cil_regionalization.validate import (
     MassBalanceReport,
     SourceCoverageReport,
     check_mass_balance,

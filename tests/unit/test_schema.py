@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from segment_weights.schema import (
+from cil_regionalization.schema import (
     CELL_COLUMNS,
     GRID_CELLS,
     OutputSchema,

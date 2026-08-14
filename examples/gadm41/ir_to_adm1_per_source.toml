@@ -12,11 +12,17 @@ name = "gadm41_adm1_per_source"
 description = "IR to GADM 4.1 adm1 weights, per_source; not interchangeable with GADM 2.0 weights (different unit universes and keys)"
 
 [regions]
+# Not distributed (GADM restricts redistribution). Create this file
+# first with examples/gadm41/prepare_gadm41_targets.py --source
+# <your GADM file>; it writes here by default.
 path = "../../data/targets/gadm41/adm1.parquet"
 id_fields = ["GID_0", "GID_1"]
 version = "gadm-4.10-impactmap-copy-2022"
 
 [source]
+# The impact region shapefile, published at 10.5281/zenodo.21934131.
+# The path is the cluster location used for the published runs; replace
+# it with the path to your copy.
 path = "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
 id_fields = ["hierid"]
 version = "world-combo-201710"
@@ -25,6 +31,9 @@ on_zero_overlap = "skip"
 
 [[weights]]
 name = "pop"
+# GPW v4 rev 10 population raster (2015, 30 arc second), from SEDAC.
+# The path is the cluster location used for the published runs; replace
+# it with the path to your copy.
 raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
 fallback = "area"
 

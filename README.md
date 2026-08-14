@@ -11,16 +11,16 @@ not cover your case.
 ## Quick example
 
 ```python
-from segment_weights import fetch_weights, apply_weights, summarize_samples
+import cil_regionalization as cilreg
 
-artifact = fetch_weights("gadm20-adm1-per-source")
-result = apply_weights(
-    artifact, my_draws,
+weights = cilreg.fetch_weights("gadm20-adm1-per-source")
+result = cilreg.apply_weights(
+    weights, my_draws,
     kind="extensive",
     weight="pop",
     data_version="world-combo-201710",
 )
-stats = summarize_samples(
+stats = cilreg.summarize_samples(
     result.frame, sample_dims=["batch", "gcm"],
     time_col="year", window=(2080, 2099), quantiles=[0.05, 0.5, 0.95],
 )
@@ -28,15 +28,17 @@ stats = summarize_samples(
 
 `my_draws` is a long table: one row per impact region and year (plus
 batch, model, and whatever other columns your sample has), with the
-region id in a `hierid` column. `fetch_weights` downloads the weight
-file from its Zenodo record, checks it against the checksum recorded
-when it was generated, caches it under `~/.cache/segment_weights`, and
-returns it ready to use. The other two calls aggregate and then
-summarize.
+region id in a `hierid` column and the numbers in a `value` column
+(another name works via `value_col=`). If your draws cover only some
+regions, declare the subset with `restrict_to_sources`; the worked
+example shows how. `fetch_weights` downloads the weight file from its
+Zenodo record, checks it against the checksum recorded when it was
+generated, caches it under `~/.cache/cil_regionalization`, and returns
+it ready to use. The other two calls aggregate and then summarize.
 
-The same works from the command line: `segweights fetch <name>`
-downloads and prints the cached path, `segweights cache list` and
-`segweights cache clear` manage the cache, and `segweights pipeline
+The same works from the command line: `cilreg fetch <name>`
+downloads and prints the cached path, `cilreg cache list` and
+`cilreg cache clear` manage the cache, and `cilreg pipeline
 <config.toml>` runs a whole Monte Carlo tree from one config file.
 
 ## How it works
@@ -117,11 +119,13 @@ plausible wrong numbers.
 
 `examples/aggregation/` aggregates a small sample of real Monte Carlo
 mortality projections (not the complete output: two draws, one climate
-model) for Colombia, to departments and municipalities, covering both
-variable kinds and both weight directions. It fetches the published
-weights by name and reads a committed 1.6 MB sample, so it runs in
-seconds. Its README shows the full printed output, so you can see what
-comes out without running anything. Start there.
+model) for Colombia, fetching the published weights by name and
+reading a committed 1.6 MB sample. Start with the notebook,
+`aggregation_colombia.ipynb`: it runs the aggregation and maps the
+result by department, with all output readable inline (the map needs
+`matplotlib`). The script `run_example.py` covers the same case plus
+municipalities and rates from the command line, and its README shows
+the full printed output.
 
 ## Installation
 
@@ -129,7 +133,7 @@ Straight from GitHub:
 
 ```
 pip install "git+https://github.com/ClimateImpactLab/REPOSITORY.git"
-pip install "segment_weights[netcdf] @ git+https://github.com/ClimateImpactLab/REPOSITORY.git"
+pip install "cil_regionalization[netcdf] @ git+https://github.com/ClimateImpactLab/REPOSITORY.git"
 ```
 
 (the URL is a placeholder until the repository moves to the Climate
@@ -155,9 +159,9 @@ package.
 ## Generating new weights
 
 A TOML config names the target geometry, the source geometry or grid,
-the weighting rasters, and the normalization direction. `segweights
+the weighting rasters, and the normalization direction. `cilreg
 run <config.toml>` writes the weights parquet plus a manifest that
-records where everything came from, with checksums. `segweights
+records where everything came from, with checksums. `cilreg
 validate <config.toml>` checks a config without computing anything.
 Worked configurations, including the GADM target preparation and the
 full generation runs, live under `examples/`.

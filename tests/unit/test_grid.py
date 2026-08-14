@@ -4,8 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from segment_weights.config import GridConfig
-from segment_weights.grid import GridSpec, infer_uniform_resolution
+from cil_regionalization.config import GridConfig
+from cil_regionalization.grid import GridSpec, infer_uniform_resolution
 
 
 def _grid(

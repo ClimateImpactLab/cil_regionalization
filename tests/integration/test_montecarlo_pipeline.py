@@ -21,17 +21,17 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
-from segment_weights.backends.local import LocalBackend
-from segment_weights.config import Config
-from segment_weights.io import write_result
-from segment_weights.pipelines.montecarlo import (
+from cil_regionalization.backends.local import LocalBackend
+from cil_regionalization.config import Config
+from cil_regionalization.io import write_result
+from cil_regionalization.pipelines.montecarlo import (
     MonteCarloPipelineConfig,
     PipelinePlan,
     load_pipeline_config,
     run_pipeline,
 )
-from segment_weights.regions import RegionSet
-from segment_weights.weights import from_config_list
+from cil_regionalization.regions import RegionSet
+from cil_regionalization.weights import from_config_list
 
 SOURCE_VERSION = "units-v1"
 
@@ -247,7 +247,7 @@ class TestConfigurableTree:
         assert set(stats["flavor"]) == {"sweet", "sour"}
 
     def test_expect_must_match_levels(self, tmp_path):
-        from segment_weights.pipelines.montecarlo import TreeConfig
+        from cil_regionalization.pipelines.montecarlo import TreeConfig
 
         with pytest.raises(ValueError, match="must match"):
             TreeConfig.model_validate(
@@ -319,7 +319,7 @@ class TestDryRun:
 
 class TestCliEntryPoint:
     def test_toml_dry_run_then_run(self, weights_dir, tmp_path, capsys):
-        from segment_weights.pipelines.montecarlo import main
+        from cil_regionalization.pipelines.montecarlo import main
 
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
@@ -404,7 +404,7 @@ dir = "out_rel"
 
 class TestNoSiteFactsInCode:
     def test_pipeline_code_carries_no_absolute_paths_or_environments(self):
-        import segment_weights.pipelines.montecarlo as module
+        import cil_regionalization.pipelines.montecarlo as module
 
         source = Path(module.__file__).read_text()
         for forbidden in (
@@ -492,8 +492,8 @@ class TestNetcdfVariant:
 
 
 class TestSegweightsPipelineVerb:
-    def test_dry_run_then_run_via_segweights(self, weights_dir, tmp_path, capsys):
-        from segment_weights.cli import main as segweights_main
+    def test_dry_run_then_run_via_cilreg(self, weights_dir, tmp_path, capsys):
+        from cil_regionalization.cli import main as cilreg_main
 
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
@@ -527,13 +527,13 @@ quantiles = [0.5]
 dir = "{tmp_path / 'out'}"
 """
         )
-        rc = segweights_main(["pipeline", str(cfg_path), "--dry-run"])
+        rc = cilreg_main(["pipeline", str(cfg_path), "--dry-run"])
         captured = capsys.readouterr()
         assert rc == 0
         assert "6 declared leaves" in captured.out
         assert not (tmp_path / "out").exists()
 
-        rc = segweights_main(["pipeline", str(cfg_path)])
+        rc = cilreg_main(["pipeline", str(cfg_path)])
         captured = capsys.readouterr()
         assert rc == 0
         assert "6 leaves aggregated" in captured.out

@@ -246,7 +246,7 @@ Temporary Items
 # End of https://www.toptal.com/developers/gitignore/api/python,pythonvanilla,jupyternotebooks
 
 
-## segment_weights project
+## cil_regionalization project
 
 # local-only working notes, never tracked
 CLAUDE.md

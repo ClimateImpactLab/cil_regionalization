@@ -2,7 +2,7 @@
 
 One-time preparation for IR-to-ADM weight generation against the GADM
 4.1 unit universe, parallel to examples/gadm20/prepare_gadm20_targets.py
-and sharing the same generic machinery in `segment_weights.dissolve`.
+and sharing the same generic machinery in `cil_regionalization.dissolve`.
 This driver holds only the GADM 4.1 facts, established by attribute
 queries against the file rather than assumption.
 
@@ -86,7 +86,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
-from segment_weights.dissolve import LevelSpec, prepare_target_layers
+from cil_regionalization.dissolve import LevelSpec, prepare_target_layers
 
 _DEFAULT_OUT = _ROOT / "data" / "targets" / "gadm41"
 _DEFAULT_VERSION = "gadm-4.10-impactmap-copy-2022"

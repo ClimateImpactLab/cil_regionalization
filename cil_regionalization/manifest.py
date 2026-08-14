@@ -16,12 +16,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from segment_weights.config import Config
-from segment_weights.schema import OutputSchema
+from cil_regionalization.config import Config
+from cil_regionalization.schema import OutputSchema
 
 
 _TRACKED_PACKAGES: tuple[str, ...] = (
-    "segment_weights",
+    "cil_regionalization",
     "geopandas",
     "shapely",
     "pyproj",

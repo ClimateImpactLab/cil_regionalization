@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import ssl
 import sys
 import tempfile
 import urllib.error
@@ -75,6 +76,17 @@ _ROOT = Path(__file__).resolve().parents[1]
 # Fixed timestamp inside built zips so rebuilding from identical inputs
 # yields identical bytes.
 _ZIP_DATE = (2026, 1, 1, 0, 0, 0)
+
+
+def _publish_ssl_context() -> ssl.SSLContext:
+    """certifi's CA bundle when available, for hosts whose OpenSSL has
+    no configured bundle (some cluster environments)."""
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 
 def _load_token(sandbox: bool) -> str:
@@ -116,7 +128,7 @@ def _request(
         headers["Content-Type"] = "application/octet-stream"
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, context=_publish_ssl_context()) as resp:
             text = resp.read().decode() or "{}"
             return json.loads(text)
     except urllib.error.HTTPError as e:

@@ -7,7 +7,7 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import box
 
-from segment_weights.dissolve import LevelSpec, dissolve_layer, prepare_target_layers
+from cil_regionalization.dissolve import LevelSpec, dissolve_layer, prepare_target_layers
 
 
 def _pieces() -> gpd.GeoDataFrame:

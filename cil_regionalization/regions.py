@@ -39,7 +39,7 @@ from typing import Any, Iterator
 import geopandas as gpd
 import shapely
 
-from segment_weights.config import InvalidGeomPolicy, RegionsConfig
+from cil_regionalization.config import InvalidGeomPolicy, RegionsConfig
 
 
 logger = logging.getLogger(__name__)
@@ -151,7 +151,7 @@ def _read_remote_regions(uri: str) -> gpd.GeoDataFrame:
         return gpd.read_file(uri)
     # Shapefiles: download .shp + .dbf + .shx + .prj (if present).
     base = uri[:-4]  # strip ".shp"
-    tmp = Path(tempfile.mkdtemp(prefix="segweights-regions-"))
+    tmp = Path(tempfile.mkdtemp(prefix="cilreg-regions-"))
     for ext in (".shp", ".dbf", ".shx", ".prj"):
         remote = base + ext
         try:

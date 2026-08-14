@@ -30,10 +30,10 @@ from typing import Iterable
 
 import pandas as pd
 
-from segment_weights.config import SourceUnitPolicies
-from segment_weights.grid import GridSpec
-from segment_weights.manifest import Manifest
-from segment_weights.schema import OutputSchema, weight_column
+from cil_regionalization.config import SourceUnitPolicies
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.manifest import Manifest
+from cil_regionalization.schema import OutputSchema, weight_column
 
 
 logger = logging.getLogger(__name__)

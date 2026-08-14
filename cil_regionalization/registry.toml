@@ -1,7 +1,7 @@
 # Registry of published weight artifacts.
 #
 # Maps short artifact names to Zenodo records and file names. The fetch
-# layer reads this file, then any file named by SEGMENT_WEIGHTS_REGISTRY,
+# layer reads this file, then any file named by CIL_REGIONALIZATION_REGISTRY,
 # then any registry_path argument; later entries replace earlier ones of
 # the same name. Adding a published artifact is an edit here (or in a
 # local overlay), never a code change.

@@ -1,4 +1,4 @@
-"""Public API surface for segment_weights.
+"""Public API surface for cil_regionalization.
 
 What a consumer of published weights touches, in call order:
 
@@ -7,7 +7,7 @@ What a consumer of published weights touches, in call order:
     summarize_samples   window means and pooled statistics over MC draws
 
 plus `WeightsArtifact` (the loaded weights) and, for weight generation,
-`Config` / `load_config` with the `segweights` CLI. Everything not
+`Config` / `load_config` with the `cilreg` CLI. Everything not
 exported here is internal and may change without notice.
 
 Package import does two small env-repairs so CLI, notebooks, and library
@@ -51,10 +51,11 @@ except ImportError:
         category=FutureWarning,
     )
 
-from segment_weights.apply import WeightsArtifact, apply_weights
-from segment_weights.config import Config, load_config
-from segment_weights.fetch import clear_cache, fetch_weights, list_cached
-from segment_weights.stats import summarize_samples
+from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.config import Config, load_config
+from cil_regionalization.fetch import clear_cache, fetch_weights, list_cached
+from cil_regionalization.netcdf_io import read_netcdf_leaf
+from cil_regionalization.stats import summarize_samples
 
 __all__ = [
     "Config",
@@ -64,6 +65,7 @@ __all__ = [
     "fetch_weights",
     "list_cached",
     "load_config",
+    "read_netcdf_leaf",
     "summarize_samples",
 ]
 __version__ = "0.1.0"

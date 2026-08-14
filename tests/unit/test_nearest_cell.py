@@ -5,9 +5,9 @@ import pandas as pd
 import pytest
 from shapely.geometry import Polygon, box
 
-from segment_weights.config import GridConfig
-from segment_weights.grid import GridSpec
-from segment_weights.nearest_cell import (
+from cil_regionalization.config import GridConfig
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.nearest_cell import (
     NEAREST_CELL,
     find_missing_regions,
     synthesize_rows,

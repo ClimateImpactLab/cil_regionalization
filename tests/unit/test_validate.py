@@ -4,8 +4,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from segment_weights.schema import OutputSchema
-from segment_weights.validate import check_sum_to_one
+from cil_regionalization.schema import OutputSchema
+from cil_regionalization.validate import check_sum_to_one
 
 
 def _clean_frame() -> pd.DataFrame:
@@ -76,8 +76,8 @@ class TestGridInvariants:
     flagged it."""
 
     def _grid(self):
-        from segment_weights.config import GridConfig
-        from segment_weights.grid import GridSpec
+        from cil_regionalization.config import GridConfig
+        from cil_regionalization.grid import GridSpec
 
         return GridSpec.from_config(
             GridConfig(
@@ -89,7 +89,7 @@ class TestGridInvariants:
         )
 
     def _schema(self):
-        from segment_weights.schema import OutputSchema
+        from cil_regionalization.schema import OutputSchema
 
         return OutputSchema(id_fields=("region_id",), weight_names=("pop",))
 
@@ -106,7 +106,7 @@ class TestGridInvariants:
         }
 
     def test_clean_frame_passes(self):
-        from segment_weights.validate import check_grid_invariants
+        from cil_regionalization.validate import check_grid_invariants
 
         df = pd.DataFrame([self._clean_row()])
         rep = check_grid_invariants(df, self._schema(), self._grid())
@@ -115,7 +115,7 @@ class TestGridInvariants:
 
     def test_cell_ix_out_of_range_caught(self):
         """The exact failure mode the antimeridian SQL bug produced."""
-        from segment_weights.validate import check_grid_invariants
+        from cil_regionalization.validate import check_grid_invariants
 
         row = self._clean_row()
         row["cell_ix"] = 360  # n_ix == 360, so 360 is out of range
@@ -125,7 +125,7 @@ class TestGridInvariants:
         assert "cell_ix_out_of_range" in rep.failures["_invariant"].tolist()
 
     def test_cell_lon_out_of_range_caught(self):
-        from segment_weights.validate import check_grid_invariants
+        from cil_regionalization.validate import check_grid_invariants
 
         row = self._clean_row()
         row["cell_lon"] = 200.5  # outside [-180, 180)
@@ -136,7 +136,7 @@ class TestGridInvariants:
 
     def test_duplicate_key_caught(self):
         """ATA's ix=0 + ix=360 (post-wrap collision) would land here."""
-        from segment_weights.validate import check_grid_invariants
+        from cil_regionalization.validate import check_grid_invariants
 
         df = pd.DataFrame([self._clean_row(), self._clean_row()])
         rep = check_grid_invariants(df, self._schema(), self._grid())
@@ -144,7 +144,7 @@ class TestGridInvariants:
         assert "duplicate_key" in rep.failures["_invariant"].tolist()
 
     def test_summary_lists_invariant_counts(self):
-        from segment_weights.validate import check_grid_invariants
+        from cil_regionalization.validate import check_grid_invariants
 
         row = self._clean_row()
         row["cell_ix"] = 360
@@ -181,7 +181,7 @@ class TestPerSourceDirection:
         )
 
     def _schema(self, normalization: str) -> OutputSchema:
-        from segment_weights.schema import SourceUnits
+        from cil_regionalization.schema import SourceUnits
 
         return OutputSchema(
             id_fields=("gid_1",),
@@ -212,7 +212,7 @@ class TestPolygonInvariants:
     in both normalization directions."""
 
     def _schema(self, normalization: str = "per_source") -> OutputSchema:
-        from segment_weights.schema import SourceUnits
+        from cil_regionalization.schema import SourceUnits
 
         return OutputSchema(
             id_fields=("gid_1",),
@@ -233,7 +233,7 @@ class TestPolygonInvariants:
         )
 
     def test_clean_frame_passes_with_universe(self):
-        from segment_weights.validate import check_polygon_invariants
+        from cil_regionalization.validate import check_polygon_invariants
 
         report = check_polygon_invariants(
             self._clean_allocation_frame(),
@@ -243,7 +243,7 @@ class TestPolygonInvariants:
         assert report.ok, report.summary()
 
     def test_duplicate_pair_flagged(self):
-        from segment_weights.validate import check_polygon_invariants
+        from cil_regionalization.validate import check_polygon_invariants
 
         frame = pd.concat(
             [self._clean_allocation_frame()] * 2, ignore_index=True
@@ -254,7 +254,7 @@ class TestPolygonInvariants:
         assert len(report.failures) == 6  # every row is part of a duplicate
 
     def test_null_key_flagged(self):
-        from segment_weights.validate import check_polygon_invariants
+        from cil_regionalization.validate import check_polygon_invariants
 
         frame = self._clean_allocation_frame()
         frame.loc[0, "hierid"] = None
@@ -263,7 +263,7 @@ class TestPolygonInvariants:
         assert "null_key" in set(report.failures["_invariant"])
 
     def test_missing_source_unit_reported(self):
-        from segment_weights.validate import check_polygon_invariants
+        from cil_regionalization.validate import check_polygon_invariants
 
         report = check_polygon_invariants(
             self._clean_allocation_frame(),
@@ -275,7 +275,7 @@ class TestPolygonInvariants:
         assert "have no row" in report.summary()
 
     def test_unknown_source_unit_flagged(self):
-        from segment_weights.validate import check_polygon_invariants
+        from cil_regionalization.validate import check_polygon_invariants
 
         report = check_polygon_invariants(
             self._clean_allocation_frame(),
@@ -289,7 +289,7 @@ class TestPolygonInvariants:
         assert set(unknown["hierid"]) == {"Y"}
 
     def test_sum_to_one_follows_direction(self):
-        from segment_weights.validate import check_polygon_invariants
+        from cil_regionalization.validate import check_polygon_invariants
 
         frame = self._clean_allocation_frame()
         # Valid per_source (each hierid sums to 1) ...

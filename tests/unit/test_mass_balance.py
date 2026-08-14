@@ -15,9 +15,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from segment_weights.config import SourceUnitPolicies
-from segment_weights.schema import OutputSchema, SourceUnits
-from segment_weights.validate import (
+from cil_regionalization.config import SourceUnitPolicies
+from cil_regionalization.schema import OutputSchema, SourceUnits
+from cil_regionalization.validate import (
     check_mass_balance,
     check_source_coverage,
     enforce_source_policies,
@@ -215,7 +215,7 @@ class TestEnforceSourcePolicies:
         assert "2 zero_weight" in str(exc.value)
 
     def test_skip_records_in_manifest_and_continues(self, caplog):
-        from segment_weights.manifest import Manifest
+        from cil_regionalization.manifest import Manifest
 
         manifest = Manifest(
             config_hash="x",
@@ -239,7 +239,7 @@ class TestEnforceSourcePolicies:
         assert any("unmatched" in r.message for r in caplog.records)
 
     def test_manifest_recorded_even_when_erroring(self):
-        from segment_weights.manifest import Manifest
+        from cil_regionalization.manifest import Manifest
 
         manifest = Manifest(
             config_hash="x",

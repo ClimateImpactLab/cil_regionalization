@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from segment_weights.config import Config
-from segment_weights.manifest import (
+from cil_regionalization.config import Config
+from cil_regionalization.manifest import (
     Manifest,
     build_manifest,
     collect_package_versions,
@@ -59,8 +59,8 @@ class TestHashing:
 
 class TestVersions:
     def test_known_packages_have_versions(self):
-        versions = collect_package_versions(("segment_weights", "pandas", "shapely"))
-        assert versions["segment_weights"] == "0.1.0"
+        versions = collect_package_versions(("cil_regionalization", "pandas", "shapely"))
+        assert versions["cil_regionalization"] == "0.1.0"
         assert versions["pandas"] != "unavailable"
         assert versions["shapely"] != "unavailable"
 
@@ -79,7 +79,7 @@ class TestBuildManifest:
         assert m.lon_convention == "[-180,180)"
         assert m.grid_mode == "generate"
         assert m.grid_resolution == 1.0
-        assert "segment_weights" in m.package_versions
+        assert "cil_regionalization" in m.package_versions
         assert m.python_version  # non-empty
 
     def test_fallback_counts_extensible(self):

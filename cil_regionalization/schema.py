@@ -41,7 +41,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from segment_weights.config import Normalization
+from cil_regionalization.config import Normalization
 
 
 CELL_COLUMNS: tuple[str, ...] = ("cell_ix", "cell_iy", "cell_lon", "cell_lat")

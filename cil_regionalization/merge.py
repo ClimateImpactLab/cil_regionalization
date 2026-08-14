@@ -28,8 +28,8 @@ from typing import Any
 
 import pandas as pd
 
-from segment_weights.schema import OutputSchema
-from segment_weights.validate import check_sum_to_one
+from cil_regionalization.schema import OutputSchema
+from cil_regionalization.validate import check_sum_to_one
 
 
 SOURCE_BIGQUERY = "bigquery"

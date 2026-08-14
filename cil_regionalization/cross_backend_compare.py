@@ -211,7 +211,7 @@ def compare_outputs(
 def load_canonical_parquet(path: str | Path) -> pd.DataFrame:
     """Load a canonical-schema weights parquet from local or `gs://`.
 
-    Both backends write this format (`segment_weights.io.write_result`);
+    Both backends write this format (`cil_regionalization.io.write_result`);
     this helper exists so script and notebook share one loader.
     """
     spath = str(path)

@@ -13,13 +13,13 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from segment_weights.config import Config
-from segment_weights.grid import GridSpec
-from segment_weights.manifest import Manifest
-from segment_weights.regions import RegionSet
-from segment_weights.schema import OutputSchema
-from segment_weights.validate import SumToOneReport
-from segment_weights.weights import WeightSpec
+from cil_regionalization.config import Config
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.manifest import Manifest
+from cil_regionalization.regions import RegionSet
+from cil_regionalization.schema import OutputSchema
+from cil_regionalization.validate import SumToOneReport
+from cil_regionalization.weights import WeightSpec
 
 
 @dataclass

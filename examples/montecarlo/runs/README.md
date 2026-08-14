@@ -6,7 +6,7 @@ scheduler account they name live there. They are the record of how the
 published aggregations were run, not something to run elsewhere. For a
 runnable example, see `examples/aggregation`.
 
-Each TOML drives one `segweights pipeline` run (one damages tree, one
+Each TOML drives one `cilreg pipeline` run (one damages tree, one
 target level, one RCP); the matching .sbatch file submits it. Paths
 inside them name cluster locations current at the time of the runs and
 need updating if the inputs move.

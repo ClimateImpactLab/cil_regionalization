@@ -1,30 +1,30 @@
-"""`segweights` command-line entry point.
+"""`cilreg` command-line entry point.
 
 Subcommands:
 
-    segweights validate <config.toml>
+    cilreg validate <config.toml>
         Load and validate the config, check that referenced files exist,
         and print a one-line summary. No compute. No network.
 
-    segweights run <config.toml> [--test-mode]
+    cilreg run <config.toml> [--test-mode]
         Load the config, dispatch to the configured backend, write results
         and a manifest, then print a one-line summary plus the sum-to-1
         report status. `--test-mode` caps the local backend to the first
         three regions for fast smoke testing.
 
-    segweights pipeline <pipeline.toml> [--dry-run]
+    cilreg pipeline <pipeline.toml> [--dry-run]
         Run the Monte Carlo pipeline (apply weights per leaf, then
         statistics). Thin wrapper over
-        `python -m segment_weights.pipelines.montecarlo`.
+        `python -m cil_regionalization.pipelines.montecarlo`.
 
-    segweights regions find <pattern> <config.toml>
+    cilreg regions find <pattern> <config.toml>
         LIKE-search the configured regions source for matching ids.
 
-    segweights fetch <name> [--record ID] [--base-url URL] [--refresh]
+    cilreg fetch <name> [--record ID] [--base-url URL] [--refresh]
         Fetch a published weight artifact from Zenodo, verify it against
         its manifest checksum, cache it, and print the cached path.
 
-    segweights cache list | clear [--name NAME]
+    cilreg cache list | clear [--name NAME]
         Show or remove cached fetched artifacts.
 """
 from __future__ import annotations
@@ -33,20 +33,20 @@ import argparse
 import sys
 from pathlib import Path
 
-from segment_weights.backends.base import WeightsResult
-from segment_weights.config import Config, load_config
-from segment_weights.grid import GridSpec
-from segment_weights.io import write_result
-from segment_weights.legacy_export import write_legacy_csv
-from segment_weights.regions import RegionSet
-from segment_weights.weights import from_config_list
+from cil_regionalization.backends.base import WeightsResult
+from cil_regionalization.config import Config, load_config
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.io import write_result
+from cil_regionalization.legacy_export import write_legacy_csv
+from cil_regionalization.regions import RegionSet
+from cil_regionalization.weights import from_config_list
 
 
 _TEST_MODE_REGION_CAP = 3
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="segweights")
+    parser = argparse.ArgumentParser(prog="cilreg")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     pv = sub.add_parser(
@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         "--cache-dir",
         type=str,
         default=None,
-        help="cache directory (default ~/.cache/segment_weights)",
+        help="cache directory (default ~/.cache/cil_regionalization)",
     )
     pf.add_argument(
         "--refresh",
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "pipeline":
         # Thin wrapper over the pipeline entry point; the pipeline module
         # owns its argument handling and output.
-        from segment_weights.pipelines.montecarlo import main as pipeline_main
+        from cil_regionalization.pipelines.montecarlo import main as pipeline_main
 
         argv_out = [args.config] + (["--dry-run"] if args.dry_run else [])
         return pipeline_main(argv_out)
@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_fetch(args: argparse.Namespace) -> int:
-    from segment_weights.fetch import FetchError, fetch_weights
+    from cil_regionalization.fetch import FetchError, fetch_weights
 
     try:
         artifact = fetch_weights(
@@ -199,7 +199,7 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
     except FetchError as e:
         print(f"fetch: {e}", file=sys.stderr)
         return 1
-    from segment_weights.fetch import default_cache_dir, list_cached
+    from cil_regionalization.fetch import default_cache_dir, list_cached
 
     cache_dir = args.cache_dir or default_cache_dir()
     entry = next(
@@ -216,7 +216,7 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def _cmd_cache(args: argparse.Namespace) -> int:
-    from segment_weights.fetch import clear_cache, list_cached
+    from cil_regionalization.fetch import clear_cache, list_cached
 
     if args.cache_cmd == "list":
         items = list_cached(args.cache_dir)
@@ -273,7 +273,7 @@ def _cmd_run(
     weight_specs = from_config_list(cfg.weights)
 
     if cfg.backend.kind == "bigquery":
-        from segment_weights.backends.bigquery import BigQueryBackend
+        from cil_regionalization.backends.bigquery import BigQueryBackend
 
         if test_mode:
             keep = cfg.regions.keep or {}
@@ -292,7 +292,7 @@ def _cmd_run(
             )
         backend = BigQueryBackend()
     else:
-        from segment_weights.backends.local import LocalBackend
+        from cil_regionalization.backends.local import LocalBackend
 
         if test_mode and regions.is_local and regions.gdf is not None:
             regions.gdf = regions.gdf.head(_TEST_MODE_REGION_CAP).reset_index(
@@ -379,7 +379,7 @@ def _regions_find_bq(
 def _regions_find_local(
     cfg: Config, primary: str, pattern: str, limit: int
 ) -> int:
-    from segment_weights.regions import RegionSet
+    from cil_regionalization.regions import RegionSet
     import re
 
     regions = RegionSet.from_config(cfg.regions)

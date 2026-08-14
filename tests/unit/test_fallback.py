@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from segment_weights.fallback import (
+from cil_regionalization.fallback import (
     apply_fallback,
     compute_native_weights,
     count_methods,
@@ -138,8 +138,8 @@ class TestFallbackNan:
     def test_nan_regions_invisible_to_sum_to_one_validator(self):
         """The validator must NOT flag NaN regions: NaN > tolerance is
         False, so a region whose weights are NaN is silently ignored."""
-        from segment_weights.schema import OutputSchema
-        from segment_weights.validate import check_sum_to_one
+        from cil_regionalization.schema import OutputSchema
+        from cil_regionalization.validate import check_sum_to_one
 
         # Hand-built frame: region A sums to 1.0; region B is all NaN.
         df = pd.DataFrame(
@@ -200,7 +200,7 @@ class TestImplicitDefaultWarning:
             columns=["region_id", "cell_ix", "cell_iy", "raw"],
         )
 
-        with caplog.at_level("WARNING", logger="segment_weights.fallback"):
+        with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
             apply_fallback(
                 raw, area, "pop", "area", ["region_id"],
                 policy_explicit=False,
@@ -226,7 +226,7 @@ class TestImplicitDefaultWarning:
             [(f"R{i}", i, 0, 100.0) for i in range(10, 20)],
             columns=["region_id", "cell_ix", "cell_iy", "raw"],
         )
-        with caplog.at_level("WARNING", logger="segment_weights.fallback"):
+        with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
             apply_fallback(
                 raw, area, "pop", "area", ["region_id"],
                 policy_explicit=True,
@@ -249,7 +249,7 @@ class TestImplicitDefaultWarning:
             [(f"R{i}", i, 0, 100.0) for i in range(1, 20)],
             columns=["region_id", "cell_ix", "cell_iy", "raw"],
         )
-        with caplog.at_level("WARNING", logger="segment_weights.fallback"):
+        with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
             apply_fallback(
                 raw, area, "pop", "area", ["region_id"],
                 policy_explicit=False,
@@ -335,7 +335,7 @@ def _allocation_area_frame() -> pd.DataFrame:
 
 
 def _ir_units():
-    from segment_weights.schema import SourceUnits
+    from cil_regionalization.schema import SourceUnits
 
     return SourceUnits.from_string_ids(["hierid"])
 

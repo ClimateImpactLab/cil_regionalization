@@ -10,13 +10,13 @@ IR vintage.
 
 Allowed exceptions
 ------------------
-- the ``segweights regions find`` CLI (in ``segment_weights/cli.py``)
+- the ``cilreg regions find`` CLI (in ``cil_regionalization/cli.py``)
   does literal pattern matching that the *user* supplies: the user
   passes a SQL ``LIKE`` pattern, the library translates it to a regex
   in the local-source path, but the library itself interprets nothing
   about hierid structure;
 - vintage regularities are characterised in prose only: the measured
-  world-combo-201710 profile lives in the ``segment_weights/regions.py``
+  world-combo-201710 profile lives in the ``cil_regionalization/regions.py``
   module docstring, with no conclusions encoded in code.
 
 The guard below greps the package source for the obvious structural-
@@ -31,10 +31,10 @@ from pathlib import Path
 
 import pytest
 
-import segment_weights
+import cil_regionalization
 
 
-_PACKAGE_DIR = Path(segment_weights.__file__).resolve().parent
+_PACKAGE_DIR = Path(cil_regionalization.__file__).resolve().parent
 
 # Files allowed to do hierid-pattern operations on USER-SUPPLIED input.
 # Keep this list as short as possible; every entry is a request for

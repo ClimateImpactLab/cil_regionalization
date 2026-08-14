@@ -51,8 +51,8 @@ import logging
 
 import pandas as pd
 
-from segment_weights.config import FallbackPolicy, Normalization
-from segment_weights.schema import (
+from cil_regionalization.config import FallbackPolicy, Normalization
+from cil_regionalization.schema import (
     GRID_CELLS,
     SourceUnits,
     method_column,

@@ -45,9 +45,9 @@ import pandas as pd
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parents[1]))
 
-from segment_weights.apply import WeightsArtifact, apply_weights
-from segment_weights.netcdf_io import read_netcdf_leaf
-from segment_weights.stats import summarize_samples
+from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.netcdf_io import read_netcdf_leaf
+from cil_regionalization.stats import summarize_samples
 
 DATA = _HERE / "data"
 # The impact region geometry vintage the data was built on. apply_weights
@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         adm2_per_source = WeightsArtifact.load(DATA / "weights" / "adm2_per_source")
         restrict = None
     else:
-        from segment_weights import fetch_weights
+        from cil_regionalization import fetch_weights
 
         per_destination = fetch_weights("gadm20-adm1-per-destination")
         per_source = fetch_weights("gadm20-adm1-per-source")

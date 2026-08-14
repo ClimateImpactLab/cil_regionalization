@@ -89,20 +89,20 @@ _LOAD_MAX_ATTEMPTS = 3
 _LOAD_BACKOFF_BASE_SECONDS = 5.0
 _LOAD_BACKOFF_JITTER_SECONDS = 5.0
 
-from segment_weights.backends.base import WeightsBackend, WeightsResult
-from segment_weights.config import Config
-from segment_weights.fallback import (
+from cil_regionalization.backends.base import WeightsBackend, WeightsResult
+from cil_regionalization.config import Config
+from cil_regionalization.fallback import (
     apply_fallback,
     compute_native_weights,
     count_methods,
 )
-from segment_weights.grid import GridSpec
-from segment_weights.manifest import build_manifest, record_schema
-from segment_weights.nearest_cell import find_missing_regions, synthesize_rows
-from segment_weights.regions import RegionSet
-from segment_weights.schema import OutputSchema
-from segment_weights.validate import check_grid_invariants, check_sum_to_one
-from segment_weights.weights import WeightSpec
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.manifest import build_manifest, record_schema
+from cil_regionalization.nearest_cell import find_missing_regions, synthesize_rows
+from cil_regionalization.regions import RegionSet
+from cil_regionalization.schema import OutputSchema
+from cil_regionalization.validate import check_grid_invariants, check_sum_to_one
+from cil_regionalization.weights import WeightSpec
 
 
 _LAT_ORIGIN = -90.0
@@ -117,7 +117,7 @@ class BigQueryBackend(WeightsBackend):
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 "BigQueryBackend requires the [bigquery] extra; "
-                "pip install 'segment_weights[bigquery]'"
+                "pip install 'cil_regionalization[bigquery]'"
             ) from e
         self._bq = bigquery
 
@@ -463,7 +463,7 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
                 f"do not exist in {regions.table} "
                 f"(on_unknown_id='error'): {unknown_ids[:25]}"
                 + ("..." if len(unknown_ids) > 25 else "")
-                + ".\nUse `segweights regions find '<pattern>' <config>` "
+                + ".\nUse `cilreg regions find '<pattern>' <config>` "
                 "to locate the correct id (e.g. 'BMU%' finds the "
                 "BMU.R<hash> form). world-combo-2017 mixes bare ISO3 "
                 "codes, single-remainder suffixes, and admin "
@@ -651,14 +651,14 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         bq_cfg = cfg.backend.bigquery
         # ``v2`` marks the STRING-schema + ST_GEOGFROMTEXT(make_valid=>TRUE)
         # repair pipeline. Old GEOGRAPHY-schema temp tables (named
-        # ``segweights_geom_<hash>`` without the v2 marker) cannot be
+        # ``cilreg_geom_<hash>`` without the v2 marker) cannot be
         # reused: their column type would not match the new main SQL
         # that expects to parse STRING -> GEOGRAPHY itself. The first
         # canonical re-run after this change re-uploads once; subsequent
         # identical-input re-runs cache-hit normally.
         return (
             f"{bq_cfg.project}.{bq_cfg.temp_dataset}."
-            f"segweights_geom_v2_{content_hash}"
+            f"cilreg_geom_v2_{content_hash}"
         )
 
     def _table_exists(self, client, table_id: str) -> bool:
@@ -700,7 +700,7 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         fs = gcsfs.GCSFileSystem()
         staging_uri = (
             bq_cfg.staging_uri.rstrip("/")
-            + f"/segweights_geom_{uuid.uuid4().hex[:12]}.parquet"
+            + f"/cilreg_geom_{uuid.uuid4().hex[:12]}.parquet"
         )
 
         # Defense in depth: the fetch query already filters NULL

@@ -49,7 +49,7 @@ multiprocessing pool. The weights artifact is shipped to workers per
 task, which is acceptable at current artifact sizes and revisitable if
 profiling ever says otherwise.
 
-Entry point: ``python -m segment_weights.pipelines.montecarlo
+Entry point: ``python -m cil_regionalization.pipelines.montecarlo
 <config.toml> [--dry-run]``. Job submission is out of scope; a scheduler
 template that calls this entry point lives under ``examples/``.
 """
@@ -72,9 +72,9 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
     import tomli as tomllib
 
-from segment_weights.apply import WeightsArtifact, apply_weights
-from segment_weights.config import SourceUnitPolicies, _Strict
-from segment_weights.stats import _window_label, pooled_statistics, window_means
+from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.config import SourceUnitPolicies, _Strict
+from cil_regionalization.stats import _window_label, pooled_statistics, window_means
 
 
 VariableKind = Literal["extensive", "intensive", "ratio"]
@@ -383,7 +383,7 @@ def _read_leaf(path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact") ->
     if data_cfg.format == "csv":
         return pd.read_csv(path)
     # netcdf: lazy import so the extra stays optional for parquet users.
-    from segment_weights.netcdf_io import read_netcdf_leaf
+    from cil_regionalization.netcdf_io import read_netcdf_leaf
 
     source_keys = list(artifact.schema.source_units.key_columns)
     if len(source_keys) != 1:
@@ -472,7 +472,7 @@ def _process_leaf(task: tuple) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m segment_weights.pipelines.montecarlo",
+        prog="python -m cil_regionalization.pipelines.montecarlo",
         description="Aggregate a Monte Carlo tree and summarize the samples.",
     )
     parser.add_argument("config", type=str, help="path to a pipeline TOML")

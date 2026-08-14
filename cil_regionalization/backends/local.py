@@ -97,25 +97,25 @@ import shapely
 from exactextract import exact_extract
 from pyproj import Geod
 
-from segment_weights.backends.base import WeightsBackend, WeightsResult
-from segment_weights.compute import dask_client_for
-from segment_weights.config import Config, CoverageMode, RegionsConfig
-from segment_weights.fallback import (
+from cil_regionalization.backends.base import WeightsBackend, WeightsResult
+from cil_regionalization.compute import dask_client_for
+from cil_regionalization.config import Config, CoverageMode, RegionsConfig
+from cil_regionalization.fallback import (
     apply_fallback,
     compute_native_weights,
     count_methods,
 )
-from segment_weights.grid import GridSpec
-from segment_weights.manifest import build_manifest, hash_file, record_schema
-from segment_weights.nearest_cell import find_missing_regions, synthesize_rows
-from segment_weights.regions import RegionSet
-from segment_weights.schema import OutputSchema, SourceUnits
-from segment_weights.validate import (
+from cil_regionalization.grid import GridSpec
+from cil_regionalization.manifest import build_manifest, hash_file, record_schema
+from cil_regionalization.nearest_cell import find_missing_regions, synthesize_rows
+from cil_regionalization.regions import RegionSet
+from cil_regionalization.schema import OutputSchema, SourceUnits
+from cil_regionalization.validate import (
     check_grid_invariants,
     check_polygon_invariants,
     check_sum_to_one,
 )
-from segment_weights.weights import WeightSpec
+from cil_regionalization.weights import WeightSpec
 
 
 _GEOD = Geod(ellps="WGS84")
@@ -1002,7 +1002,7 @@ def _materialize_area_weighted_raster(fraction_path: str) -> str:
         profile.pop(key, None)
     profile.update(dtype="float64", count=1, compress="lzw")
     out_handle = tempfile.NamedTemporaryFile(
-        suffix=".tif", prefix="segweights_areaw_", delete=False
+        suffix=".tif", prefix="cilreg_areaw_", delete=False
     )
     out_handle.close()
     out_path = out_handle.name

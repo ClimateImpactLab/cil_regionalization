@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from segment_weights.backends.base import WeightsResult
-from segment_weights.config import OutputFormat
-from segment_weights.manifest import hash_file
+from cil_regionalization.backends.base import WeightsResult
+from cil_regionalization.config import OutputFormat
+from cil_regionalization.manifest import hash_file
 
 
 def write_result(
