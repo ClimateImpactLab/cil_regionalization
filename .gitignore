@@ -271,6 +271,7 @@ service-account.json
 !tests/data/**/*.csv
 !tests/data/**/*.parquet
 !examples/aggregation/data/**/*.parquet
+!examples/rates/data/**/*.parquet
 
 # notebook execution artifacts
 .ipynb_checkpoints/

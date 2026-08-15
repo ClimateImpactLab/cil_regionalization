@@ -1,0 +1,2572 @@
+{
+  "backend": "local",
+  "config_hash": "fb944c7163eaabbbe43c52a261e4f13dc9dbb7ce60ba16e859843e466d9cf787",
+  "coverage": "exact_fraction",
+  "extra": {
+    "empty_region_count": 12,
+    "empty_regions": [
+      [
+        "MYS",
+        "MYS.5_1",
+        "MYS.5.1_1"
+      ],
+      [
+        "SHN",
+        "SHN.2_1",
+        "SHN.2.1_1"
+      ],
+      [
+        "SHN",
+        "SHN.2_1",
+        "SHN.2.2_1"
+      ],
+      [
+        "SHN",
+        "SHN.2_1",
+        "SHN.2.4_1"
+      ],
+      [
+        "SHN",
+        "SHN.2_1",
+        "SHN.2.5_1"
+      ],
+      [
+        "SHN",
+        "SHN.2_1",
+        "SHN.2.6_1"
+      ],
+      [
+        "SHN",
+        "SHN.2_1",
+        "SHN.2.7_1"
+      ],
+      [
+        "SHN",
+        "SHN.2_1",
+        "SHN.2.8_1"
+      ],
+      [
+        "SLB",
+        "SLB.6_1",
+        "SLB.6.13_1"
+      ],
+      [
+        "SLB",
+        "SLB.6_1",
+        "SLB.6.20_1"
+      ],
+      [
+        "SLB",
+        "SLB.6_1",
+        "SLB.6.9_1"
+      ],
+      [
+        "SLB",
+        "SLB.7_1",
+        "SLB.7.26_1"
+      ]
+    ],
+    "min_segment_area": {
+      "max_discarded_share": 1.0,
+      "segments_dropped": 39525,
+      "threshold_m2": 1.0,
+      "units_fully_dropped": [
+        [
+          "IND.12.129.431"
+        ]
+      ]
+    },
+    "near_domain_edge_regions": [
+      {
+        "GID_0": "ATA",
+        "GID_1": "",
+        "GID_2": "",
+        "overshoot_degrees": 1.1368683772161603e-13
+      },
+      {
+        "GID_0": "FJI",
+        "GID_1": "FJI.3_1",
+        "GID_2": "FJI.3.2_1",
+        "overshoot_degrees": 1.1368683772161603e-13
+      },
+      {
+        "GID_0": "FJI",
+        "GID_1": "FJI.3_1",
+        "GID_2": "FJI.3.3_1",
+        "overshoot_degrees": 1.1368683772161603e-13
+      },
+      {
+        "GID_0": "RUS",
+        "GID_1": "RUS.12_1",
+        "GID_2": "RUS.12.6_1",
+        "overshoot_degrees": 1.1368683772161603e-13
+      },
+      {
+        "GID_0": "RUS",
+        "GID_1": "RUS.12_1",
+        "GID_2": "RUS.12.8_1",
+        "overshoot_degrees": 1.1368683772161603e-13
+      }
+    ],
+    "near_domain_edge_source_units": [
+      {
+        "hierid": "RUS.14.401.401",
+        "overshoot_degrees": 3.410605131648481e-13
+      },
+      {
+        "hierid": "FJI.R13886963f95ae1bc",
+        "overshoot_degrees": 3.410605131648481e-13
+      },
+      {
+        "hierid": "ATA",
+        "overshoot_degrees": 1.525878903407829e-05
+      }
+    ],
+    "repaired_geometry_source_units": [
+      {
+        "hierid": "CAN.2.38.R6e33085594a3166d"
+      },
+      {
+        "hierid": "CAN.1.15.R33d50744b19c2741"
+      },
+      {
+        "hierid": "CAN.4"
+      },
+      {
+        "hierid": "CAN.3.62.Rad867304d09a475e"
+      },
+      {
+        "hierid": "CAN.2.32.R54106f31e3a8aafc"
+      },
+      {
+        "hierid": "CAN.9.148.Rbbea866f149de3d3"
+      },
+      {
+        "hierid": "CAN.5"
+      },
+      {
+        "hierid": "CAN.12"
+      },
+      {
+        "hierid": "CAN.3.48.R05e54cd9ccb1c0cc"
+      },
+      {
+        "hierid": "CAN.2.22.R5d75b3b14877b06d"
+      },
+      {
+        "hierid": "CAN.3.54"
+      },
+      {
+        "hierid": "CAN.2.33.R753f24f3d6444a80"
+      },
+      {
+        "hierid": "CAN.1.13.Re9534afbf7382948"
+      },
+      {
+        "hierid": "CAN.3.69.Rd5516b0a1feb5f83"
+      },
+      {
+        "hierid": "CAN.2.Rf350b540d74ba255"
+      },
+      {
+        "hierid": "CAN.1.R2ed81e6ef22f1e54"
+      },
+      {
+        "hierid": "CAN.9.152.R09ee56bbcbb09bbd"
+      },
+      {
+        "hierid": "CAN.11.268.Rc71b803bc4235090"
+      },
+      {
+        "hierid": "CAN.11.R4f9df3ecb2af0605"
+      },
+      {
+        "hierid": "KHM.17.111.R3381ab2a00c9b65c"
+      },
+      {
+        "hierid": "CHE.R4c85fe9e78078f39"
+      },
+      {
+        "hierid": "JPN.30.R9ef6c036b71d0215"
+      },
+      {
+        "hierid": "JPN.4.R61da7ec1b030598d"
+      },
+      {
+        "hierid": "JPN.20.Rfb18aa77abe55ce4"
+      },
+      {
+        "hierid": "JPN.44.R7513c0b85caa5be8"
+      },
+      {
+        "hierid": "JPN.40.R8097b06b0841ccfc"
+      },
+      {
+        "hierid": "JPN.33.Rfd399de91eb14194"
+      },
+      {
+        "hierid": "JPN.5.R39311148271ffd54"
+      },
+      {
+        "hierid": "LSO.R43efad340adc9191"
+      },
+      {
+        "hierid": "KEN.6.26"
+      },
+      {
+        "hierid": "KOR.13.R0b419343b963bd96"
+      },
+      {
+        "hierid": "PER.2"
+      },
+      {
+        "hierid": "PER.20.R3a14726f24492f0e"
+      },
+      {
+        "hierid": "MLI.8.39"
+      },
+      {
+        "hierid": "MLI.6.29"
+      },
+      {
+        "hierid": "VNM.2.23.Rf3147f16482f4a98"
+      },
+      {
+        "hierid": "VNM.3.29"
+      },
+      {
+        "hierid": "VNM.3.33"
+      },
+      {
+        "hierid": "VNM.2.20.Rb9b480a96693a636"
+      },
+      {
+        "hierid": "VNM.3.31"
+      },
+      {
+        "hierid": "VNM.8.R159f92cd9929d8ac"
+      },
+      {
+        "hierid": "VNM.3.32"
+      },
+      {
+        "hierid": "VNM.5.Rce21fe05f76f4c90"
+      },
+      {
+        "hierid": "VNM.5.49.R4c02f8467366e07a"
+      },
+      {
+        "hierid": "VNM.2.16.Rf8faf9f53c316fac"
+      },
+      {
+        "hierid": "VNM.6.51.R0829aa65c918c44a"
+      },
+      {
+        "hierid": "BRA.17.R859d5132220a5f62"
+      },
+      {
+        "hierid": "PAN.1"
+      },
+      {
+        "hierid": "ECU.Rf900637fae055fd5"
+      },
+      {
+        "hierid": "AUS.6.Re502acb75eb58160"
+      },
+      {
+        "hierid": "SLV.12"
+      },
+      {
+        "hierid": "SLV.14"
+      },
+      {
+        "hierid": "HTI.8.32"
+      },
+      {
+        "hierid": "HTI.6.19"
+      },
+      {
+        "hierid": "PHL.60.1223.Rfd5422eed0ba54c2"
+      },
+      {
+        "hierid": "PHL.61.1242"
+      },
+      {
+        "hierid": "PHL.19"
+      },
+      {
+        "hierid": "PHL.65"
+      },
+      {
+        "hierid": "PHL.27"
+      },
+      {
+        "hierid": "PHL.9"
+      },
+      {
+        "hierid": "PHL.78"
+      },
+      {
+        "hierid": "PHL.18.Rae34da20a4843879"
+      },
+      {
+        "hierid": "PHL.59.Rdc968de25307563d"
+      },
+      {
+        "hierid": "PHL.47.955.Rf7fb64512597c906"
+      },
+      {
+        "hierid": "HRV.R9c95df88d0bf3c0c"
+      },
+      {
+        "hierid": "THA.28.R861a020fcedc486a"
+      },
+      {
+        "hierid": "THA.23.R231e9fb7c4a9a075"
+      },
+      {
+        "hierid": "THA.37"
+      },
+      {
+        "hierid": "THA.14"
+      },
+      {
+        "hierid": "THA.13.Rcae34415f81a8be3"
+      },
+      {
+        "hierid": "THA.73.R2cb78ed3864e88cd"
+      },
+      {
+        "hierid": "THA.16.Rcb6d490f7fb08381"
+      },
+      {
+        "hierid": "THA.16.R430de9a9802fae19"
+      },
+      {
+        "hierid": "THA.54.Rdc5c1fc72c7ec836"
+      },
+      {
+        "hierid": "THA.R34526e675c25d355"
+      },
+      {
+        "hierid": "THA.Re5095fc31c672de8"
+      },
+      {
+        "hierid": "THA.72.Rd30568abf0640d8c"
+      },
+      {
+        "hierid": "THA.Rcc8b41877bc3de74"
+      },
+      {
+        "hierid": "THA.23.R09d48ba8152e23ea"
+      },
+      {
+        "hierid": "THA.R2109d325ad513f78"
+      },
+      {
+        "hierid": "THA.54.Rd5003882bc5e26a3"
+      },
+      {
+        "hierid": "THA.74.R09b45d8c8230dc62"
+      },
+      {
+        "hierid": "THA.10"
+      },
+      {
+        "hierid": "THA.Rddcf04a793312740"
+      },
+      {
+        "hierid": "THA.54.R37911155dc5a6885"
+      },
+      {
+        "hierid": "THA.73.R5d05a0ab71c843be"
+      },
+      {
+        "hierid": "THA.56.R4c749e7b439b1b6a"
+      },
+      {
+        "hierid": "THA.R0012a7f8f3a43a35"
+      },
+      {
+        "hierid": "THA.28.Ra7e59b8c042d571c"
+      },
+      {
+        "hierid": "THA.R9c2940332dc7d5c1"
+      },
+      {
+        "hierid": "THA.69.Rf8a4e129248153ca"
+      },
+      {
+        "hierid": "THA.15"
+      },
+      {
+        "hierid": "THA.29.R84152836d9652485"
+      },
+      {
+        "hierid": "THA.R58bccb46b89e6f74"
+      },
+      {
+        "hierid": "THA.28.R678ebb4740bb1671"
+      },
+      {
+        "hierid": "PRT.12"
+      },
+      {
+        "hierid": "ATG.Rf556856bf414a509"
+      },
+      {
+        "hierid": "BDI.3"
+      },
+      {
+        "hierid": "FJI.R13886963f95ae1bc"
+      },
+      {
+        "hierid": "MDG.2.5.22"
+      },
+      {
+        "hierid": "MDG.6.20.96"
+      },
+      {
+        "hierid": "MDG.4.14.63"
+      },
+      {
+        "hierid": "MDG.5.18.88"
+      },
+      {
+        "hierid": "ITA.17.100"
+      },
+      {
+        "hierid": "VEN.21.Rbef4a8817c7ac2c0"
+      },
+      {
+        "hierid": "DEU.2.10.Re83c19217082ae1b"
+      },
+      {
+        "hierid": "MEX.31.R55093d70b4d963ad"
+      },
+      {
+        "hierid": "MEX.28.R67015e0b23cc51ca"
+      },
+      {
+        "hierid": "PRK.5.Rb3d7939f4cb535c1"
+      },
+      {
+        "hierid": "LKA.14.Rdb0db83132a5a423"
+      },
+      {
+        "hierid": "LKA.24.R60c325785ebd3600"
+      },
+      {
+        "hierid": "LKA.R1ac4d258b3e6e8ca"
+      },
+      {
+        "hierid": "GUY.1"
+      },
+      {
+        "hierid": "GUY.3"
+      },
+      {
+        "hierid": "GUY.7"
+      },
+      {
+        "hierid": "HND.6"
+      },
+      {
+        "hierid": "HND.17"
+      },
+      {
+        "hierid": "GUF.1"
+      }
+    ],
+    "subset": "Mexico slice for the rates example: every row of each source region that touches a Mexican unit, so per-region shares sum to one. Provenance fields describe the full generation run, accounting fields this subset.",
+    "zero_overlap_count": 6,
+    "zero_overlap_source_units": [
+      [
+        "BRA.8.823.1961"
+      ],
+      [
+        "IDN.14.203"
+      ],
+      [
+        "IND.12.129.431"
+      ],
+      [
+        "IND.12.129.432"
+      ],
+      [
+        "VNM.4.37.365.6048"
+      ],
+      [
+        "ZAF.9.313"
+      ]
+    ]
+  },
+  "fallback_counts": {
+    "area": {
+      "native": 24372
+    },
+    "pop": {
+      "area_fallback": 35,
+      "native": 24337
+    }
+  },
+  "grid_mode": null,
+  "grid_resolution": null,
+  "id_fields": [
+    "GID_0",
+    "GID_1",
+    "GID_2"
+  ],
+  "inputs": {
+    "geometry:regions": "f1822b6ce336a1ba1e7cc5889e4c6da7cbce8284741f305d44ee61444c90ad68",
+    "geometry:source": "48950bd807cd8008c1b8f89aef5c05f2db5bee02b8285d44783c27345910f88c",
+    "weight:pop": "825600dd31691a1f7cbace62b59a6a431490400f9a865c5138e94c589787dd54"
+  },
+  "lon_convention": null,
+  "normalization": "per_source",
+  "outputs": {
+    "weights.parquet": "78f8ab499c1e7a094a6e22e27bbcef450d9aa02b06cab4759ae9aa1acbc26aa6"
+  },
+  "package_versions": {
+    "cil_regionalization": "0.1.0",
+    "exactextract": "0.3.0",
+    "geopandas": "1.1.4",
+    "numpy": "2.4.6",
+    "pandas": "3.0.5",
+    "pyarrow": "25.0.1",
+    "pydantic": "2.13.4",
+    "pyproj": "3.7.2",
+    "rasterio": "1.4.4",
+    "shapely": "2.1.2"
+  },
+  "partial_coverage": {
+    "count": 1181,
+    "target_subset": false,
+    "threshold": 0.999,
+    "units": [
+      {
+        "coverage_ratio": 0.10622062575632733,
+        "hierid": "AUS.6.762"
+      },
+      {
+        "coverage_ratio": 0.29576765662749954,
+        "hierid": "CHL.12.45.258"
+      },
+      {
+        "coverage_ratio": 0.3140473023576087,
+        "hierid": "NZL.5.24"
+      },
+      {
+        "coverage_ratio": 0.32554741268184784,
+        "hierid": "NZL.5.23.162"
+      },
+      {
+        "coverage_ratio": 0.3671269262111221,
+        "hierid": "CAN.6.98.2248"
+      },
+      {
+        "coverage_ratio": 0.4004390935373379,
+        "hierid": "NZL.5.23.153"
+      },
+      {
+        "coverage_ratio": 0.430792734444401,
+        "hierid": "AUS.6.880"
+      },
+      {
+        "coverage_ratio": 0.4368562922108489,
+        "hierid": "VNM.2.16.149.1955"
+      },
+      {
+        "coverage_ratio": 0.45298133100649735,
+        "hierid": "CAN.8.117.2351"
+      },
+      {
+        "coverage_ratio": 0.4847047322115908,
+        "hierid": "JPN.37.1512"
+      },
+      {
+        "coverage_ratio": 0.5230201513751154,
+        "hierid": "VNM.2.16.148.1945"
+      },
+      {
+        "coverage_ratio": 0.5287954151168411,
+        "hierid": "BRA.14.2540.4985"
+      },
+      {
+        "coverage_ratio": 0.5451698640524354,
+        "hierid": "CCK"
+      },
+      {
+        "coverage_ratio": 0.6449384896381797,
+        "hierid": "CAN.8.119.2371"
+      },
+      {
+        "coverage_ratio": 0.6502748260589815,
+        "hierid": "AUS.6.834"
+      },
+      {
+        "coverage_ratio": 0.6515706624336488,
+        "hierid": "RUS.5.122.122"
+      },
+      {
+        "coverage_ratio": 0.6781261569575018,
+        "hierid": "GNQ.1"
+      },
+      {
+        "coverage_ratio": 0.6816130749228075,
+        "hierid": "NOR.8.178"
+      },
+      {
+        "coverage_ratio": 0.6865562294735454,
+        "hierid": "BRA.8.837.1994"
+      },
+      {
+        "coverage_ratio": 0.6956703560275386,
+        "hierid": "RUS.29.673.673"
+      },
+      {
+        "coverage_ratio": 0.6989840776303831,
+        "hierid": "AUS.6.528"
+      },
+      {
+        "coverage_ratio": 0.6999653298233504,
+        "hierid": "BRA.10.1311.2704"
+      },
+      {
+        "coverage_ratio": 0.7102150489216231,
+        "hierid": "IDN.8.66"
+      },
+      {
+        "coverage_ratio": 0.7143299423250409,
+        "hierid": "AUS.6.615"
+      },
+      {
+        "coverage_ratio": 0.7174897714549151,
+        "hierid": "AUS.10.1144"
+      },
+      {
+        "coverage_ratio": 0.7546681528871388,
+        "hierid": "AUS.6.847"
+      },
+      {
+        "coverage_ratio": 0.7587756981463823,
+        "hierid": "VNM.2.16.149.1949"
+      },
+      {
+        "coverage_ratio": 0.7605411664216363,
+        "hierid": "UKR.4.69"
+      },
+      {
+        "coverage_ratio": 0.7672980702541221,
+        "hierid": "NOR.8.162"
+      },
+      {
+        "coverage_ratio": 0.783836586187989,
+        "hierid": "UKR.20.471"
+      },
+      {
+        "coverage_ratio": 0.7887348322705787,
+        "hierid": "RUS.5.107.107"
+      },
+      {
+        "coverage_ratio": 0.8005703446064141,
+        "hierid": "GRL.2.3"
+      },
+      {
+        "coverage_ratio": 0.813370329160933,
+        "hierid": "AUS.11.Rea19393e048c00bc"
+      },
+      {
+        "coverage_ratio": 0.8145171538678265,
+        "hierid": "AGO.11.94"
+      },
+      {
+        "coverage_ratio": 0.8169837256801568,
+        "hierid": "CAN.11.259.4282"
+      },
+      {
+        "coverage_ratio": 0.8231186568231196,
+        "hierid": "MYS.11.141"
+      },
+      {
+        "coverage_ratio": 0.8240041287185629,
+        "hierid": "KOR.11.159"
+      },
+      {
+        "coverage_ratio": 0.8251039274668187,
+        "hierid": "VNM.5.49.508.8433"
+      },
+      {
+        "coverage_ratio": 0.8258312575970215,
+        "hierid": "CAN.8.118.2361"
+      },
+      {
+        "coverage_ratio": 0.8284984846473478,
+        "hierid": "BRA.20.3699.7084"
+      },
+      {
+        "coverage_ratio": 0.8319674819216831,
+        "hierid": "NOR.8.188"
+      },
+      {
+        "coverage_ratio": 0.8418416956116929,
+        "hierid": "NOR.8.R33b4473233d27773"
+      },
+      {
+        "coverage_ratio": 0.8459868838282644,
+        "hierid": "AUS.6.687"
+      },
+      {
+        "coverage_ratio": 0.8460655953565874,
+        "hierid": "NOR.8.169"
+      },
+      {
+        "coverage_ratio": 0.8467063121041165,
+        "hierid": "ALA.Ree1987c3c19cbe0d"
+      },
+      {
+        "coverage_ratio": 0.8467837191032118,
+        "hierid": "BLM"
+      },
+      {
+        "coverage_ratio": 0.8471984185894776,
+        "hierid": "CAN.11.259.4265"
+      },
+      {
+        "coverage_ratio": 0.853201402164472,
+        "hierid": "MEX.25.1299"
+      },
+      {
+        "coverage_ratio": 0.8581174788332265,
+        "hierid": "RUS.5.129.129"
+      },
+      {
+        "coverage_ratio": 0.8603123284569884,
+        "hierid": "CAN.8.117.2352"
+      },
+      {
+        "coverage_ratio": 0.8605263766363607,
+        "hierid": "CAN.8.117.2358"
+      },
+      {
+        "coverage_ratio": 0.8619933030488267,
+        "hierid": "NOR.8.168"
+      },
+      {
+        "coverage_ratio": 0.8621343831185396,
+        "hierid": "RUS.51.1258.1375"
+      },
+      {
+        "coverage_ratio": 0.872808749379944,
+        "hierid": "FRO.Rd0d19e626ecb55b4"
+      },
+      {
+        "coverage_ratio": 0.8742177387945389,
+        "hierid": "CAN.8.117.2349"
+      },
+      {
+        "coverage_ratio": 0.8784625383480047,
+        "hierid": "AUS.4.224"
+      },
+      {
+        "coverage_ratio": 0.8790523216591752,
+        "hierid": "UKR.4.68"
+      },
+      {
+        "coverage_ratio": 0.8791816482175189,
+        "hierid": "AUS.7.993"
+      },
+      {
+        "coverage_ratio": 0.8811072323573785,
+        "hierid": "AUS.7.965"
+      },
+      {
+        "coverage_ratio": 0.881193449063555,
+        "hierid": "AUS.10.1207"
+      },
+      {
+        "coverage_ratio": 0.8843194712661986,
+        "hierid": "MEX.23.1234"
+      },
+      {
+        "coverage_ratio": 0.8855109043397767,
+        "hierid": "CAN.8.118.2368"
+      },
+      {
+        "coverage_ratio": 0.886097332175781,
+        "hierid": "NOR.15.355"
+      },
+      {
+        "coverage_ratio": 0.8866128165202117,
+        "hierid": "IDN.20.264"
+      },
+      {
+        "coverage_ratio": 0.8900779787810994,
+        "hierid": "AUS.6.669"
+      },
+      {
+        "coverage_ratio": 0.8901096623663425,
+        "hierid": "VNM.2.16.149.Rce4aa45051c874f5"
+      },
+      {
+        "coverage_ratio": 0.8930704648711848,
+        "hierid": "MEX.18.900"
+      },
+      {
+        "coverage_ratio": 0.8971598907317787,
+        "hierid": "AUS.5.R84c1b444ba347b1b"
+      },
+      {
+        "coverage_ratio": 0.8974068654217061,
+        "hierid": "ASM.Ra9b78739fcd43737"
+      },
+      {
+        "coverage_ratio": 0.8979033180737727,
+        "hierid": "UKR.4.67"
+      },
+      {
+        "coverage_ratio": 0.8998848205478119,
+        "hierid": "BRA.8.836.1993"
+      },
+      {
+        "coverage_ratio": 0.9023118581874157,
+        "hierid": "RUS.5.108.108"
+      },
+      {
+        "coverage_ratio": 0.9025440313121826,
+        "hierid": "VNM.2.16.149.Re7146bb111fafbb3"
+      },
+      {
+        "coverage_ratio": 0.9037630961668542,
+        "hierid": "CAN.8.119.2369"
+      },
+      {
+        "coverage_ratio": 0.9072632333359816,
+        "hierid": "GBR.3.165"
+      },
+      {
+        "coverage_ratio": 0.9074958564471567,
+        "hierid": "AUS.6.664"
+      },
+      {
+        "coverage_ratio": 0.9077152607225333,
+        "hierid": "AUS.5.R50c03f97cdc22746"
+      },
+      {
+        "coverage_ratio": 0.91191609126538,
+        "hierid": "NOR.8.158"
+      },
+      {
+        "coverage_ratio": 0.9127006814961767,
+        "hierid": "BRA.19.3568.6689"
+      },
+      {
+        "coverage_ratio": 0.912736986377986,
+        "hierid": "VNM.2.16.149.Rf654d67c77d3a011"
+      },
+      {
+        "coverage_ratio": 0.9149298939042345,
+        "hierid": "ECU.10.82.406"
+      },
+      {
+        "coverage_ratio": 0.9155630017353303,
+        "hierid": "AUS.11.1304"
+      },
+      {
+        "coverage_ratio": 0.9155931682868055,
+        "hierid": "IDN.7.61"
+      },
+      {
+        "coverage_ratio": 0.9157297380504728,
+        "hierid": "UKR.20.473"
+      },
+      {
+        "coverage_ratio": 0.9168897602602699,
+        "hierid": "AUS.6.585"
+      },
+      {
+        "coverage_ratio": 0.9177479023487592,
+        "hierid": "CAN.6.98.2241"
+      },
+      {
+        "coverage_ratio": 0.9184833366475929,
+        "hierid": "IDN.28.368"
+      },
+      {
+        "coverage_ratio": 0.9192524496991964,
+        "hierid": "AUS.6.790"
+      },
+      {
+        "coverage_ratio": 0.9193903162377596,
+        "hierid": "VNM.6.51.530.8820"
+      },
+      {
+        "coverage_ratio": 0.923287768782417,
+        "hierid": "AUS.6.596"
+      },
+      {
+        "coverage_ratio": 0.925691102852004,
+        "hierid": "IDN.29.369"
+      },
+      {
+        "coverage_ratio": 0.9268885908130298,
+        "hierid": "AUS.6.Ra0242a050757462f"
+      },
+      {
+        "coverage_ratio": 0.9269801634698581,
+        "hierid": "AUS.4.231"
+      },
+      {
+        "coverage_ratio": 0.9270300811686474,
+        "hierid": "AUS.6.570"
+      },
+      {
+        "coverage_ratio": 0.9288008993934551,
+        "hierid": "SJM.1"
+      },
+      {
+        "coverage_ratio": 0.9300799311742014,
+        "hierid": "MEX.3.15"
+      },
+      {
+        "coverage_ratio": 0.9306847823258017,
+        "hierid": "KOR.14.196"
+      },
+      {
+        "coverage_ratio": 0.9310352863235966,
+        "hierid": "KOR.14.194"
+      },
+      {
+        "coverage_ratio": 0.931318028621996,
+        "hierid": "AUS.6.550"
+      },
+      {
+        "coverage_ratio": 0.9322914882839393,
+        "hierid": "CHL.9.31.200"
+      },
+      {
+        "coverage_ratio": 0.9329581663736116,
+        "hierid": "AUS.5.328"
+      },
+      {
+        "coverage_ratio": 0.9334881403016939,
+        "hierid": "AUS.5.339"
+      },
+      {
+        "coverage_ratio": 0.9343712759257877,
+        "hierid": "NOR.8.R5ead39e4a57a15b1"
+      },
+      {
+        "coverage_ratio": 0.9352451005347503,
+        "hierid": "AIA"
+      },
+      {
+        "coverage_ratio": 0.9357650602526958,
+        "hierid": "KOR.10.149"
+      },
+      {
+        "coverage_ratio": 0.935899288077663,
+        "hierid": "NOR.8.157"
+      },
+      {
+        "coverage_ratio": 0.9376754239846065,
+        "hierid": "VNM.4.40.392"
+      },
+      {
+        "coverage_ratio": 0.9392401663514579,
+        "hierid": "AUS.4.242"
+      },
+      {
+        "coverage_ratio": 0.9396470599610401,
+        "hierid": "CHL.8.23.165"
+      },
+      {
+        "coverage_ratio": 0.9396767077893441,
+        "hierid": "CHL.9.28.197"
+      },
+      {
+        "coverage_ratio": 0.9396935599553676,
+        "hierid": "CAN.8.117.2346"
+      },
+      {
+        "coverage_ratio": 0.9403174524480752,
+        "hierid": "CAN.8.118.2363"
+      },
+      {
+        "coverage_ratio": 0.9407422427536014,
+        "hierid": "AUS.6.747"
+      },
+      {
+        "coverage_ratio": 0.9415354566970981,
+        "hierid": "NOR.15.349"
+      },
+      {
+        "coverage_ratio": 0.9416037523368539,
+        "hierid": "RUS.65.1741.1858"
+      },
+      {
+        "coverage_ratio": 0.9419720888219169,
+        "hierid": "FIN.2.5.16.78"
+      },
+      {
+        "coverage_ratio": 0.9422436056259238,
+        "hierid": "CHL.13.51.282"
+      },
+      {
+        "coverage_ratio": 0.9426952988141788,
+        "hierid": "IDN.20.263"
+      },
+      {
+        "coverage_ratio": 0.9436113861115925,
+        "hierid": "KOR.1.14"
+      },
+      {
+        "coverage_ratio": 0.9441283032940627,
+        "hierid": "AUS.10.1056"
+      },
+      {
+        "coverage_ratio": 0.9441522306992491,
+        "hierid": "BRA.14.2541.R7f4f82add8e39b58"
+      },
+      {
+        "coverage_ratio": 0.9443582710634207,
+        "hierid": "AUS.7.995"
+      },
+      {
+        "coverage_ratio": 0.9448171780644861,
+        "hierid": "CHL.1.1.3"
+      },
+      {
+        "coverage_ratio": 0.9450576231496467,
+        "hierid": "AUS.8.1033"
+      },
+      {
+        "coverage_ratio": 0.946021415058671,
+        "hierid": "AUS.4.226"
+      },
+      {
+        "coverage_ratio": 0.9462236431760277,
+        "hierid": "CAN.6.98.2245"
+      },
+      {
+        "coverage_ratio": 0.9466030897116016,
+        "hierid": "SJM.2"
+      },
+      {
+        "coverage_ratio": 0.9467507152529122,
+        "hierid": "RUS.50.R9f2fcd8b569ad491"
+      },
+      {
+        "coverage_ratio": 0.9468645104880877,
+        "hierid": "UKR.16.381"
+      },
+      {
+        "coverage_ratio": 0.9472684911064682,
+        "hierid": "KOR.11.156"
+      },
+      {
+        "coverage_ratio": 0.9475603264488613,
+        "hierid": "NOR.15.364"
+      },
+      {
+        "coverage_ratio": 0.94761625657337,
+        "hierid": "GRL.1.2"
+      },
+      {
+        "coverage_ratio": 0.9478588935789676,
+        "hierid": "CHL.1.1.2"
+      },
+      {
+        "coverage_ratio": 0.9479214923507245,
+        "hierid": "UKR.20.472"
+      },
+      {
+        "coverage_ratio": 0.9481744027515211,
+        "hierid": "NOR.15.344"
+      },
+      {
+        "coverage_ratio": 0.9483358771747556,
+        "hierid": "IDN.4.38"
+      },
+      {
+        "coverage_ratio": 0.9487227491365979,
+        "hierid": "CHL.13.47.263"
+      },
+      {
+        "coverage_ratio": 0.9491230227508441,
+        "hierid": "IDN.17.239"
+      },
+      {
+        "coverage_ratio": 0.9495541426189081,
+        "hierid": "AUS.4.270"
+      },
+      {
+        "coverage_ratio": 0.9516000882470721,
+        "hierid": "AUS.8.1019"
+      },
+      {
+        "coverage_ratio": 0.953180106067646,
+        "hierid": "SYC"
+      },
+      {
+        "coverage_ratio": 0.9532209486516081,
+        "hierid": "IDN.16.234"
+      },
+      {
+        "coverage_ratio": 0.9535263907911113,
+        "hierid": "CAN.8.119.2374"
+      },
+      {
+        "coverage_ratio": 0.9540481739307717,
+        "hierid": "MAC"
+      },
+      {
+        "coverage_ratio": 0.9548273836391158,
+        "hierid": "CHL.5.15.86"
+      },
+      {
+        "coverage_ratio": 0.9551550813829522,
+        "hierid": "BRA.3.130.Rc6a69f1d3384fc9f"
+      },
+      {
+        "coverage_ratio": 0.9553280726197656,
+        "hierid": "AUS.6.458"
+      },
+      {
+        "coverage_ratio": 0.955559523177776,
+        "hierid": "CAN.8.118.2366"
+      },
+      {
+        "coverage_ratio": 0.955580020547449,
+        "hierid": "NOR.15.346"
+      },
+      {
+        "coverage_ratio": 0.9565936073480066,
+        "hierid": "IDN.5.45"
+      },
+      {
+        "coverage_ratio": 0.9570348270962583,
+        "hierid": "CAN.8.117.2348"
+      },
+      {
+        "coverage_ratio": 0.9572917929826171,
+        "hierid": "AUS.6.735"
+      },
+      {
+        "coverage_ratio": 0.9573523888737108,
+        "hierid": "AUS.7.Rf5e1b0ebf0d068f0"
+      },
+      {
+        "coverage_ratio": 0.9573974572633062,
+        "hierid": "CHL.8.27.192"
+      },
+      {
+        "coverage_ratio": 0.9574851510409991,
+        "hierid": "AUS.4.150"
+      },
+      {
+        "coverage_ratio": 0.9575207281616069,
+        "hierid": "MEX.28.1423"
+      },
+      {
+        "coverage_ratio": 0.9576324990029029,
+        "hierid": "IDN.22.282"
+      },
+      {
+        "coverage_ratio": 0.9578891229681054,
+        "hierid": "VNM.6.51.530.8822"
+      },
+      {
+        "coverage_ratio": 0.9581137702384988,
+        "hierid": "AUS.6.701"
+      },
+      {
+        "coverage_ratio": 0.9584408276631707,
+        "hierid": "VNM.5.49.507.8413"
+      },
+      {
+        "coverage_ratio": 0.9589849534197435,
+        "hierid": "NOR.8.180"
+      },
+      {
+        "coverage_ratio": 0.9593310897761053,
+        "hierid": "GRL.2.12"
+      },
+      {
+        "coverage_ratio": 0.9598585256957977,
+        "hierid": "IDN.1.21"
+      },
+      {
+        "coverage_ratio": 0.959926775851757,
+        "hierid": "AUS.6.482"
+      },
+      {
+        "coverage_ratio": 0.9602780059698499,
+        "hierid": "NOR.8.161"
+      },
+      {
+        "coverage_ratio": 0.9608440925103232,
+        "hierid": "AUS.8.1044"
+      },
+      {
+        "coverage_ratio": 0.9612253902789495,
+        "hierid": "NZL.4.22"
+      },
+      {
+        "coverage_ratio": 0.9621921498308044,
+        "hierid": "AUS.10.1131"
+      },
+      {
+        "coverage_ratio": 0.962477134580176,
+        "hierid": "AUS.5.Rf8ae3a88000ae280"
+      },
+      {
+        "coverage_ratio": 0.9625590630328652,
+        "hierid": "AUS.8.1013"
+      },
+      {
+        "coverage_ratio": 0.9626602221984233,
+        "hierid": "AUS.11.R809b6c6c93ffaf48"
+      },
+      {
+        "coverage_ratio": 0.9626744106998965,
+        "hierid": "CAN.6.98.2246"
+      },
+      {
+        "coverage_ratio": 0.9630095184384345,
+        "hierid": "AUS.4.283"
+      },
+      {
+        "coverage_ratio": 0.9631086146732296,
+        "hierid": "COD.2.6.22"
+      },
+      {
+        "coverage_ratio": 0.9631822991217533,
+        "hierid": "MEX.25.1309"
+      },
+      {
+        "coverage_ratio": 0.963296902652632,
+        "hierid": "IDN.17.235"
+      },
+      {
+        "coverage_ratio": 0.9633543434553977,
+        "hierid": "AUS.4.298"
+      },
+      {
+        "coverage_ratio": 0.9636346215271472,
+        "hierid": "AUS.5.394"
+      },
+      {
+        "coverage_ratio": 0.9636684633720778,
+        "hierid": "AUS.6.Re502acb75eb58160"
+      },
+      {
+        "coverage_ratio": 0.9636955976965382,
+        "hierid": "BRA.19.3572.6699"
+      },
+      {
+        "coverage_ratio": 0.9637129747923617,
+        "hierid": "AUS.4.R874d7ca7a97764c3"
+      },
+      {
+        "coverage_ratio": 0.9638182082410092,
+        "hierid": "CAN.8.119.2376"
+      },
+      {
+        "coverage_ratio": 0.9639558228072056,
+        "hierid": "AUS.6.R1b6ebe56df638b56"
+      },
+      {
+        "coverage_ratio": 0.9640073413714346,
+        "hierid": "IDN.12.150"
+      },
+      {
+        "coverage_ratio": 0.9641724983593146,
+        "hierid": "KOR.14.190"
+      },
+      {
+        "coverage_ratio": 0.9643160496035948,
+        "hierid": "UKR.20.470"
+      },
+      {
+        "coverage_ratio": 0.964429289997192,
+        "hierid": "BGD.2.4.9.63"
+      },
+      {
+        "coverage_ratio": 0.964460699219363,
+        "hierid": "USA.2.83"
+      },
+      {
+        "coverage_ratio": 0.9650357962401394,
+        "hierid": "KOR.10.135"
+      },
+      {
+        "coverage_ratio": 0.9651339634372803,
+        "hierid": "NOR.15.Rdfed1b4287c5febe"
+      },
+      {
+        "coverage_ratio": 0.9651380320317433,
+        "hierid": "AUS.4.R1084710e503e28ac"
+      },
+      {
+        "coverage_ratio": 0.9652127234830663,
+        "hierid": "CAN.11.259.Rb20b5ac105e34da9"
+      },
+      {
+        "coverage_ratio": 0.9652766317034612,
+        "hierid": "CAN.8.117.2353"
+      },
+      {
+        "coverage_ratio": 0.9654909308311441,
+        "hierid": "VNM.2.21.Rc5e6ecb6ecee6d9e"
+      },
+      {
+        "coverage_ratio": 0.9656387179390062,
+        "hierid": "IDN.17.236"
+      },
+      {
+        "coverage_ratio": 0.9662486680299156,
+        "hierid": "AUS.6.820"
+      },
+      {
+        "coverage_ratio": 0.9662574820516954,
+        "hierid": "AUS.10.1162"
+      },
+      {
+        "coverage_ratio": 0.9666601110422612,
+        "hierid": "IDN.12.177"
+      },
+      {
+        "coverage_ratio": 0.9668759316782262,
+        "hierid": "CHL.8.23.159"
+      },
+      {
+        "coverage_ratio": 0.9669847707313521,
+        "hierid": "AUS.6.748"
+      },
+      {
+        "coverage_ratio": 0.9676985920391941,
+        "hierid": "BRA.19.3634.6944"
+      },
+      {
+        "coverage_ratio": 0.9678798219533113,
+        "hierid": "KOR.14.191"
+      },
+      {
+        "coverage_ratio": 0.9680250406908932,
+        "hierid": "IDN.17.238"
+      },
+      {
+        "coverage_ratio": 0.9681613695785688,
+        "hierid": "BRA.19.3634.R7443a79b44de9a70"
+      },
+      {
+        "coverage_ratio": 0.9683173408534967,
+        "hierid": "BRA.14.R4423a0299812c18d"
+      },
+      {
+        "coverage_ratio": 0.9683379239772587,
+        "hierid": "AUS.6.675"
+      },
+      {
+        "coverage_ratio": 0.9684639039847528,
+        "hierid": "AUS.6.769"
+      },
+      {
+        "coverage_ratio": 0.9684855927440716,
+        "hierid": "BRA.25.4971.9395"
+      },
+      {
+        "coverage_ratio": 0.9684990786711188,
+        "hierid": "AUS.4.Re2f858286bfa0891"
+      },
+      {
+        "coverage_ratio": 0.9686107974851558,
+        "hierid": "NZL.1"
+      },
+      {
+        "coverage_ratio": 0.9686116251639676,
+        "hierid": "LBN.2.5"
+      },
+      {
+        "coverage_ratio": 0.9688226135850495,
+        "hierid": "KOR.11.154"
+      },
+      {
+        "coverage_ratio": 0.9688372187474803,
+        "hierid": "IDN.23.293"
+      },
+      {
+        "coverage_ratio": 0.9688975408673091,
+        "hierid": "COD.2.6.21"
+      },
+      {
+        "coverage_ratio": 0.9690417608228715,
+        "hierid": "USA.5.190"
+      },
+      {
+        "coverage_ratio": 0.9692036697375648,
+        "hierid": "CAN.8.119.2370"
+      },
+      {
+        "coverage_ratio": 0.9692485678370457,
+        "hierid": "CAN.11.259.R722a8f1d88acb4ad"
+      },
+      {
+        "coverage_ratio": 0.9692544386642871,
+        "hierid": "CAN.8.117.2359"
+      },
+      {
+        "coverage_ratio": 0.9697092719579969,
+        "hierid": "AUS.10.1102"
+      },
+      {
+        "coverage_ratio": 0.9697310010235931,
+        "hierid": "AUS.4.254"
+      },
+      {
+        "coverage_ratio": 0.9700012849067486,
+        "hierid": "DEU.8.19.201"
+      },
+      {
+        "coverage_ratio": 0.9701525676694885,
+        "hierid": "CHL.9.29.198"
+      },
+      {
+        "coverage_ratio": 0.9702106262749248,
+        "hierid": "AUS.6.600"
+      },
+      {
+        "coverage_ratio": 0.9702149601797148,
+        "hierid": "VNM.3.32"
+      },
+      {
+        "coverage_ratio": 0.9702758458266246,
+        "hierid": "NOR.8.R3ded7c0315cf9158"
+      },
+      {
+        "coverage_ratio": 0.970294997293631,
+        "hierid": "CAN.8.119.2373"
+      },
+      {
+        "coverage_ratio": 0.9703231311874231,
+        "hierid": "AUS.6.802"
+      },
+      {
+        "coverage_ratio": 0.970371048145658,
+        "hierid": "AUS.6.768"
+      },
+      {
+        "coverage_ratio": 0.9703755781297606,
+        "hierid": "IDN.27.350"
+      },
+      {
+        "coverage_ratio": 0.9706188541627335,
+        "hierid": "CHL.8.23.161"
+      },
+      {
+        "coverage_ratio": 0.9708094786117278,
+        "hierid": "KOR.1.R9bba2a8ea1df493d"
+      },
+      {
+        "coverage_ratio": 0.9708952789156731,
+        "hierid": "AUS.6.495"
+      },
+      {
+        "coverage_ratio": 0.9709084632351693,
+        "hierid": "AUS.6.498"
+      },
+      {
+        "coverage_ratio": 0.9709764081064877,
+        "hierid": "ATA"
+      },
+      {
+        "coverage_ratio": 0.9710906683392992,
+        "hierid": "KOR.9.126"
+      },
+      {
+        "coverage_ratio": 0.9713706690786986,
+        "hierid": "BGD.2.4.8.58"
+      },
+      {
+        "coverage_ratio": 0.9714043897147399,
+        "hierid": "BOL.3.30.89"
+      },
+      {
+        "coverage_ratio": 0.9716258676646721,
+        "hierid": "GRL.3.19"
+      },
+      {
+        "coverage_ratio": 0.9722285569182448,
+        "hierid": "RUS.14.Rdd2e9902f80893b8"
+      },
+      {
+        "coverage_ratio": 0.9726452499002092,
+        "hierid": "AUS.6.490"
+      },
+      {
+        "coverage_ratio": 0.9727100155259548,
+        "hierid": "IDN.7.59"
+      },
+      {
+        "coverage_ratio": 0.9727282021987433,
+        "hierid": "AUS.8.1022"
+      },
+      {
+        "coverage_ratio": 0.972813135603676,
+        "hierid": "IDN.29.371"
+      },
+      {
+        "coverage_ratio": 0.9728996456924166,
+        "hierid": "AUS.6.767"
+      },
+      {
+        "coverage_ratio": 0.9729471133915087,
+        "hierid": "NOR.15.R62b59184362ea41b"
+      },
+      {
+        "coverage_ratio": 0.9731093919528349,
+        "hierid": "COL.5.169"
+      },
+      {
+        "coverage_ratio": 0.9734292174661048,
+        "hierid": "RUS.50.1252.1369"
+      },
+      {
+        "coverage_ratio": 0.9736173716799993,
+        "hierid": "DEU.9.22.Rdf275857b5460fff"
+      },
+      {
+        "coverage_ratio": 0.9737612024368647,
+        "hierid": "BRA.19.3568.R2fdcdb358dc50a59"
+      },
+      {
+        "coverage_ratio": 0.9738000159840817,
+        "hierid": "AUS.6.668"
+      },
+      {
+        "coverage_ratio": 0.97391747505274,
+        "hierid": "ECU.10.R7195f713f05a4b1a"
+      },
+      {
+        "coverage_ratio": 0.9742897867403456,
+        "hierid": "VNM.6.51.530.8813"
+      },
+      {
+        "coverage_ratio": 0.9746427598896592,
+        "hierid": "MEX.4.24"
+      },
+      {
+        "coverage_ratio": 0.9747153234652659,
+        "hierid": "IRL.6"
+      },
+      {
+        "coverage_ratio": 0.9747942339739154,
+        "hierid": "AUS.4.275"
+      },
+      {
+        "coverage_ratio": 0.9748063357296098,
+        "hierid": "CHL.13.53.298"
+      },
+      {
+        "coverage_ratio": 0.974861308691544,
+        "hierid": "AUS.7.963"
+      },
+      {
+        "coverage_ratio": 0.974861800437453,
+        "hierid": "AUS.4.R6f628606a0c7962f"
+      },
+      {
+        "coverage_ratio": 0.9748979171862376,
+        "hierid": "GBR.1.33"
+      },
+      {
+        "coverage_ratio": 0.9749512889423252,
+        "hierid": "DZA.39.1204"
+      },
+      {
+        "coverage_ratio": 0.9751409836701362,
+        "hierid": "CAN.8.117.2347"
+      },
+      {
+        "coverage_ratio": 0.9751427680510895,
+        "hierid": "BGD.2.4.9.66"
+      },
+      {
+        "coverage_ratio": 0.9759390962440387,
+        "hierid": "RUS.14.395.395"
+      },
+      {
+        "coverage_ratio": 0.9760254330468965,
+        "hierid": "USA.2.71"
+      },
+      {
+        "coverage_ratio": 0.9762362770270997,
+        "hierid": "AUS.11.Rfd212c7431c4fcfa"
+      },
+      {
+        "coverage_ratio": 0.9762632419557139,
+        "hierid": "AUS.7.964"
+      },
+      {
+        "coverage_ratio": 0.9762734072435914,
+        "hierid": "AUS.4.R262fbd9326bc3f1e"
+      },
+      {
+        "coverage_ratio": 0.9763367584923459,
+        "hierid": "RUS.74.2075.2192"
+      },
+      {
+        "coverage_ratio": 0.9764146079371931,
+        "hierid": "AUS.10.1105"
+      },
+      {
+        "coverage_ratio": 0.9765647680821211,
+        "hierid": "IDN.17.237"
+      },
+      {
+        "coverage_ratio": 0.9773738765207186,
+        "hierid": "MEX.30.R38e3fc0a140a32a5"
+      },
+      {
+        "coverage_ratio": 0.9773791655000963,
+        "hierid": "NZL.10.R54019575279d1e9e"
+      },
+      {
+        "coverage_ratio": 0.9775204380218125,
+        "hierid": "ISL.3.R5d10609bb3951034"
+      },
+      {
+        "coverage_ratio": 0.9775427194345925,
+        "hierid": "UKR.17.R50885c871f8dbca6"
+      },
+      {
+        "coverage_ratio": 0.9776534155568561,
+        "hierid": "IDN.1.20"
+      },
+      {
+        "coverage_ratio": 0.977669358856582,
+        "hierid": "UKR.9.Ra3db047828584f79"
+      },
+      {
+        "coverage_ratio": 0.9776891687508403,
+        "hierid": "AUS.10.1229"
+      },
+      {
+        "coverage_ratio": 0.9778162416093803,
+        "hierid": "MEX.23.1235"
+      },
+      {
+        "coverage_ratio": 0.9779636051502261,
+        "hierid": "AUS.6.R1e02c809078fbee0"
+      },
+      {
+        "coverage_ratio": 0.9780434529495302,
+        "hierid": "AUS.10.1110"
+      },
+      {
+        "coverage_ratio": 0.9785881479723377,
+        "hierid": "IDN.32.429"
+      },
+      {
+        "coverage_ratio": 0.9786134477108565,
+        "hierid": "KOR.14.192"
+      },
+      {
+        "coverage_ratio": 0.9786464579483466,
+        "hierid": "KOR.8.92"
+      },
+      {
+        "coverage_ratio": 0.9787329217103518,
+        "hierid": "AUS.6.756"
+      },
+      {
+        "coverage_ratio": 0.9788306224179523,
+        "hierid": "AUS.6.745"
+      },
+      {
+        "coverage_ratio": 0.9789729554502984,
+        "hierid": "GBR.1.30"
+      },
+      {
+        "coverage_ratio": 0.9792117669185992,
+        "hierid": "GBR.3.151"
+      },
+      {
+        "coverage_ratio": 0.9792590097793222,
+        "hierid": "RUS.65.1725.1842"
+      },
+      {
+        "coverage_ratio": 0.979414699018141,
+        "hierid": "UKR.26.R879ddb1d5b166c16"
+      },
+      {
+        "coverage_ratio": 0.9794177746059988,
+        "hierid": "AUS.7.926"
+      },
+      {
+        "coverage_ratio": 0.9794668170431727,
+        "hierid": "RUS.14.399.399"
+      },
+      {
+        "coverage_ratio": 0.9795371587377842,
+        "hierid": "AUS.6.424"
+      },
+      {
+        "coverage_ratio": 0.9796208673158585,
+        "hierid": "AUS.6.703"
+      },
+      {
+        "coverage_ratio": 0.9799868705985321,
+        "hierid": "AUS.6.840"
+      },
+      {
+        "coverage_ratio": 0.9800059579016044,
+        "hierid": "KOR.1.Rc91e34266c03076e"
+      },
+      {
+        "coverage_ratio": 0.9800196419807262,
+        "hierid": "UKR.17.R951d751e9f0b86c3"
+      },
+      {
+        "coverage_ratio": 0.9800734301873146,
+        "hierid": "DEU.15.39.406"
+      },
+      {
+        "coverage_ratio": 0.9801016827412853,
+        "hierid": "GRL.2.14"
+      },
+      {
+        "coverage_ratio": 0.9801363171702924,
+        "hierid": "AUS.6.628"
+      },
+      {
+        "coverage_ratio": 0.9802073358606841,
+        "hierid": "IDN.26.343"
+      },
+      {
+        "coverage_ratio": 0.9802413820344366,
+        "hierid": "CHL.8.23.164"
+      },
+      {
+        "coverage_ratio": 0.9802878490244586,
+        "hierid": "KOR.10.146"
+      },
+      {
+        "coverage_ratio": 0.9803543426252458,
+        "hierid": "IDN.3.31"
+      },
+      {
+        "coverage_ratio": 0.9804042669977211,
+        "hierid": "UKR.6.137"
+      },
+      {
+        "coverage_ratio": 0.9805568920999421,
+        "hierid": "CAN.11.259.R4f288ee48fe8e3b2"
+      },
+      {
+        "coverage_ratio": 0.9806105741365654,
+        "hierid": "CAN.11.259.Rbf59f7bfb8bf27ea"
+      },
+      {
+        "coverage_ratio": 0.9806139651444822,
+        "hierid": "AUS.4.Rd13486740b153464"
+      },
+      {
+        "coverage_ratio": 0.9806235773740898,
+        "hierid": "AUS.6.R2c5c70f09ece3e5d"
+      },
+      {
+        "coverage_ratio": 0.9807385700514988,
+        "hierid": "ECU.9.71.388"
+      },
+      {
+        "coverage_ratio": 0.981061525315925,
+        "hierid": "BRA.10.R72cb2a13a1334024"
+      },
+      {
+        "coverage_ratio": 0.9811930681918486,
+        "hierid": "CHL.8.23.162"
+      },
+      {
+        "coverage_ratio": 0.9812399497443273,
+        "hierid": "KOR.10.144"
+      },
+      {
+        "coverage_ratio": 0.981240488322826,
+        "hierid": "AGO.11.98"
+      },
+      {
+        "coverage_ratio": 0.9812736576645007,
+        "hierid": "CHL.1.2.6"
+      },
+      {
+        "coverage_ratio": 0.981293870820644,
+        "hierid": "AUS.10.1183"
+      },
+      {
+        "coverage_ratio": 0.9814689458398158,
+        "hierid": "RUS.65.1728.1845"
+      },
+      {
+        "coverage_ratio": 0.9814894790958231,
+        "hierid": "CHL.13.51.280"
+      },
+      {
+        "coverage_ratio": 0.9815004923719504,
+        "hierid": "AUS.6.673"
+      },
+      {
+        "coverage_ratio": 0.9815159362852611,
+        "hierid": "RUS.14.401.401"
+      },
+      {
+        "coverage_ratio": 0.9815438355718425,
+        "hierid": "RUS.5.119.119"
+      },
+      {
+        "coverage_ratio": 0.9815556729250001,
+        "hierid": "GBR.3.161"
+      },
+      {
+        "coverage_ratio": 0.9815590855089986,
+        "hierid": "NOR.R33edcc93bdb447ab"
+      },
+      {
+        "coverage_ratio": 0.9815615964977299,
+        "hierid": "AUS.11.1261"
+      },
+      {
+        "coverage_ratio": 0.9815784278702082,
+        "hierid": "ISL.8.R2cc87db221f6ed0a"
+      },
+      {
+        "coverage_ratio": 0.9816633843260052,
+        "hierid": "IDN.20.261"
+      },
+      {
+        "coverage_ratio": 0.9817084028668679,
+        "hierid": "IDN.29.376"
+      },
+      {
+        "coverage_ratio": 0.9818057178722925,
+        "hierid": "GRL.2.16"
+      },
+      {
+        "coverage_ratio": 0.9818357473841226,
+        "hierid": "USA.2.85"
+      },
+      {
+        "coverage_ratio": 0.9818494797779225,
+        "hierid": "GRL.3.18"
+      },
+      {
+        "coverage_ratio": 0.9819279216912277,
+        "hierid": "BGD.2.7.16.114"
+      },
+      {
+        "coverage_ratio": 0.9820366683645009,
+        "hierid": "AUS.8.1040"
+      },
+      {
+        "coverage_ratio": 0.9820657181581388,
+        "hierid": "AUS.8.1031"
+      },
+      {
+        "coverage_ratio": 0.9820922254277425,
+        "hierid": "IDN.7.58"
+      },
+      {
+        "coverage_ratio": 0.9821737920780607,
+        "hierid": "DZA.32.R4df1b53a4e78f758"
+      },
+      {
+        "coverage_ratio": 0.9823836059301854,
+        "hierid": "MEX.31.Rb9d3a5eb7f099120"
+      },
+      {
+        "coverage_ratio": 0.9823969258790224,
+        "hierid": "CAN.8.118.2364"
+      },
+      {
+        "coverage_ratio": 0.9824085384853641,
+        "hierid": "AGO.11.99"
+      },
+      {
+        "coverage_ratio": 0.9825282700709201,
+        "hierid": "ARE.8"
+      },
+      {
+        "coverage_ratio": 0.982533267604985,
+        "hierid": "BRA.8.882"
+      },
+      {
+        "coverage_ratio": 0.9825680251976013,
+        "hierid": "CHL.9.32.203"
+      },
+      {
+        "coverage_ratio": 0.982775270503739,
+        "hierid": "DEU.15.39.R93d8168fa62d63eb"
+      },
+      {
+        "coverage_ratio": 0.9827836223632725,
+        "hierid": "AUS.10.1184"
+      },
+      {
+        "coverage_ratio": 0.9828435944785957,
+        "hierid": "ARE.2"
+      },
+      {
+        "coverage_ratio": 0.9828736822147182,
+        "hierid": "BOL.6.60.211"
+      },
+      {
+        "coverage_ratio": 0.9828837155773247,
+        "hierid": "KOR.1.5"
+      },
+      {
+        "coverage_ratio": 0.9828868443204912,
+        "hierid": "AUS.5.377"
+      },
+      {
+        "coverage_ratio": 0.983075124368461,
+        "hierid": "NLD.9.310"
+      },
+      {
+        "coverage_ratio": 0.9831989910785004,
+        "hierid": "AUS.8.1030"
+      },
+      {
+        "coverage_ratio": 0.9832123321778792,
+        "hierid": "NOR.Re57b2dc0327882b4"
+      },
+      {
+        "coverage_ratio": 0.9832690110345492,
+        "hierid": "IDN.22.286"
+      },
+      {
+        "coverage_ratio": 0.983327466998737,
+        "hierid": "AUS.6.859"
+      },
+      {
+        "coverage_ratio": 0.983365119761096,
+        "hierid": "IDN.1.6"
+      },
+      {
+        "coverage_ratio": 0.9834120537899111,
+        "hierid": "AUS.5.345"
+      },
+      {
+        "coverage_ratio": 0.9834563401369008,
+        "hierid": "AUS.8.1021"
+      },
+      {
+        "coverage_ratio": 0.9834919506359585,
+        "hierid": "IDN.8.71"
+      },
+      {
+        "coverage_ratio": 0.9836286282937179,
+        "hierid": "ISL.1.R6254c869d03486f3"
+      },
+      {
+        "coverage_ratio": 0.9836983653660263,
+        "hierid": "CAN.8.117.2350"
+      },
+      {
+        "coverage_ratio": 0.9837310337155496,
+        "hierid": "MEX.30.1535"
+      },
+      {
+        "coverage_ratio": 0.9837334443062369,
+        "hierid": "DEU.6.15.161"
+      },
+      {
+        "coverage_ratio": 0.983754296558549,
+        "hierid": "AUS.10.1213"
+      },
+      {
+        "coverage_ratio": 0.9838186247356644,
+        "hierid": "CHL.13.49.270"
+      },
+      {
+        "coverage_ratio": 0.9838237897646206,
+        "hierid": "CHL.13.53.296"
+      },
+      {
+        "coverage_ratio": 0.9838266564079282,
+        "hierid": "IDN.23.310"
+      },
+      {
+        "coverage_ratio": 0.9838507617699195,
+        "hierid": "DZA.5.120"
+      },
+      {
+        "coverage_ratio": 0.9840642048619342,
+        "hierid": "AUS.4.239"
+      },
+      {
+        "coverage_ratio": 0.9841566973635656,
+        "hierid": "VNM.2.22"
+      },
+      {
+        "coverage_ratio": 0.984346830918992,
+        "hierid": "IDN.7.63.Rdcc268d404f8e07e"
+      },
+      {
+        "coverage_ratio": 0.9843859884778168,
+        "hierid": "USA.2.91"
+      },
+      {
+        "coverage_ratio": 0.9846263107567299,
+        "hierid": "DZA.4.97"
+      },
+      {
+        "coverage_ratio": 0.9846631980592276,
+        "hierid": "AUS.10.1086"
+      },
+      {
+        "coverage_ratio": 0.9847355529102284,
+        "hierid": "VNM.2.21.203.2962"
+      },
+      {
+        "coverage_ratio": 0.9848717318519239,
+        "hierid": "BRA.10.1211.2593"
+      },
+      {
+        "coverage_ratio": 0.9849512301304727,
+        "hierid": "IDN.16.225"
+      },
+      {
+        "coverage_ratio": 0.9849827464138917,
+        "hierid": "ECU.14.137.639"
+      },
+      {
+        "coverage_ratio": 0.985046475195477,
+        "hierid": "USA.2.70"
+      },
+      {
+        "coverage_ratio": 0.9850740901466166,
+        "hierid": "CAN.8.119.2372"
+      },
+      {
+        "coverage_ratio": 0.9851065850701854,
+        "hierid": "IDN.7.64"
+      },
+      {
+        "coverage_ratio": 0.98513784714693,
+        "hierid": "GRL.1.1"
+      },
+      {
+        "coverage_ratio": 0.9851652203735312,
+        "hierid": "AUS.4.207"
+      },
+      {
+        "coverage_ratio": 0.985239089253695,
+        "hierid": "CHL.1.1.1"
+      },
+      {
+        "coverage_ratio": 0.9853055344515156,
+        "hierid": "DZA.48.1479"
+      },
+      {
+        "coverage_ratio": 0.9853619831043667,
+        "hierid": "AUS.6.445"
+      },
+      {
+        "coverage_ratio": 0.9853644378154178,
+        "hierid": "COL.4.R3c0f26de1d0025c3"
+      },
+      {
+        "coverage_ratio": 0.9854082885389953,
+        "hierid": "AUS.6.798"
+      },
+      {
+        "coverage_ratio": 0.9856225219635094,
+        "hierid": "AUS.4.197"
+      },
+      {
+        "coverage_ratio": 0.9856384378166817,
+        "hierid": "KOR.10.137"
+      },
+      {
+        "coverage_ratio": 0.9856398455846993,
+        "hierid": "AUS.10.1228"
+      },
+      {
+        "coverage_ratio": 0.9857761060970465,
+        "hierid": "IDN.19.257"
+      },
+      {
+        "coverage_ratio": 0.9857969519415701,
+        "hierid": "AUS.6.808"
+      },
+      {
+        "coverage_ratio": 0.9858084304350363,
+        "hierid": "GRL.2.4"
+      },
+      {
+        "coverage_ratio": 0.9858247591391803,
+        "hierid": "AUS.6.R3faee79c70801d21"
+      },
+      {
+        "coverage_ratio": 0.9858777866591895,
+        "hierid": "IDN.7.65"
+      },
+      {
+        "coverage_ratio": 0.9859508113171749,
+        "hierid": "GRL.2.11"
+      },
+      {
+        "coverage_ratio": 0.9859674836009369,
+        "hierid": "RUS.65.1753.1870"
+      },
+      {
+        "coverage_ratio": 0.9860443718692471,
+        "hierid": "BRA.19.3597.6804"
+      },
+      {
+        "coverage_ratio": 0.9860616959297793,
+        "hierid": "GRL.3.17"
+      },
+      {
+        "coverage_ratio": 0.986155649898262,
+        "hierid": "AUS.8.1029"
+      },
+      {
+        "coverage_ratio": 0.9862523113673187,
+        "hierid": "AUS.8.1041"
+      },
+      {
+        "coverage_ratio": 0.9863647031988757,
+        "hierid": "MEX.28.1417"
+      },
+      {
+        "coverage_ratio": 0.9863655738674854,
+        "hierid": "IDN.30.381"
+      },
+      {
+        "coverage_ratio": 0.9863966830563301,
+        "hierid": "DZA.23.657"
+      },
+      {
+        "coverage_ratio": 0.9864239272368672,
+        "hierid": "AUS.8.1017"
+      },
+      {
+        "coverage_ratio": 0.9867565901031888,
+        "hierid": "BRA.19.3579.6740"
+      },
+      {
+        "coverage_ratio": 0.9867641981191569,
+        "hierid": "DZA.23.667"
+      },
+      {
+        "coverage_ratio": 0.9867729374000543,
+        "hierid": "BRA.14.2423.R4564e1ceea193f41"
+      },
+      {
+        "coverage_ratio": 0.9868429957071461,
+        "hierid": "IDN.14.202"
+      },
+      {
+        "coverage_ratio": 0.986854878935105,
+        "hierid": "AUS.6.667"
+      },
+      {
+        "coverage_ratio": 0.986901145823081,
+        "hierid": "AUS.4.140"
+      },
+      {
+        "coverage_ratio": 0.9869837276207022,
+        "hierid": "AUS.6.666"
+      },
+      {
+        "coverage_ratio": 0.9870928200507944,
+        "hierid": "KOR.3.R8f42c10f6007f581"
+      },
+      {
+        "coverage_ratio": 0.9872173963147676,
+        "hierid": "AUS.4.181"
+      },
+      {
+        "coverage_ratio": 0.9872377974645088,
+        "hierid": "AUS.8.1011"
+      },
+      {
+        "coverage_ratio": 0.98727914271812,
+        "hierid": "GRL.2.8"
+      },
+      {
+        "coverage_ratio": 0.9873018353255189,
+        "hierid": "GRL.2.5"
+      },
+      {
+        "coverage_ratio": 0.9873212031986698,
+        "hierid": "KOR.16.R6dcf4076f27a03d0"
+      },
+      {
+        "coverage_ratio": 0.9873398983658408,
+        "hierid": "AUS.4.211"
+      },
+      {
+        "coverage_ratio": 0.9875330784648695,
+        "hierid": "MEX.4.20"
+      },
+      {
+        "coverage_ratio": 0.9875407944938308,
+        "hierid": "AUS.5.358"
+      },
+      {
+        "coverage_ratio": 0.9875599855119133,
+        "hierid": "MEX.26.1348"
+      },
+      {
+        "coverage_ratio": 0.9876202382939615,
+        "hierid": "MEX.23.1232"
+      },
+      {
+        "coverage_ratio": 0.9876839755207117,
+        "hierid": "ECU.10.82.409"
+      },
+      {
+        "coverage_ratio": 0.987798458799125,
+        "hierid": "KOR.6.69"
+      },
+      {
+        "coverage_ratio": 0.9878282308530909,
+        "hierid": "AUS.8.1016"
+      },
+      {
+        "coverage_ratio": 0.987861333739454,
+        "hierid": "BGD.1.2.4.23"
+      },
+      {
+        "coverage_ratio": 0.9879487017928732,
+        "hierid": "DZA.32.952"
+      },
+      {
+        "coverage_ratio": 0.9879535971642112,
+        "hierid": "MEX.25.1296"
+      },
+      {
+        "coverage_ratio": 0.9879614052617124,
+        "hierid": "MYS.11.108"
+      },
+      {
+        "coverage_ratio": 0.9879819733804857,
+        "hierid": "KOR.11.R5ca567607be6efbd"
+      },
+      {
+        "coverage_ratio": 0.9879966838533669,
+        "hierid": "NZL.6.28.187"
+      },
+      {
+        "coverage_ratio": 0.9880003032102863,
+        "hierid": "CHL.8.23.157"
+      },
+      {
+        "coverage_ratio": 0.9880080277254032,
+        "hierid": "AUS.6.476"
+      },
+      {
+        "coverage_ratio": 0.9881227827497403,
+        "hierid": "KOR.14.R6740add3a918d5ac"
+      },
+      {
+        "coverage_ratio": 0.988227139411681,
+        "hierid": "RUS.87.2421.2538"
+      },
+      {
+        "coverage_ratio": 0.9882345206454557,
+        "hierid": "MEX.30.1675"
+      },
+      {
+        "coverage_ratio": 0.9882405060809872,
+        "hierid": "IRL.5"
+      },
+      {
+        "coverage_ratio": 0.9882648625179644,
+        "hierid": "SAU.10"
+      },
+      {
+        "coverage_ratio": 0.9883412828485602,
+        "hierid": "CHL.13.53.295"
+      },
+      {
+        "coverage_ratio": 0.988399976978485,
+        "hierid": "SWE.19"
+      },
+      {
+        "coverage_ratio": 0.9884257333616625,
+        "hierid": "GRL.2.6"
+      },
+      {
+        "coverage_ratio": 0.988426154711066,
+        "hierid": "AUS.6.679"
+      },
+      {
+        "coverage_ratio": 0.9884369476829419,
+        "hierid": "CHL.9.31.201"
+      },
+      {
+        "coverage_ratio": 0.9884392782881573,
+        "hierid": "IDN.22.279"
+      },
+      {
+        "coverage_ratio": 0.9885245836196282,
+        "hierid": "IDN.2.29"
+      },
+      {
+        "coverage_ratio": 0.988563529172851,
+        "hierid": "USA.2.90"
+      },
+      {
+        "coverage_ratio": 0.9885849089344049,
+        "hierid": "AUS.7.1005"
+      },
+      {
+        "coverage_ratio": 0.9886163538345151,
+        "hierid": "USA.2.84"
+      },
+      {
+        "coverage_ratio": 0.9886201317112193,
+        "hierid": "IDN.24.313"
+      },
+      {
+        "coverage_ratio": 0.9887132228937937,
+        "hierid": "UKR.4.R8248fcb59da0b28d"
+      },
+      {
+        "coverage_ratio": 0.9887275780407542,
+        "hierid": "ECU.9.72.389"
+      },
+      {
+        "coverage_ratio": 0.9887577247697737,
+        "hierid": "GRL.2.15"
+      },
+      {
+        "coverage_ratio": 0.988766223948271,
+        "hierid": "IDN.2.25"
+      },
+      {
+        "coverage_ratio": 0.9888727600550972,
+        "hierid": "RUS.65.1742.1859"
+      },
+      {
+        "coverage_ratio": 0.9889604109991865,
+        "hierid": "CHL.8.23.163"
+      },
+      {
+        "coverage_ratio": 0.9889706461445118,
+        "hierid": "IDN.14.197"
+      },
+      {
+        "coverage_ratio": 0.9890016095757277,
+        "hierid": "AUS.6.651"
+      },
+      {
+        "coverage_ratio": 0.9890264143393802,
+        "hierid": "IDN.22.283"
+      },
+      {
+        "coverage_ratio": 0.9890437606285137,
+        "hierid": "BRA.25.5271.9938"
+      },
+      {
+        "coverage_ratio": 0.9891272215580562,
+        "hierid": "AUS.6.684"
+      },
+      {
+        "coverage_ratio": 0.9891360085684767,
+        "hierid": "IDN.7.63.Ref97b6c02c99022f"
+      },
+      {
+        "coverage_ratio": 0.9891746421233959,
+        "hierid": "IDN.23.306"
+      },
+      {
+        "coverage_ratio": 0.9891949140163765,
+        "hierid": "IDN.20.259"
+      },
+      {
+        "coverage_ratio": 0.9892490641504649,
+        "hierid": "AUS.6.485"
+      },
+      {
+        "coverage_ratio": 0.9893251641283465,
+        "hierid": "BRA.15.R856938c1adeec9c8"
+      },
+      {
+        "coverage_ratio": 0.989389186297836,
+        "hierid": "BRA.25.4861"
+      },
+      {
+        "coverage_ratio": 0.9893974271537206,
+        "hierid": "IDN.19.256"
+      },
+      {
+        "coverage_ratio": 0.9894525511552413,
+        "hierid": "IDN.29.374"
+      },
+      {
+        "coverage_ratio": 0.9894812567088334,
+        "hierid": "ROU.38"
+      },
+      {
+        "coverage_ratio": 0.9894930914265331,
+        "hierid": "ISL.R8797959ca4080a3e"
+      },
+      {
+        "coverage_ratio": 0.9895247191983374,
+        "hierid": "IDN.19.252"
+      },
+      {
+        "coverage_ratio": 0.9895939168808832,
+        "hierid": "BRA.19.3607.R6079072a50d351fe"
+      },
+      {
+        "coverage_ratio": 0.9896469674453513,
+        "hierid": "IDN.28.367"
+      },
+      {
+        "coverage_ratio": 0.9896581578366652,
+        "hierid": "IDN.12.178"
+      },
+      {
+        "coverage_ratio": 0.9897050801834202,
+        "hierid": "CHL.13.53.293"
+      },
+      {
+        "coverage_ratio": 0.9897102979124146,
+        "hierid": "VNM.6.50.520.8695"
+      },
+      {
+        "coverage_ratio": 0.9897123921934472,
+        "hierid": "AUS.6.R4209e0cdbd303a0a"
+      },
+      {
+        "coverage_ratio": 0.9897369794731463,
+        "hierid": "VNM.2.16.149.1946"
+      },
+      {
+        "coverage_ratio": 0.9897821763626433,
+        "hierid": "IDN.24.319"
+      },
+      {
+        "coverage_ratio": 0.9897839975244845,
+        "hierid": "AUS.7.966"
+      },
+      {
+        "coverage_ratio": 0.9898574494898122,
+        "hierid": "BGD.2.4.8.52"
+      },
+      {
+        "coverage_ratio": 0.9899113943719792,
+        "hierid": "BRA.19.3619"
+      },
+      {
+        "coverage_ratio": 0.9899876902691177,
+        "hierid": "KOR.1.7"
+      },
+      {
+        "coverage_ratio": 0.9899990227029254,
+        "hierid": "IDN.20.260"
+      },
+      {
+        "coverage_ratio": 0.9900409993999816,
+        "hierid": "AUS.6.605"
+      },
+      {
+        "coverage_ratio": 0.9902230969602791,
+        "hierid": "AUS.6.789"
+      },
+      {
+        "coverage_ratio": 0.9902613888683712,
+        "hierid": "IDN.32.422"
+      },
+      {
+        "coverage_ratio": 0.9904188206145355,
+        "hierid": "GRL.2.7"
+      },
+      {
+        "coverage_ratio": 0.9904415160757577,
+        "hierid": "CHL.2.7.19"
+      },
+      {
+        "coverage_ratio": 0.9904531593020606,
+        "hierid": "BOL.6.60.209"
+      },
+      {
+        "coverage_ratio": 0.9905342909112752,
+        "hierid": "IDN.12.173"
+      },
+      {
+        "coverage_ratio": 0.9905757195721695,
+        "hierid": "IDN.2.22"
+      },
+      {
+        "coverage_ratio": 0.9906126566228762,
+        "hierid": "CAN.6.98.2242"
+      },
+      {
+        "coverage_ratio": 0.9906466946443012,
+        "hierid": "CHL.8.24.Rf61f3a12e94394a8"
+      },
+      {
+        "coverage_ratio": 0.9906963624684365,
+        "hierid": "IDN.1.4"
+      },
+      {
+        "coverage_ratio": 0.9908156085421864,
+        "hierid": "AUS.7.976"
+      },
+      {
+        "coverage_ratio": 0.9909033148498249,
+        "hierid": "AUS.6.786"
+      },
+      {
+        "coverage_ratio": 0.9909110873385532,
+        "hierid": "BGD.4.16.42.285"
+      },
+      {
+        "coverage_ratio": 0.9909957938572465,
+        "hierid": "AUS.6.484"
+      },
+      {
+        "coverage_ratio": 0.9911338903443183,
+        "hierid": "DZA.39.1225"
+      },
+      {
+        "coverage_ratio": 0.9911545747846645,
+        "hierid": "IDN.29.372"
+      },
+      {
+        "coverage_ratio": 0.9911809287651716,
+        "hierid": "VNM.2.21.203.R28b47e4928c1948b"
+      }
+    ],
+    "units_truncated": true
+  },
+  "project_description": "IR to GADM 4.1 adm2 weights, per_source; not interchangeable with GADM 2.0 weights (different unit universes and keys)",
+  "project_name": "gadm41_adm2_per_source",
+  "python_version": "3.11.12",
+  "regions_version": "gadm-4.10-impactmap-copy-2022",
+  "row_counts": {
+    "regions": 2582,
+    "source_units": 530,
+    "total": 6325
+  },
+  "source_coverage": {},
+  "source_key_columns": [
+    "hierid"
+  ],
+  "source_mode": "polygons",
+  "source_version": "world-combo-201710",
+  "timing_seconds": {
+    "compute_total": 1416.6505973227322
+  },
+  "weight_names": [
+    "pop",
+    "area"
+  ]
+}
