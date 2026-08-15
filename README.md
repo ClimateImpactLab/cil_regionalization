@@ -42,10 +42,9 @@ region id in a `hierid` column and the numbers in a `value` column
 (another name works via `value_col=`). `restrict_to_sources` limits
 the aggregation to the regions the draws cover; leave it out only when
 they cover all 24,378. `data_version` names the impact region set the
-draws are keyed to: if the region ids come from the published
-shapefile record below, it is `world-combo-201710`, and whoever
-produced the draws can say otherwise; a fetched weight file shows what
-it expects in its `source_version`. `fetch_weights` downloads the
+draws are keyed to; draws built on the published shapefile record
+below use `world-combo-201710`. A fetched weight file shows the
+version it expects in its `source_version`. `fetch_weights` downloads the
 weight file from its Zenodo record, checks it against the checksum
 recorded when it was generated, caches it under
 `~/.cache/cil_regionalization`, and returns it ready to use.
