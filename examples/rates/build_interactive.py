@@ -10,8 +10,9 @@ regenerates the file from the committed data:
 It needs plotly in addition to the package (only for building; readers
 of the HTML need nothing). Two map panels, GADM 2.0 left and GADM 4.1
 right, with one control for the percentile across the sample's draws and
-one for the time window. The values are
-deaths per 100,000 people per year from the ratio route in compute.py.
+one for the time window. The values are the effect of climate change
+on the mortality rate, deaths per 100,000 people per year, full
+adaptation minus histclim, from the ratio route in compute.py.
 """
 from __future__ import annotations
 
@@ -95,9 +96,11 @@ def main() -> int:
         geo=dict(domain=dict(x=[0.0, 0.49])),
         geo2=dict(domain=dict(x=[0.51, 1.0])),
         title=dict(
-            text="Mortality rates by Mexican municipality, GADM 2.0 and GADM 4.1<br>"
-                 "<sup>deaths per 100,000 people per year; one Monte Carlo batch, "
-                 "13 climate models, rcp85, SSP3; negative is fewer deaths</sup>",
+            text="Effect of climate change on mortality rates by Mexican municipality, "
+                 "GADM 2.0 and GADM 4.1<br>"
+                 "<sup>deaths per 100,000 people per year, full adaptation minus histclim; "
+                 "three Monte Carlo batches, 33 climate models, rcp85, SSP3; "
+                 "negative is fewer deaths</sup>",
             x=0.5,
         ),
         margin=dict(l=10, r=10, t=90, b=10),

@@ -75,8 +75,11 @@ def load_draw(batch: str, gcm: str) -> pd.DataFrame:
     hist = _read_rebased(
         batch, gcm, "Agespec_interaction_response-combined-histclim.nc4", "histclim")
     df = full.merge(hist, on=["hierid", "year"])
+    for col in ("fulladapt", "histclim"):
+        df[col] = df[col].astype("float64")
     df["effect"] = df["fulladapt"] - df["histclim"]
     pop = pd.read_parquet(DATA / "population.parquet")
+    pop["population"] = pop["population"].astype("float64")
     df = df.merge(pop, on=["hierid", "year"])
     df["deaths"] = df["effect"] * df["population"]
     return df
