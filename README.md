@@ -129,6 +129,24 @@ you declare against the direction the weight file records and raises
 an error on a mismatch, since getting this wrong by hand produces
 plausible wrong numbers.
 
+## Reading the Monte Carlo trees
+
+`read_netcdf_leaf` flattens one projection file to the long form
+`apply_weights` takes. One caution about what those files contain: in
+the mortality and labor trees, a file named `...-combined.nc4` stores
+`rebased`, the scenario's impact relative to its own 2001 to 2010
+average. That value still contains the scenario's income and
+adaptation trend, so aggregating it gives impact levels, not the
+effect of climate change. The effect of climate change under full or
+income adaptation is the rebased impact minus the rebased impact of
+the `-histclim` sibling file, which resamples historical weather under
+the same income growth and adaptation. The no adaptation scenario is
+the exception: it has no income growth, so nothing is subtracted and
+its rebased value stands alone. Nothing in the file names or the
+variable metadata says any of this; the convention comes from the
+Climate Impact Lab memo "The art of rebasing and histclim", and the
+Mexico example below shows the subtraction on real files.
+
 ## Worked example
 
 `examples/aggregation/` aggregates a small sample of real Monte Carlo
@@ -141,7 +159,11 @@ plots the spread of draws behind the statistics. Its outputs are
 committed, so it reads on GitHub without running anything; running it
 needs `jupyter` and `matplotlib`. The script `run_example.py` covers the same case plus
 municipalities and rates from the command line, and its README shows
-the full printed output.
+the full printed output. A second example, `examples/rates/`,
+aggregates the effect of climate change on Mexican mortality rates to
+municipalities on both GADM boundary versions, computing it as full
+adaptation minus histclim before aggregating and using the ratio kind
+to keep the rates scenario consistent.
 
 ## Installation
 
