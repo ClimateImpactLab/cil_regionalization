@@ -1,4 +1,8 @@
-# cil_regionalization
+# CIL-regionalization
+
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+[![GADM 2.0 weights](https://zenodo.org/badge/DOI/10.5281/zenodo.21934155.svg)](https://doi.org/10.5281/zenodo.21934155)
+[![GADM 4.1 weights](https://zenodo.org/badge/DOI/10.5281/zenodo.21935431.svg)](https://doi.org/10.5281/zenodo.21935431)
 
 Climate impact results come at impact region level, but most analyses
 need them at country, state, or district level. This package does that
@@ -15,7 +19,8 @@ import cil_regionalization as cilreg
 
 weights = cilreg.fetch_weights("gadm20-adm1-per-source")
 result = cilreg.apply_weights(
-    weights, my_draws,
+    weights,
+    my_draws,
     kind="extensive",
     weight="pop",
     data_version="world-combo-201710",
@@ -23,8 +28,11 @@ result = cilreg.apply_weights(
     restrict_to_sources={(h,) for h in my_draws["hierid"].unique()},
 )
 stats = cilreg.summarize_samples(
-    result.frame, sample_dims=["batch", "gcm"],
-    time_col="year", window=(2080, 2099), quantiles=[0.05, 0.5, 0.95],
+    result.frame,
+    sample_dims=["batch", "gcm"],
+    time_col="year",
+    window=(2080, 2099),
+    quantiles=[0.05, 0.5, 0.95],
 )
 ```
 
