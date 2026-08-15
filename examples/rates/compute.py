@@ -22,20 +22,27 @@ import cil_regionalization as cilreg
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 DATA_VERSION = "world-combo-201710"
-BATCH = DATA / "montecarlo" / "batch0" / "rcp85"
+MONTECARLO = DATA / "montecarlo"
 WINDOWS = {"2080-2099": (2080, 2099), "2090-2099": (2090, 2099)}
 PERCENTILES = [0.05, 0.5, 0.95]
 
 
-def gcms() -> list[str]:
-    return sorted(p.name for p in BATCH.iterdir() if p.is_dir())
+def draws() -> list[tuple[str, str]]:
+    """The (batch, climate model) pairs the sample holds."""
+    out = []
+    for bdir in sorted(MONTECARLO.iterdir()):
+        for gdir in sorted((bdir / "rcp85").iterdir()):
+            if gdir.is_dir():
+                out.append((bdir.name, gdir.name))
+    return out
 
 
-def load_draw(gcm: str) -> pd.DataFrame:
-    """One climate model's rates joined to the embedded population,
-    with death counts computed per region and year."""
+def load_draw(batch: str, gcm: str) -> pd.DataFrame:
+    """One draw's rates joined to the embedded population, with death
+    counts computed per region and year."""
     rates = cilreg.read_netcdf_leaf(
-        BATCH / gcm / "low" / "SSP3" / "Agespec_interaction_response-combined.nc4",
+        MONTECARLO / batch / "rcp85" / gcm / "low" / "SSP3"
+        / "Agespec_interaction_response-combined.nc4",
         variables=["rebased", "regions"],
         region_dim="region",
         region_col="region_index",
@@ -87,23 +94,24 @@ def ratio_rate(df: pd.DataFrame, version: str) -> pd.DataFrame:
 
 
 def window_percentiles(version: str) -> pd.DataFrame:
-    """Per-unit percentiles of the window-mean rate across the climate
-    models: aggregate each draw first, average over the window, then
-    take percentiles across draws."""
+    """Per-unit percentiles of the window-mean rate across the draws
+    (batch by climate model): aggregate each draw first, average over
+    the window, then take percentiles across draws."""
     keys = target_keys(version)
     per_draw = []
-    for gcm in gcms():
-        r = ratio_rate(load_draw(gcm), version)
+    for batch, gcm in draws():
+        r = ratio_rate(load_draw(batch, gcm), version)
         for label, (lo, hi) in WINDOWS.items():
             win = r[r["year"].between(lo, hi)]
             g = win.groupby(keys)[["deaths", "population"]].mean().reset_index()
             g["per100k"] = g["deaths"] / g["population"] * 1e5
             g["window"] = label
+            g["batch"] = batch
             g["gcm"] = gcm
-            per_draw.append(g[keys + ["window", "gcm", "per100k"]])
-    draws = pd.concat(per_draw, ignore_index=True)
+            per_draw.append(g[keys + ["window", "batch", "gcm", "per100k"]])
+    pooled = pd.concat(per_draw, ignore_index=True)
     q = (
-        draws.groupby(keys + ["window"])["per100k"]
+        pooled.groupby(keys + ["window"])["per100k"]
         .quantile(PERCENTILES)
         .unstack()
     )

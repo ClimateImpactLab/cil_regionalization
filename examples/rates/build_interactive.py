@@ -9,8 +9,8 @@ regenerates the file from the committed data:
 
 It needs plotly in addition to the package (only for building; readers
 of the HTML need nothing). Two map panels, GADM 2.0 left and GADM 4.1
-right, with one control for the percentile across the 33 climate
-models of the sample batch and one for the time window. The values are
+right, with one control for the percentile across the sample's draws and
+one for the time window. The values are
 deaths per 100,000 people per year from the ratio route in compute.py.
 """
 from __future__ import annotations
