@@ -4,12 +4,28 @@ The notebook and the interactive map builder both aggregate the same
 way; this module holds that one way so they cannot drift. Everything
 reads the committed data next to this file.
 
-The ratio route: multiply each region's rate by its embedded
-population to get death counts, aggregate counts and population
-separately with the per_source weights, and divide at the target. The
-result is the scenario's own rate for each unit. Dividing before
-aggregating, or averaging rates with fixed weights, answers a
-different question; see the notebook.
+The variable is the effect of climate change on the mortality rate.
+Each Monte Carlo leaf stores `rebased`, the scenario's impact relative
+to its own 2001 to 2010 average. That value still contains the income
+and adaptation trend, so it is not the effect of climate change on its
+own. The effect of climate change is the rebased full adaptation
+impact minus the rebased histclim impact, where histclim resamples
+historical weather under the same income growth and adaptation. The
+Climate Impact Lab memo "The art of rebasing and histclim" states the
+convention; `load_draw` performs the subtraction.
+
+The ratio route: multiply each region's effect by its population to
+get death counts, aggregate counts and population separately with the
+per_source weights, and divide at the target. The result is the
+scenario's own rate for each unit. Dividing before aggregating, or
+averaging rates with fixed weights, answers a different question; see
+the notebook.
+
+The population is the one embedded in the new-socioeconomics
+projection, recovered from the tree's levels files; see
+prepare_data.py. Two impact regions (MEX.25.1309 and MEX.23.1234,
+together fewer than 150 people) hold no values in this tree and are
+excluded.
 """
 from __future__ import annotations
 
@@ -37,19 +53,32 @@ def draws() -> list[tuple[str, str]]:
     return out
 
 
-def load_draw(batch: str, gcm: str) -> pd.DataFrame:
-    """One draw's rates joined to the embedded population, with death
-    counts computed per region and year."""
-    rates = cilreg.read_netcdf_leaf(
-        MONTECARLO / batch / "rcp85" / gcm / "low" / "SSP3"
-        / "Agespec_interaction_response-combined.nc4",
+def _read_rebased(batch: str, gcm: str, filename: str, col: str) -> pd.DataFrame:
+    df = cilreg.read_netcdf_leaf(
+        MONTECARLO / batch / "rcp85" / gcm / "low" / "SSP3" / filename,
         variables=["rebased", "regions"],
         region_dim="region",
         region_col="region_index",
-    ).rename(columns={"regions": "hierid"})[["hierid", "year", "rebased"]]
+    ).rename(columns={"regions": "hierid", "rebased": col})
+    return df[["hierid", "year", col]]
+
+
+def load_draw(batch: str, gcm: str) -> pd.DataFrame:
+    """One draw's effect of climate change joined to the population,
+    with death counts computed per region and year.
+
+    The effect is the rebased full adaptation impact minus the rebased
+    histclim impact, both read from the committed leaf pair.
+    """
+    full = _read_rebased(
+        batch, gcm, "Agespec_interaction_response-combined.nc4", "fulladapt")
+    hist = _read_rebased(
+        batch, gcm, "Agespec_interaction_response-combined-histclim.nc4", "histclim")
+    df = full.merge(hist, on=["hierid", "year"])
+    df["effect"] = df["fulladapt"] - df["histclim"]
     pop = pd.read_parquet(DATA / "population.parquet")
-    df = rates.merge(pop, on=["hierid", "year"])
-    df["deaths"] = df["rebased"] * df["population"]
+    df = df.merge(pop, on=["hierid", "year"])
+    df["deaths"] = df["effect"] * df["population"]
     return df
 
 
