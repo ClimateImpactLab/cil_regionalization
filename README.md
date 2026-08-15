@@ -1,4 +1,4 @@
-# climate-and-damages-aggregations
+# cil_regionalization
 
 Climate impact results come at impact region level, but most analyses
 need them at country, state, or district level. This package does that
@@ -19,6 +19,8 @@ result = cilreg.apply_weights(
     kind="extensive",
     weight="pop",
     data_version="world-combo-201710",
+    # drop this line if the draws cover every impact region
+    restrict_to_sources={(h,) for h in my_draws["hierid"].unique()},
 )
 stats = cilreg.summarize_samples(
     result.frame, sample_dims=["batch", "gcm"],
@@ -29,14 +31,19 @@ stats = cilreg.summarize_samples(
 `my_draws` is a long table: one row per impact region and year (plus
 batch, model, and whatever other columns your sample has), with the
 region id in a `hierid` column and the numbers in a `value` column
-(another name works via `value_col=`). If your draws cover only some
-regions, declare the subset with `restrict_to_sources`; the worked
-example shows how. `fetch_weights` downloads the weight file from its
-Zenodo record, checks it against the checksum recorded when it was
-generated, caches it under `~/.cache/cil_regionalization`, and returns
-it ready to use. The other two calls aggregate and then summarize.
+(another name works via `value_col=`). `restrict_to_sources` limits
+the aggregation to the regions the draws cover; leave it out only when
+they cover all 24,378. `data_version` names the impact region set the
+draws are keyed to: if the region ids come from the published
+shapefile record below, it is `world-combo-201710`, and whoever
+produced the draws can say otherwise; a fetched weight file shows what
+it expects in its `source_version`. `fetch_weights` downloads the
+weight file from its Zenodo record, checks it against the checksum
+recorded when it was generated, caches it under
+`~/.cache/cil_regionalization`, and returns it ready to use.
 
-The same works from the command line: `cilreg fetch <name>`
+The same works from the command line: `cilreg fetch --list` shows
+every published weight file name, `cilreg fetch <name>`
 downloads and prints the cached path, `cilreg cache list` and
 `cilreg cache clear` manage the cache, and `cilreg pipeline
 <config.toml>` runs a whole Monte Carlo tree from one config file.
@@ -118,13 +125,14 @@ plausible wrong numbers.
 ## Worked example
 
 `examples/aggregation/` aggregates a small sample of real Monte Carlo
-mortality projections (not the complete output: one batch of fifteen,
-across all 33 climate models) for Colombia, fetching the published
-weights by name and reading a committed 23 MB sample. Start with the notebook,
+mortality projections (not the complete output: one Monte Carlo batch
+out of fifteen, across all 33 climate models) for Colombia, fetching
+the published weights by name and reading a committed 23 MB sample. Start with the notebook,
 `aggregation_colombia.ipynb`: it maps a single draw and a pooled
 quantile side by side, shows percent of GDP with the `ratio` kind, and
-plots the spread of draws behind the statistics, with all output
-readable inline (the plots need `matplotlib`). The script `run_example.py` covers the same case plus
+plots the spread of draws behind the statistics. Its outputs are
+committed, so it reads on GitHub without running anything; running it
+needs `jupyter` and `matplotlib`. The script `run_example.py` covers the same case plus
 municipalities and rates from the command line, and its README shows
 the full printed output.
 
@@ -176,10 +184,13 @@ Three records are published on Zenodo:
 
 - the impact region shapefile, world-combo-201710
   (doi:10.5281/zenodo.21934131)
-- GADM 2.0 weights, names `gadm20-adm1-per-source` and so on
-  (doi:10.5281/zenodo.21934155)
-- GADM 4.1 weights, names `gadm41-adm1-per-source` and so on, keyed by
-  GADM's GID codes (doi:10.5281/zenodo.21935431). GADM 4.1 draws
+- GADM 2.0 weights (doi:10.5281/zenodo.21934155):
+  `gadm20-adm1-per-source`, `gadm20-adm1-per-destination`,
+  `gadm20-adm2-per-source`, `gadm20-adm2-per-destination`
+- GADM 4.1 weights (doi:10.5281/zenodo.21935431), keyed by GADM's GID
+  codes: `gadm41-adm1-per-source`, `gadm41-adm1-per-destination`,
+  `gadm41-adm2-per-source`, `gadm41-adm2-per-destination`.
+  GADM 4.1 draws
   coastlines differently from the impact region geometry, so 1,178
   coastal regions are partially covered; the manifests record this,
   and `apply_weights` needs `allow_partial_coverage=True` to proceed

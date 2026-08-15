@@ -157,8 +157,8 @@ class WeightsArtifact:
         if missing:
             raise ValueError(
                 f"weights manifest at {base} does not record {missing}; it "
-                f"predates application support. Regenerate the weights, or "
-                f"build a WeightsArtifact from a live WeightsResult."
+                f"was written by an older version of this package. "
+                f"Regenerate the weights with the current version."
             )
         if manifest.get("source_mode") == "grid":
             source_units = GRID_CELLS

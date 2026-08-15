@@ -52,13 +52,14 @@ except ImportError:
     )
 
 from cil_regionalization.apply import WeightsArtifact, apply_weights
-from cil_regionalization.config import Config, load_config
+from cil_regionalization.config import Config, SourceUnitPolicies, load_config
 from cil_regionalization.fetch import clear_cache, fetch_weights, list_cached
 from cil_regionalization.netcdf_io import read_netcdf_leaf
 from cil_regionalization.stats import summarize_samples
 
 __all__ = [
     "Config",
+    "SourceUnitPolicies",
     "WeightsArtifact",
     "apply_weights",
     "clear_cache",

@@ -27,9 +27,19 @@ import pytest
 # fixture hide behind a green count.
 import importlib.util
 
-_HAS_BIGQUERY = importlib.util.find_spec("google.cloud.bigquery") is not None
+
+def _has_bigquery() -> bool:
+    # find_spec on a dotted name imports the parent package, which
+    # itself raises when the extra is absent; that must read as
+    # "not installed", never as a collection error.
+    try:
+        return importlib.util.find_spec("google.cloud.bigquery") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 pytestmark = pytest.mark.skipif(
-    not _HAS_BIGQUERY,
+    not _has_bigquery(),
     reason="BigQuery tests need the [bigquery] extra installed",
 )
 

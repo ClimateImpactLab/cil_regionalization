@@ -564,6 +564,29 @@ def enforce_source_policies(
                 "ids": [list(t) for t in ids],
             }
 
+    # Remedies name only what a caller can reach from the package root:
+    # restrict_to_sources and policies are apply_weights parameters, and
+    # SourceUnitPolicies is exported.
+    hints = {
+        "unmatched": (
+            "these units are in the data but not in the weights: check the "
+            "id column and data_version, or pass "
+            "policies=SourceUnitPolicies(on_unmatched='skip') to record "
+            "and skip them"
+        ),
+        "zero_weight": (
+            "these units carry no weight for the chosen weighting: pass "
+            "policies=SourceUnitPolicies(on_zero_weight='skip') to record "
+            "and skip them"
+        ),
+        "absent_from_data": (
+            "the weights know these units but the data does not cover "
+            "them: if the data intentionally covers a subset, pass "
+            "restrict_to_sources with the units it does cover; if gaps "
+            "are expected, pass "
+            "policies=SourceUnitPolicies(on_absent_from_data='skip')"
+        ),
+    }
     errors: list[str] = []
     for case, policy, ids, key in cases:
         if not ids:
@@ -574,7 +597,7 @@ def enforce_source_policies(
             f"(first {min(len(ids), 10)}: {shown})"
         )
         if policy == "error":
-            errors.append(message + f"; set {key}='skip' to continue without them")
+            errors.append(message + "; " + hints[case])
         else:
             logger.warning("%s; recorded in the manifest and skipped", message)
     if errors:

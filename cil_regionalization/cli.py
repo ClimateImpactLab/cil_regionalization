@@ -113,7 +113,15 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument(
         "name",
         type=str,
+        nargs="?",
+        default=None,
         help="registry name of the artifact (or a cache label with --record)",
+    )
+    pf.add_argument(
+        "--list",
+        action="store_true",
+        dest="list_names",
+        help="list the weight file names the registry knows and exit",
     )
     pf.add_argument(
         "--record",
@@ -185,7 +193,20 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_fetch(args: argparse.Namespace) -> int:
-    from cil_regionalization.fetch import FetchError, fetch_weights
+    from cil_regionalization.fetch import FetchError, fetch_weights, load_registry
+
+    if args.list_names:
+        entries = load_registry(args.registry)
+        if not entries:
+            print("registry knows no artifacts")
+            return 0
+        for name, entry in sorted(entries.items()):
+            print(f"{name}  record={entry.record}")
+        return 0
+    if args.name is None:
+        print("fetch: a name is required (or --list to see what exists)",
+              file=sys.stderr)
+        return 2
 
     try:
         artifact = fetch_weights(
