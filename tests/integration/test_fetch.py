@@ -330,6 +330,28 @@ class TestRegistry:
             load_registry(tmp_path / "absent.toml")
 
 
+class TestFetchListCLI:
+    def test_list_prints_registry_names(self, capsys, monkeypatch):
+        from cil_regionalization.cli import main
+
+        monkeypatch.delenv("CIL_REGIONALIZATION_REGISTRY", raising=False)
+        rc = main(["fetch", "--list"])
+        out = capsys.readouterr().out
+        assert rc == 0
+        for name in ("gadm20-adm1-per-source", "gadm41-adm2-per-destination"):
+            assert name in out
+        assert "record=21934155" in out
+        assert "record=21935431" in out
+
+    def test_fetch_without_name_points_at_list(self, capsys):
+        from cil_regionalization.cli import main
+
+        rc = main(["fetch"])
+        err = capsys.readouterr().err
+        assert rc == 2
+        assert "--list" in err
+
+
 class TestCache:
     def test_clear_by_name_and_all(self, served, tmp_path):
         cache = tmp_path / "cache"

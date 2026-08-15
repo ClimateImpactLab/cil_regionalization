@@ -1,23 +1,19 @@
 """Colombia end to end: both variable kinds, both weight directions.
 
-The committed data is a small sample for demonstrating the aggregation
-mechanics. It is not a published dataset, and the numbers it produces
-are not results: one Monte Carlo batch out of fifteen.
+The committed data is a subset of the full Monte Carlo projections,
+and the numbers are a demonstration, not results. The sample, under
+examples/aggregation/data (about 23 MB): Colombia's 500 impact
+regions, its 32 ADM1 departments (this GADM 2.0 version predates the
+33rd), and its 1,065 ADM2 municipalities. The monetized damages cover
+one batch out of fifteen, across all 33 climate models (rcp85, iam
+low, SSP3), in the standard batch/rcp/gcm/iam/ssp tree grammar. The
+physical rates cover two batches of one model (GFDL-ESM2G), because
+the tree holding the rates is still being regenerated.
 
-Everything it reads is committed under examples/aggregation/data (about
-23 MB): Colombia's 500 impact regions, its 32 ADM1 departments (this
-GADM 2.0 version predates the 33rd), and its 1,065 ADM2
-municipalities. The monetized damages sample is one batch across all
-33 climate models (rcp85, iam low, SSP3), in the standard
-batch/rcp/gcm/iam/ssp tree grammar. The physical rates sample is
-smaller, two batches of one model (GFDL-ESM2G), because the tree
-holding the rates is still being regenerated. Needs the base package
-plus the [netcdf] extra. It reads committed weight slices so it works
-offline; outside this example the one difference is fetching the
-published global weight file instead:
-
-    import cil_regionalization as cilreg
-    weights = cilreg.fetch_weights("gadm20-adm1-per-destination")
+By default the weights are fetched from the published Zenodo records;
+--offline uses the committed Colombia slices instead. Both modes
+produce identical output. Needs the base package plus the [netcdf]
+extra, and network access for the default mode.
 
 Two variables for the same country, different in kind:
 
@@ -28,9 +24,9 @@ Two variables for the same country, different in kind:
   allocated with the per_source weight file, and the allocation must add
   back up, which apply_weights checks.
 
-ADM1 shows both kinds; ADM2 shows the allocation again where it does
-visible work, because in Colombia an impact region is a grouping of
-municipalities and one region's total spreads across as many as 90 of
+ADM1 shows both kinds. ADM2 shows the allocation again at finer
+resolution: in Colombia an impact region is a grouping of
+municipalities, and one region's total spreads across as many as 90 of
 them. Statistics pool the 33 climate models, each aggregated first.
 """
 from __future__ import annotations
