@@ -64,7 +64,11 @@ municipalities. The committed data (about 23 MB) holds:
   Damages are extensive: totals, split between units with `per_source`
   weights.
 - `montecarlo/{batch0,batch1}/rcp85/GFDL-ESM2G/low/SSP3/Agespec_interaction_response-combined.nc4`:
-  the physical mortality rate (`rebased`, deaths per person per year).
+  the rebased mortality impact of the full adaptation scenario
+  (`rebased`, deaths per person per year, relative to the scenario's
+  own 2001 to 2010 average). On its own this is not the effect of
+  climate change; the main README's note on rebasing and histclim
+  states the convention, and the Mexico example shows the subtraction.
   Rates are intensive: averages, taken over the regions in each unit
   with `per_destination` weights.
 - `weights/`: the Colombia slices of the published weight files, used
