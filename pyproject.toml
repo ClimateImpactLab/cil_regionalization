@@ -50,6 +50,7 @@ Repository = "https://github.com/ClimateImpactLab/cil_regionalization"
 "Impact regions (Zenodo)" = "https://doi.org/10.5281/zenodo.21934131"
 "Weights, GADM 2.0 (Zenodo)" = "https://doi.org/10.5281/zenodo.21934155"
 "Weights, GADM 4.1 (Zenodo)" = "https://doi.org/10.5281/zenodo.21935431"
+"SMME model weights (Zenodo)" = "https://doi.org/10.5281/zenodo.22003542"
 
 [project.scripts]
 cilreg = "cil_regionalization.cli:main"
