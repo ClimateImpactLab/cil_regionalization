@@ -9,8 +9,9 @@ regenerates the file from the committed data:
 
 It needs plotly in addition to the package (only for building; readers
 of the HTML need nothing). Two map panels, GADM 2.0 left and GADM 4.1
-right, with one control for the percentile across the sample's draws and
-one for the time window. The values are the effect of climate change
+right, on one shared geographic extent so they compare directly, with
+controls above the maps for the percentile across the sample's draws
+and the time window. The values are the effect of climate change
 on the mortality rate, deaths per 100,000 people per year, full
 adaptation minus histclim, from the ratio route in compute.py.
 """
@@ -39,8 +40,6 @@ def _panel(version: str, plot_file: str):
     shapes["uid"] = ["|".join(str(v) for v in row) for row in shapes[keys].values]
     shapes["geometry"] = shapes.geometry.simplify(SIMPLIFY)
     geojson = json.loads(shapes.set_index("uid")[["geometry"]].to_json())
-    for feat in geojson["features"]:
-        feat["id"] = feat["id"]
     q = q.copy()
     q["uid"] = ["|".join(str(v) for v in row) for row in q[keys].values]
     series = {}
@@ -53,18 +52,21 @@ def _panel(version: str, plot_file: str):
     names = (
         shapes["NAME_2"].astype(str) + ", " + shapes["NAME_1"].astype(str)
     ).tolist()
-    return list(shapes["uid"]), geojson, series, names
+    return list(shapes["uid"]), geojson, series, names, shapes.total_bounds
 
 
 def main() -> int:
     import plotly.graph_objects as go
 
-    locs20, gj20, series20, names20 = _panel("2.0", "mex_adm2_gadm20_plot.parquet")
-    locs41, gj41, series41, names41 = _panel("4.1", "mex_adm2_gadm41_plot.parquet")
+    locs20, gj20, series20, names20, b20 = _panel("2.0", "mex_adm2_gadm20_plot.parquet")
+    locs41, gj41, series41, names41, b41 = _panel("4.1", "mex_adm2_gadm41_plot.parquet")
     zmax = max(
         abs(v) for s in (series20, series41) for arr in s.values() for v in arr
         if v == v
     )
+    pad = 0.5
+    lon = [min(b20[0], b41[0]) - pad, max(b20[2], b41[2]) + pad]
+    lat = [min(b20[1], b41[1]) - pad, max(b20[3], b41[3]) + pad]
 
     default = "2080-2099|q50"
     fig = go.Figure()
@@ -85,37 +87,47 @@ def main() -> int:
             marker_line_width=0.1,
             marker_line_color="#888",
             geo="geo" if i == 0 else "geo2",
-            colorbar=dict(title="deaths per<br>100,000", len=0.7) if i == 1 else None,
+            colorbar=dict(
+                title=dict(text="deaths per 100,000", side="top"),
+                orientation="h",
+                x=0.5, xanchor="center",
+                y=-0.01, yanchor="top",
+                len=0.45, thickness=12,
+            ) if i == 1 else None,
             showscale=(i == 1),
         ))
-    for g in ("geo", "geo2"):
+    # one shared extent, set explicitly, so both panels sit at the same
+    # scale and position instead of each fitting its own bounds
+    for g, xdom in (("geo", [0.0, 0.49]), ("geo2", [0.51, 1.0])):
         fig.update_layout(**{g: dict(
-            fitbounds="locations", visible=False, projection_type="mercator",
+            visible=False,
+            projection_type="mercator",
+            lonaxis=dict(range=lon),
+            lataxis=dict(range=lat),
+            domain=dict(x=xdom, y=[0.0, 0.94]),
         )})
     fig.update_layout(
-        geo=dict(domain=dict(x=[0.0, 0.49])),
-        geo2=dict(domain=dict(x=[0.51, 1.0])),
+        height=560,
         title=dict(
-            text="Effect of climate change on mortality rates by Mexican municipality, "
-                 "GADM 2.0 and GADM 4.1<br>"
+            text="Effect of climate change on mortality rates by Mexican municipality<br>"
                  "<sup>deaths per 100,000 people per year, full adaptation minus histclim; "
                  "three Monte Carlo batches, 33 climate models, rcp85, SSP3; "
                  "negative is fewer deaths</sup>",
-            x=0.5,
+            x=0.5, y=0.97,
         ),
-        margin=dict(l=10, r=10, t=90, b=10),
+        margin=dict(l=10, r=10, t=60, b=50),
         annotations=[
-            dict(text="GADM 2.0", x=0.22, y=1.0, xref="paper", yref="paper",
+            dict(text="GADM 2.0", x=0.245, y=0.97, xref="paper", yref="paper",
                  showarrow=False, font=dict(size=14)),
-            dict(text="GADM 4.1", x=0.78, y=1.0, xref="paper", yref="paper",
+            dict(text="GADM 4.1", x=0.755, y=0.97, xref="paper", yref="paper",
                  showarrow=False, font=dict(size=14)),
         ],
     )
 
     html = fig.to_html(include_plotlyjs=True, full_html=True, div_id="maps")
     controls = f"""
-<div style="font-family: sans-serif; margin: 8px 16px;">
-  Percentile:
+<div style="font-family: sans-serif; text-align: center; margin: 12px 0 0 0;">
+  Percentile across the 99 draws:
   <select id="pct">
     <option value="q05">5th</option>
     <option value="q50" selected>50th</option>
@@ -127,6 +139,8 @@ def main() -> int:
     <option value="2090-2099">2090-2099</option>
   </select>
 </div>
+"""
+    script = f"""
 <script>
 var series20 = {json.dumps(series20)};
 var series41 = {json.dumps(series41)};
@@ -139,7 +153,8 @@ document.getElementById("pct").addEventListener("change", refresh);
 document.getElementById("win").addEventListener("change", refresh);
 </script>
 """
-    html = html.replace("</body>", controls + "</body>")
+    html = html.replace("<body>", "<body>" + controls, 1)
+    html = html.replace("</body>", script + "</body>")
     DOCS.mkdir(exist_ok=True)
     out = DOCS / "mexico_rates.html"
     out.write_text(html)
