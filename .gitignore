@@ -291,3 +291,4 @@ scratch/
 
 # third party published reference files, not repository content
 /ref_data/
+.env

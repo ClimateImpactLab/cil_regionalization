@@ -137,6 +137,59 @@ variable of its `-histclim` sibling; `rebased` on its own is not it.
 No adaptation is the exception and stands alone. The Climate Impact
 Lab memo "The art of rebasing and histclim" has the reasoning.
 
+## Climate model weights
+
+The published statistics weight climate models by the SMME weights
+rather than equally. `summarize_samples` and `pooled_statistics` take
+`weight_col`, naming a column with one weight per sample member; the
+default is unweighted, so leaving it out pools every member equally,
+which is not what the published products do. Use the weights whenever
+the numbers will be compared with published CIL results.
+
+The weight files live on the CIL filesystem at
+`/project/cil/gcp/climate/SMME-weights/`, one per RCP
+(`rcp45_SMME_weights.tsv`, `rcp85_SMME_weights.tsv`; columns
+`quantile`, `model`, `weight`), and are not distributed with this
+package. To apply them, normalize the model names and merge the
+weight onto every draw of each model, so the weight repeats across
+batches:
+
+```python
+w = pd.read_csv(
+    "/project/cil/gcp/climate/SMME-weights/rcp85_SMME_weights.tsv",
+    sep="\t",
+)[["model", "weight"]]
+w["key"] = w["model"].str.replace("*", "", regex=False).str.lower()
+draws["key"] = (
+    draws["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
+)
+draws = draws.merge(w[["key", "weight"]], on="key").drop(columns="key")
+stats = cilreg.summarize_samples(
+    draws,
+    sample_dims=["batch", "gcm"],
+    time_col="year",
+    window=(2080, 2099),
+    quantiles=[0.05, 0.5, 0.95],
+    weight_col="weight",
+)
+```
+
+The naming rule: weight file names are lowercase, a trailing `*`
+marks a model whose surrogate also exists and is stripped, and a name
+with an underscore suffix (`gfdl-cm3_94`) is a surrogate that the
+projection trees spell with a prefix (`surrogate_GFDL-CM3_94`).
+Stripping the prefix and lowercasing aligns the two; every model in
+the trees, surrogates included, then matches exactly one weight row.
+
+Weighted quantiles use the historical extraction tool's definition,
+the left step inverse of the weighted empirical distribution, which
+differs from the interpolated quantiles of the unweighted path; the
+`summarize_samples` docstring states the details. Pooling a sample
+dimension named `gcm` without weights warns once, since equal model
+weights are not what the published products use; filter
+`UnweightedModelWeightsWarning` to silence it. The Mexico notebook
+compares the two weightings on real draws.
+
 ## Worked example
 
 `examples/aggregation/` aggregates a small sample of real Monte Carlo
@@ -229,5 +282,8 @@ confirm a regenerated set started from the same input.
 ## More detail
 
 `fetch_weights`, `apply_weights`, `summarize_samples`,
-`WeightsArtifact`, and `load_config` are the supported API, re-exported
-at the package root. Everything else is internal and may change.
+`window_means`, `pooled_statistics`, `WeightsArtifact`, and
+`load_config` are the supported API, re-exported at the package root.
+`window_means` and `pooled_statistics` are the two halves of
+`summarize_samples`, for pipelines that reduce time per leaf before
+pooling. Everything else is internal and may change.

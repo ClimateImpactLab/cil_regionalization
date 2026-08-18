@@ -125,10 +125,10 @@ def ratio_rate(df: pd.DataFrame, version: str) -> pd.DataFrame:
     return out
 
 
-def window_percentiles(version: str) -> pd.DataFrame:
-    """Per-unit percentiles of the window-mean rate across the draws
-    (batch by climate model): aggregate each draw first, average over
-    the window, then take percentiles across draws."""
+def window_rates(version: str) -> pd.DataFrame:
+    """The window-mean rate of every draw per target unit: aggregate
+    each draw, then average deaths and population over the window and
+    divide. One row per unit, window, batch, and climate model."""
     keys = target_keys(version)
     per_draw = []
     for batch, gcm in draws():
@@ -141,9 +141,15 @@ def window_percentiles(version: str) -> pd.DataFrame:
             g["batch"] = batch
             g["gcm"] = gcm
             per_draw.append(g[keys + ["window", "batch", "gcm", "per100k"]])
-    pooled = pd.concat(per_draw, ignore_index=True)
+    return pd.concat(per_draw, ignore_index=True)
+
+
+def window_percentiles(version: str) -> pd.DataFrame:
+    """Per-unit percentiles of the window-mean rate across the draws."""
+    keys = target_keys(version)
     q = (
-        pooled.groupby(keys + ["window"])["per100k"]
+        window_rates(version)
+        .groupby(keys + ["window"])["per100k"]
         .quantile(PERCENTILES)
         .unstack()
     )

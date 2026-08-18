@@ -6,6 +6,10 @@ What a consumer of published weights touches, in call order:
     apply_weights       aggregate source-level data to the artifact's targets
     summarize_samples   window means and pooled statistics over MC draws
 
+`window_means` and `pooled_statistics` are the two halves of
+`summarize_samples`, for pipelines that reduce time per leaf before
+pooling.
+
 plus `WeightsArtifact` (the loaded weights) and, for weight generation,
 `Config` / `load_config` with the `cilreg` CLI. Everything not
 exported here is internal and may change without notice.
@@ -55,18 +59,26 @@ from cil_regionalization.apply import WeightsArtifact, apply_weights
 from cil_regionalization.config import Config, SourceUnitPolicies, load_config
 from cil_regionalization.fetch import clear_cache, fetch_weights, list_cached
 from cil_regionalization.netcdf_io import read_netcdf_leaf
-from cil_regionalization.stats import summarize_samples
+from cil_regionalization.stats import (
+    UnweightedModelWeightsWarning,
+    pooled_statistics,
+    summarize_samples,
+    window_means,
+)
 
 __all__ = [
     "Config",
     "SourceUnitPolicies",
+    "UnweightedModelWeightsWarning",
     "WeightsArtifact",
     "apply_weights",
     "clear_cache",
     "fetch_weights",
     "list_cached",
     "load_config",
+    "pooled_statistics",
     "read_netcdf_leaf",
     "summarize_samples",
+    "window_means",
 ]
 __version__ = "0.1.0"

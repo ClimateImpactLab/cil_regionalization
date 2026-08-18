@@ -1,0 +1,35 @@
+# Zenodo record definition for the SMME climate model weights.
+# Consumed by scripts/publish_zenodo.py; see its docstring for usage.
+# Its own record rather than part of the aggregation weight records:
+# different in kind, cited separately.
+#
+# Before publishing: stage the two TSV files under
+# data/zenodo_upload/smme, byte for byte as they are on the cluster.
+# After publishing: point the README recipe at the record instead of
+# the cluster path.
+
+files_dir = "data/zenodo_upload/smme"
+title = "SMME climate model weights for Climate Impact Lab projections"
+version = "1.0.0"
+keywords = [
+    "climate impacts",
+    "climate models",
+    "CMIP5",
+    "SMME",
+    "model weights",
+    "pattern scaling",
+    "Monte Carlo",
+]
+
+description = """
+The SMME probability weights for the climate models in Climate Impact Lab Monte Carlo projections, one file per RCP (rcp45 with 32 models, rcp85 with 33). The published projection statistics weight climate models by these values.
+
+Each row is one model: its quantile in the ensemble's global mean temperature distribution, its weight, and its global mean temperature path by year from 1950 to 2300. The weights in each file sum to one. Three things the files do not say themselves: a name with an underscore suffix (gfdl-cm3_94) is a pattern-scaled surrogate, spelled surrogate_GFDL-CM3_94 in the projection trees; a trailing asterisk is bookkeeping and drops out when matching names, which is done in lowercase; the line endings are carriage returns.
+
+The weight belongs to the climate model dimension of a Monte Carlo sample. Every draw of a model carries the model's weight; batches stay equally weighted. The cil_regionalization package (Climate Impact Lab GitHub organisation) applies them through the weight_col argument of summarize_samples, and its README section "Climate model weights" shows the merge.
+"""
+
+files = [
+    "rcp45_SMME_weights.tsv",
+    "rcp85_SMME_weights.tsv",
+]

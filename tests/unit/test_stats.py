@@ -450,3 +450,275 @@ class TestPooledStatisticsGuards:
         out = pooled_statistics(df, sample_dims=["zeppelin"], quantiles=[0.5])
         assert list(out.columns) == ["target", "statistic", "value"]
         assert set(out["statistic"]) == {"mean", "q50"}
+
+
+class TestWeightedStatistics:
+    """The weighted path reproduces the historical extraction tool's
+    WeightedECDF: weighted average for the mean, left step inverse of
+    the weighted empirical distribution for quantiles."""
+
+    @staticmethod
+    def _historical_quantile(values, weights, q):
+        # A direct transcription of the historical tool's inverse().
+        order = sorted(range(len(values)), key=lambda ii: values[ii])
+        values = np.array([values[ii] for ii in order], dtype=float)
+        weights = np.array([weights[ii] for ii in order], dtype=float)
+        pp = np.cumsum(weights) / weights.sum()
+        index = int(np.searchsorted(pp, q)) - 1
+        if index < 0:
+            return float("-inf")
+        return float(values[index])
+
+    def _members(self, values, weights):
+        rows = [
+            {"zeppelin": f"d{i}", "value": v, "w": w}
+            for i, (v, w) in enumerate(zip(values, weights))
+        ]
+        return _frame(rows)
+
+    def test_weighted_mean_is_weighted_average(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        values = [1.0, 2.0, 10.0]
+        weights = [0.2, 0.2, 0.6]
+        out = pooled_statistics(
+            self._members(values, weights),
+            sample_dims=["zeppelin"],
+            weight_col="w",
+        )
+        mean = float(out.loc[out["statistic"] == "mean", "value"].iloc[0])
+        assert mean == pytest.approx(np.average(values, weights=weights))
+
+    def test_quantiles_match_historical_step_inverse(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        rng = np.random.default_rng(7)
+        values = list(rng.normal(size=15))
+        weights = list(rng.uniform(0.01, 0.1, size=15))
+        qs = [0.05, 0.17, 0.5, 0.83, 0.95]
+        out = pooled_statistics(
+            self._members(values, weights),
+            sample_dims=["zeppelin"],
+            quantiles=qs,
+            include_mean=False,
+            weight_col="w",
+        )
+        for q in qs:
+            from cil_regionalization.stats import _quantile_label
+
+            got = float(
+                out.loc[out["statistic"] == _quantile_label(q), "value"].iloc[0]
+            )
+            assert got == pytest.approx(
+                self._historical_quantile(values, weights, q)
+            ), q
+
+    def test_quantile_below_first_step_is_minus_inf(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        out = pooled_statistics(
+            self._members([1.0, 2.0], [0.5, 0.5]),
+            sample_dims=["zeppelin"],
+            quantiles=[0.1],
+            include_mean=False,
+            weight_col="w",
+        )
+        assert float(out["value"].iloc[0]) == float("-inf")
+
+    def test_equal_weights_median_is_ordinary_median(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        values = [1.0, 2.0, 7.0, 11.0]
+        out = pooled_statistics(
+            self._members(values, [0.25] * 4),
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
+            include_mean=False,
+            weight_col="w",
+        )
+        assert float(out["value"].iloc[0]) == pytest.approx(np.median(values))
+
+    def test_equal_weights_differ_from_unweighted_off_median(self):
+        # The documented definitional difference: the weighted path uses
+        # the step distribution, the unweighted path interpolates.
+        from cil_regionalization.stats import pooled_statistics
+
+        values = [1.0, 2.0, 7.0, 11.0]
+        weighted = pooled_statistics(
+            self._members(values, [0.25] * 4),
+            sample_dims=["zeppelin"],
+            quantiles=[0.95],
+            include_mean=False,
+            weight_col="w",
+        )
+        unweighted = pooled_statistics(
+            self._members(values, [0.25] * 4).drop(columns="w"),
+            sample_dims=["zeppelin"],
+            quantiles=[0.95],
+            include_mean=False,
+        )
+        assert float(weighted["value"].iloc[0]) == pytest.approx(
+            self._historical_quantile(values, [0.25] * 4, 0.95)
+        )
+        assert float(unweighted["value"].iloc[0]) == pytest.approx(
+            np.quantile(values, 0.95)
+        )
+        assert float(weighted["value"].iloc[0]) != float(
+            unweighted["value"].iloc[0]
+        )
+
+    def test_zero_weight_excludes_member(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        out = pooled_statistics(
+            self._members([1.0, 2.0, 1000.0], [0.5, 0.5, 0.0]),
+            sample_dims=["zeppelin"],
+            weight_col="w",
+        )
+        mean = float(out.loc[out["statistic"] == "mean", "value"].iloc[0])
+        assert mean == pytest.approx(1.5)
+
+    def test_weight_column_stays_out_of_the_output(self):
+        # The weight column is neither an identity dimension nor an
+        # output column; the weighted output has the unweighted shape.
+        from cil_regionalization.stats import pooled_statistics
+
+        df = self._members([1.0, 2.0, 7.0], [0.9, 0.05, 0.05])
+        weighted = pooled_statistics(
+            df, sample_dims=["zeppelin"], quantiles=[0.5], weight_col="w"
+        )
+        unweighted = pooled_statistics(
+            df.drop(columns="w"), sample_dims=["zeppelin"], quantiles=[0.5]
+        )
+        assert list(weighted.columns) == list(unweighted.columns)
+        assert "w" not in weighted.columns
+        assert len(weighted) == len(unweighted)
+
+    def test_summarize_samples_weighted_end_to_end(self):
+        # Window means first, then weighted statistics; the weight rides
+        # along the member's time rows.
+        rows = []
+        for member, (level, w) in {
+            "d1": (0.0, 0.6),
+            "d2": (10.0, 0.4),
+        }.items():
+            for year in (2050, 2051):
+                rows.append(
+                    {"zeppelin": member, "epoch": year, "value": level, "w": w}
+                )
+        out = summarize_samples(
+            _frame(rows),
+            sample_dims=["zeppelin"],
+            time_col="epoch",
+            window=(2050, 2051),
+            weight_col="w",
+        )
+        mean = float(out.loc[out["statistic"] == "mean", "value"].iloc[0])
+        assert mean == pytest.approx(4.0)
+
+    def test_weight_varying_within_member_raises(self):
+        rows = [
+            {"zeppelin": "d1", "epoch": 2050, "value": 1.0, "w": 0.5},
+            {"zeppelin": "d1", "epoch": 2051, "value": 1.0, "w": 0.6},
+        ]
+        with pytest.raises(ValueError, match="varies within"):
+            summarize_samples(
+                _frame(rows),
+                sample_dims=["zeppelin"],
+                time_col="epoch",
+                window=(2050, 2051),
+                weight_col="w",
+            )
+
+    def test_bad_weights_raise(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        for bad, match in (
+            ([0.5, float("nan")], "missing values"),
+            ([0.5, -0.1], "negative"),
+            ([0.5, float("inf")], "non-finite"),
+        ):
+            with pytest.raises(ValueError, match=match):
+                pooled_statistics(
+                    self._members([1.0, 2.0], bad),
+                    sample_dims=["zeppelin"],
+                    weight_col="w",
+                )
+
+    def test_all_zero_weights_raise(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        with pytest.raises(ValueError, match="sum to zero"):
+            pooled_statistics(
+                self._members([1.0, 2.0], [0.0, 0.0]),
+                sample_dims=["zeppelin"],
+                weight_col="w",
+            )
+
+    def test_missing_weight_column_raises(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        with pytest.raises(ValueError, match="missing weight column"):
+            pooled_statistics(
+                self._members([1.0], [1.0]).drop(columns="w"),
+                sample_dims=["zeppelin"],
+                weight_col="w",
+            )
+
+
+class TestUnweightedGcmWarning:
+    def _gcm_frame(self):
+        return _frame(
+            [
+                {"gcm": "m1", "value": 1.0},
+                {"gcm": "m2", "value": 2.0},
+            ]
+        )
+
+    def test_unweighted_gcm_warns(self):
+        import warnings
+
+        from cil_regionalization.stats import (
+            UnweightedModelWeightsWarning,
+            pooled_statistics,
+        )
+
+        with pytest.warns(UnweightedModelWeightsWarning, match="published"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("always")
+                pooled_statistics(self._gcm_frame(), sample_dims=["gcm"])
+
+    def test_weighted_gcm_does_not_warn(self):
+        import warnings
+
+        from cil_regionalization.stats import pooled_statistics
+
+        df = self._gcm_frame().assign(w=0.5)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            pooled_statistics(df, sample_dims=["gcm"], weight_col="w")
+
+    def test_other_sample_dims_do_not_warn(self):
+        import warnings
+
+        from cil_regionalization.stats import pooled_statistics
+
+        df = self._gcm_frame().rename(columns={"gcm": "zeppelin"})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            pooled_statistics(df, sample_dims=["zeppelin"])
+
+    def test_warning_is_suppressible(self):
+        import warnings
+
+        from cil_regionalization.stats import (
+            UnweightedModelWeightsWarning,
+            pooled_statistics,
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warnings.filterwarnings(
+                "ignore", category=UnweightedModelWeightsWarning
+            )
+            pooled_statistics(self._gcm_frame(), sample_dims=["gcm"])
