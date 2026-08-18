@@ -67,5 +67,6 @@ testpaths = ["tests"]
 markers = [
     "bigquery: tests that contact BigQuery; require credentials and cilresearch context",
     "dask: tests that spin up a real Dask LocalCluster; skipped by default to keep the suite fast",
+    "network: tests that reach the internet; excluded by default so the suite runs offline",
 ]
-addopts = "-ra --strict-markers -m 'not bigquery and not dask'"
+addopts = "-ra --strict-markers -m 'not bigquery and not dask and not network'"
