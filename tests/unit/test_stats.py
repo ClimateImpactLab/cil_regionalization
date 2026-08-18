@@ -683,7 +683,7 @@ class TestUnweightedGcmWarning:
             pooled_statistics,
         )
 
-        with pytest.warns(UnweightedModelWeightsWarning, match="published"):
+        with pytest.warns(UnweightedModelWeightsWarning, match="convention"):
             with warnings.catch_warnings():
                 warnings.simplefilter("always")
                 pooled_statistics(self._gcm_frame(), sample_dims=["gcm"])

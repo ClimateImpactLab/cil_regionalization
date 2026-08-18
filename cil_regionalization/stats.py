@@ -26,8 +26,8 @@ What pooling assumes
 --------------------
 All declared sample dimensions are flattened into one sample. By
 default every member counts equally; with batch and gcm as the sample
-dimensions that weights every GCM the same, which differs from the
-published products, which weight climate models by the SMME weights.
+dimensions that weights every climate model the same. Climate Impact
+Lab projections weight models by the SMME weights instead.
 ``weight_col`` names a per-member weight column and switches the
 statistics to the weighted definitions described on
 `summarize_samples`; the default stays unweighted so existing callers
@@ -60,9 +60,9 @@ def _warn_if_unweighted_gcm(sample_dims: list[str], weight_col: str | None) -> N
     if weight_col is None and "gcm" in sample_dims:
         warnings.warn(
             "sample_dims includes 'gcm' and weight_col is not set. This "
-            "weights every climate model equally, which is not what the "
-            "published products do. See 'Climate model weights' in the "
-            "README.",
+            "weights every climate model equally, which is not the "
+            "convention Climate Impact Lab projections use. See 'Climate "
+            "model weights' in the README.",
             UnweightedModelWeightsWarning,
             stacklevel=3,
         )
@@ -119,7 +119,7 @@ def summarize_samples(
     tool: in an unbalanced sample a model's total weight grows with how
     often it appears. Leaving ``weight_col`` unset while a sample
     dimension is named ``gcm`` warns once, since equal model weights
-    are not what the published products use; filter
+    are not the convention the projections were built with; filter
     `UnweightedModelWeightsWarning` to silence it.
 
     Returns a long frame: identity dims + 'statistic' + ``value_col``.
