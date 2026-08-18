@@ -131,21 +131,11 @@ plausible wrong numbers.
 
 ## Reading the Monte Carlo trees
 
-`read_netcdf_leaf` flattens one projection file to the long form
-`apply_weights` takes. One caution about what those files contain: in
-the mortality and labor trees, a file named `...-combined.nc4` stores
-`rebased`, the scenario's impact relative to its own 2001 to 2010
-average. That value still contains the scenario's income and
-adaptation trend, so aggregating it gives impact levels, not the
-effect of climate change. The effect of climate change under full or
-income adaptation is the rebased impact minus the rebased impact of
-the `-histclim` sibling file, which resamples historical weather under
-the same income growth and adaptation. The no adaptation scenario is
-the exception: it has no income growth, so nothing is subtracted and
-its rebased value stands alone. Nothing in the file names or the
-variable metadata says any of this; the convention comes from the
-Climate Impact Lab memo "The art of rebasing and histclim", and the
-Mexico example below shows the subtraction on real files.
+In the mortality and labor trees, the effect of climate change is the
+`rebased` variable of a `...-combined.nc4` file minus the same
+variable of its `-histclim` sibling; `rebased` on its own is not it.
+No adaptation is the exception and stands alone. The Climate Impact
+Lab memo "The art of rebasing and histclim" has the reasoning.
 
 ## Worked example
 

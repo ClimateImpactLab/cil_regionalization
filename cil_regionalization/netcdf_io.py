@@ -64,19 +64,13 @@ def read_netcdf_leaf(
     carry no units metadata. The kind declaration itself remains the
     caller's responsibility.
 
-    A caution for the mortality and labor Monte Carlo trees: a file
-    named ``...-combined.nc4`` stores ``rebased``, the scenario's
-    impact relative to its own 2001 to 2010 average. That value still
-    contains the scenario's income and adaptation trend, so it is not
-    the effect of climate change on its own. The effect of climate
-    change under full or income adaptation is the rebased impact minus
-    the rebased impact of the ``-histclim`` sibling file, which
-    resamples historical weather under the same income growth and
-    adaptation; the no adaptation scenario has no income growth, so its
-    rebased value stands alone. Nothing in the file names or the
-    variable metadata says this. The convention comes from the Climate
-    Impact Lab memo "The art of rebasing and histclim"; the Mexico
-    example (examples/rates) shows the subtraction.
+    In the mortality and labor Monte Carlo trees, the effect of
+    climate change is ``rebased`` from a ``...-combined.nc4`` file
+    minus ``rebased`` from its ``-histclim`` sibling; the value on its
+    own is not it. No adaptation is the exception and stands alone.
+    The Climate Impact Lab memo "The art of rebasing and histclim" has
+    the reasoning; the Mexico example (examples/rates) shows the
+    subtraction.
     """
     xr = _import_xarray()
     variables = list(variables)
