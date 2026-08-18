@@ -244,9 +244,7 @@ wire();
   <div style="font-size: 17px;">Effect of climate change on mortality rates
     by Mexican municipality, GADM 2.0 and GADM 4.1</div>
   <div style="font-size: 12px; color: #444; margin-top: 2px;">
-    deaths per 100,000 people per year, full adaptation minus histclim;
-    three Monte Carlo batches, 33 climate models, rcp85, SSP3;
-    negative is fewer deaths</div>
+    deaths per 100,000 per year</div>
   <div style="margin-top: 8px;">
     Percentile across the 99 draws:
     <select id="pct">
