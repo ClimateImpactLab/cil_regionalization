@@ -3,6 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![GADM 2.0 weights](https://zenodo.org/badge/DOI/10.5281/zenodo.21934155.svg)](https://doi.org/10.5281/zenodo.21934155)
 [![GADM 4.1 weights](https://zenodo.org/badge/DOI/10.5281/zenodo.21935431.svg)](https://doi.org/10.5281/zenodo.21935431)
+[![SMME weights](https://zenodo.org/badge/DOI/10.5281/zenodo.22003542.svg)](https://doi.org/10.5281/zenodo.22003542)
 
 Climate impact results come at impact region level, but most analyses
 need them at country, state, or district level. This package does that
@@ -139,24 +140,22 @@ Lab memo "The art of rebasing and histclim" has the reasoning.
 
 ## Climate model weights
 
-The published statistics weight climate models by the SMME weights
-rather than equally. `summarize_samples` and `pooled_statistics` take
-`weight_col`, naming a column with one weight per sample member; the
-default is unweighted, so leaving it out pools every member equally,
-which is not what the published products do. Use the weights whenever
-the numbers will be compared with published CIL results.
+Climate Impact Lab projections weight climate models by the SMME
+weights. `summarize_samples` and `pooled_statistics` take
+`weight_col`, a column with one weight per sample member. The default
+is unweighted; equal model weights are not the convention these
+projections were built with, so use the weights whenever the numbers
+will sit next to other results from the same projections.
 
-The weight files live on the CIL filesystem at
-`/project/cil/gcp/climate/SMME-weights/`, one per RCP
-(`rcp45_SMME_weights.tsv`, `rcp85_SMME_weights.tsv`; columns
-`quantile`, `model`, `weight`), and are not distributed with this
-package. To apply them, normalize the model names and merge the
-weight onto every draw of each model, so the weight repeats across
-batches:
+The weight files are published as their own Zenodo record
+(doi:10.5281/zenodo.22003542), one per RCP (`rcp45_SMME_weights.tsv`,
+`rcp85_SMME_weights.tsv`; columns `quantile`, `model`, `weight`). To
+apply them, normalize the model names and merge the weight onto every
+draw of each model, so the weight repeats across batches:
 
 ```python
 w = pd.read_csv(
-    "/project/cil/gcp/climate/SMME-weights/rcp85_SMME_weights.tsv",
+    "https://zenodo.org/records/22003542/files/rcp85_SMME_weights.tsv?download=1",
     sep="\t",
 )[["model", "weight"]]
 w["key"] = w["model"].str.replace("*", "", regex=False).str.lower()
@@ -174,21 +173,19 @@ stats = cilreg.summarize_samples(
 )
 ```
 
-The naming rule: weight file names are lowercase, a trailing `*`
-marks a model whose surrogate also exists and is stripped, and a name
-with an underscore suffix (`gfdl-cm3_94`) is a surrogate that the
-projection trees spell with a prefix (`surrogate_GFDL-CM3_94`).
-Stripping the prefix and lowercasing aligns the two; every model in
-the trees, surrogates included, then matches exactly one weight row.
+The naming rule: weight file names are lowercase, a trailing `*` is
+bookkeeping and drops out, and an underscore suffix (`gfdl-cm3_94`)
+marks a surrogate, which the projection trees spell with a prefix
+(`surrogate_GFDL-CM3_94`). Strip the prefix and lowercase, and every
+model in the trees matches exactly one weight row.
 
-Weighted quantiles use the historical extraction tool's definition,
-the left step inverse of the weighted empirical distribution, which
-differs from the interpolated quantiles of the unweighted path; the
-`summarize_samples` docstring states the details. Pooling a sample
-dimension named `gcm` without weights warns once, since equal model
-weights are not what the published products use; filter
-`UnweightedModelWeightsWarning` to silence it. The Mexico notebook
-compares the two weightings on real draws.
+Weighted quantiles follow the historical extraction tool: the left
+step inverse of the weighted empirical distribution, not the
+interpolated quantiles of the unweighted path. Pooling a sample
+dimension named `gcm` without weights warns once; filter
+`UnweightedModelWeightsWarning` to silence it. On the Mexico sample
+(`examples/rates`) the weights barely move the median and pull the
+95th percentile down by about a fifth.
 
 ## Worked example
 
@@ -252,10 +249,13 @@ and different keys, and results built on one cannot be compared with
 results built on the other. Each geometry version is published as its own
 record, and every manifest states which version it was built against.
 
-Three records are published on Zenodo:
+Four records are published on Zenodo:
 
 - the impact region shapefile, world-combo-201710
   (doi:10.5281/zenodo.21934131)
+- the SMME climate model weights (doi:10.5281/zenodo.22003542):
+  `rcp45_SMME_weights.tsv` and `rcp85_SMME_weights.tsv`, used by the
+  statistics stage rather than the spatial aggregation
 - GADM 2.0 weights (doi:10.5281/zenodo.21934155):
   `gadm20-adm1-per-source`, `gadm20-adm1-per-destination`,
   `gadm20-adm2-per-source`, `gadm20-adm2-per-destination`
