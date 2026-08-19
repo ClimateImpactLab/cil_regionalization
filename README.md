@@ -44,11 +44,10 @@ region id in a `hierid` column and the numbers in a `value` column
 the aggregation to the regions the draws cover; leave it out only when
 they cover all 24,378. `data_version` names the impact region set the
 draws are keyed to; draws built on the published shapefile record
-below use `world-combo-201710`. A fetched weight file shows the
-version it expects in its `source_version`. `fetch_weights` downloads the
-weight file from its Zenodo record, checks it against the checksum
-recorded when it was generated, caches it under
-`~/.cache/cil_regionalization`, and returns it ready to use.
+below use `world-combo-201710`, and a mismatch with the weight file
+raises before any numbers are produced. `fetch_weights` downloads the
+file from its Zenodo record, verifies its checksum, and caches it
+under `~/.cache/cil_regionalization`.
 
 The same works from the command line: `cilreg fetch --list` shows
 every published weight file name, `cilreg fetch <name>`
@@ -84,34 +83,16 @@ population weighted mean over the regions inside it:
     value(u) = sum over r of w(r, u) * value(r),
     where the w(r, u) for one unit u sum to 1
 
-Order matters for quantiles, because quantiles do not pass through
-sums: the 95th percentile of a sum is not the sum of 95th percentiles.
-Adding up per-region quantiles assumes every region has its worst draw
-at the same time, which overstates the tails. So the pipeline
-aggregates each Monte Carlo draw separately and takes quantiles only
-at the end, and the statistics stage rejects input that already
-contains quantiles.
-
-To use published weights you provide three things: your draws in the
-long form above, the `kind` of your variable, and `data_version`, the
-impact region version your data was built on. If the version does not
-match what the weight file records, `apply_weights` raises an error
-before producing any numbers, because weights and data built on
-different geometries silently misallocate.
+Quantiles do not pass through sums: the 95th percentile of a sum is
+not the sum of 95th percentiles, because that would need every region
+to hit its worst draw together. The pipeline aggregates each Monte
+Carlo draw separately, takes quantiles at the end, and rejects input
+that already contains quantiles.
 
 ## Choosing the right type of weights
 
 Ask one question: does adding your variable across regions produce a
 meaningful total?
-
-Dollars, deaths, people, tons of crops: yes. Those are totals, and a
-region's total gets split between the administrative units it touches.
-Use a `per_source` weight file with `kind="extensive"`.
-
-Death rates, temperatures, percent of GDP: no. Adding rates across
-regions gives nonsense. Those are averages, and an administrative
-unit's value is the average over the regions inside it. Use a
-`per_destination` weight file with `kind="intensive"`.
 
 | Variable | Weight file | kind | Why |
 | --- | --- | --- | --- |
@@ -119,33 +100,26 @@ unit's value is the average over the regions inside it. Use a
 | Rates, temperatures, shares | `...-per-destination` | `intensive` | An average is taken over the regions in each unit |
 | A ratio needed at the target level, like percent of GDP | `...-per-source` | `ratio` | Sum the numerator and denominator separately, divide after |
 
-The two directions exist because a weight answers one of two different
-questions. When an impact region straddles two departments, either you
-are splitting that region's total between them, so its shares must sum
-to one across the departments, or you are averaging over the regions
-that make up one department, so the shares must sum to one within the
-department. Same intersections, different normalization, and a file
-built one way cannot do the other job. The library checks the `kind`
-you declare against the direction the weight file records and raises
-an error on a mismatch, since getting this wrong by hand produces
-plausible wrong numbers.
+A file built one way cannot do the other's job. The library checks
+the `kind` you declare against the direction the file records and
+raises on a mismatch.
 
 ## Reading the Monte Carlo trees
 
-In the mortality and labor trees, the effect of climate change is the
-`rebased` variable of a `...-combined.nc4` file minus the same
-variable of its `-histclim` sibling; `rebased` on its own is not it.
-No adaptation is the exception and stands alone. The Climate Impact
-Lab memo "The art of rebasing and histclim" has the reasoning.
+In the mortality and labor trees, the effect of climate change is a
+file's `rebased` variable minus the same variable of its `-histclim`
+sibling, whatever the file stem (mortality's `...-combined.nc4`,
+labor's `uninteracted_main_model.nc4`); `rebased` on its own is not
+it. No adaptation is the exception and stands alone. The Climate
+Impact Lab memo "The art of rebasing and histclim" has the reasoning.
 
 ## Climate model weights
 
 Climate Impact Lab projections weight climate models by the SMME
 weights. `summarize_samples` and `pooled_statistics` take
 `weight_col`, a column with one weight per sample member. The default
-is unweighted; equal model weights are not the convention these
-projections were built with, so use the weights whenever the numbers
-will sit next to other results from the same projections.
+is unweighted; use the weights when the numbers will sit next to
+results from these projections.
 
 The weight files are published as their own Zenodo record
 (doi:10.5281/zenodo.22003542), one per RCP (`rcp45_SMME_weights.tsv`,
@@ -189,21 +163,16 @@ dimension named `gcm` without weights warns once; filter
 
 ## Worked example
 
-`examples/aggregation/` aggregates a small sample of real Monte Carlo
-mortality projections (not the complete output: one Monte Carlo batch
-out of fifteen, across all 33 climate models) for Colombia, fetching
-the published weights by name and reading a committed 23 MB sample. Start with the notebook,
-`aggregation_colombia.ipynb`: it maps a single draw and a pooled
-quantile side by side, shows percent of GDP with the `ratio` kind, and
-plots the spread of draws behind the statistics. Its outputs are
-committed, so it reads on GitHub without running anything; running it
-needs `jupyter` and `matplotlib`. The script `run_example.py` covers the same case plus
-municipalities and rates from the command line, and its README shows
-the full printed output. A second example, `examples/rates/`,
+`examples/aggregation/` aggregates one batch of Monte Carlo mortality
+projections, all 33 climate models, for Colombia. Its notebook maps a
+single draw next to a pooled quantile, shows percent of GDP with the
+`ratio` kind, and plots the spread of draws; `run_example.py` adds
+municipalities and rates from the command line. `examples/rates/`
 aggregates the effect of climate change on Mexican mortality rates to
-municipalities on both GADM boundary versions, computing it as full
-adaptation minus histclim before aggregating and using the ratio kind
-to keep the rates scenario consistent.
+municipalities on both GADM versions. `examples/labor/` aggregates
+the effect of climate change on labor supply to Indian states,
+physical in minutes per worker per day and valued in 2005 PPP USD.
+Notebook outputs are committed, so they read without running.
 
 ## Installation
 
@@ -221,12 +190,11 @@ pip install .                # library and CLI
 pip install '.[netcdf]'      # also read NetCDF Monte Carlo trees
 ```
 
-`uv pip install .` works the same way in a uv environment. The
-geospatial stack (geopandas, shapely, rasterio, exactextract) installs
-with it; all of these ship wheels on Linux and macOS. Add `[netcdf]`
-to read NetCDF Monte Carlo trees, which the full mortality and labor
-trees are. `[bigquery]` adds the BigQuery generation backend, `[dev]`
-adds pytest. Python 3.10 or newer.
+`uv pip install .` works too. The geospatial stack (geopandas,
+shapely, rasterio, exactextract) installs with it and ships wheels on
+Linux and macOS. `[netcdf]` reads the NetCDF Monte Carlo trees,
+`[bigquery]` adds the BigQuery generation backend, `[dev]` adds
+pytest. Python 3.10 or newer.
 
 The `envs/` directory and `examples/montecarlo/runs/` exist to
 reproduce the runs behind the published results on the University of
@@ -243,11 +211,10 @@ validate <config.toml>` checks a config without computing anything.
 Worked configurations, including the GADM target preparation and the
 full generation runs, live under `examples/`.
 
-Weight files built on different target geometry versions are not
-interchangeable. GADM 2.0 and GADM 4.1 have different unit universes
-and different keys, and results built on one cannot be compared with
-results built on the other. Each geometry version is published as its own
-record, and every manifest states which version it was built against.
+GADM 2.0 and GADM 4.1 have different unit universes and different
+keys, so results built on one cannot be compared with the other. Each
+geometry version is its own record, and every manifest states which
+version it was built against.
 
 Four records are published on Zenodo:
 
