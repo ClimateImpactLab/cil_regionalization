@@ -15,7 +15,7 @@ before pooling, exact for an extensive variable.
 
 Run on the cluster:
 
-    python run_valued_mortality.py --adm adm1 --rcp rcp85 --workers 8
+    python run_valued_mortality.py --adm adm1 --rcp rcp85 --workers 16
 """
 from __future__ import annotations
 
@@ -44,38 +44,42 @@ IAMS = {"IIASA GDP": "low", "OECD Env-Growth": "high"}
 
 
 def batch_frames(task) -> list[pd.DataFrame]:
-    """Window-mean frames for every (gcm, iam, ssp) slice of one batch."""
-    batch, rcp, weights_dir = task
+    """Window-mean frames for every (gcm, iam) slice of one batch and ssp.
+
+    One task per (batch, ssp) rather than per batch: 45 tasks instead
+    of 15, so worker counts past 15 still shorten the run. The slice
+    loop is the wall-clock cost; the pooling at the end is minutes.
+    """
+    batch, ssp, rcp, weights_dir = task
     weights = cilreg.WeightsArtifact.load(weights_dir)
     ds = xr.open_zarr(str(ZARRS / f"mortality_damages_{batch}.zarr"))
     regions = [str(r) for r in ds["region"].values]
     years = [int(y) for y in ds["year"].values]
     out = []
-    for ssp in SSPS:
-        for model, iam in IAMS.items():
-            block = ds.sel(rcp=rcp, model=model, ssp=ssp,
-                           valuation=VALUATION, scaling=SCALING)
-            effect = block["monetized_deaths"] - block["monetized_histclim_deaths"]
-            for gcm in [str(g) for g in ds["gcm"].values]:
-                arr = (effect.sel(gcm=gcm).squeeze()
-                       .transpose("year", "region").values)
-                frame = pd.DataFrame(
-                    {"hierid": pd.Series(regions).repeat(len(years)).values,
-                     "year": years * len(regions),
-                     "value": arr.T.reshape(-1)}
-                )
-                applied = cilreg.apply_weights(
-                    weights, frame, kind="extensive", weight="pop",
-                    data_version="world-combo-201710",
-                ).frame
-                applied["batch"] = batch
-                applied["gcm"] = gcm
-                applied["iam"] = iam
-                applied["ssp"] = ssp
-                reduced = window_means(
-                    applied, time_col="year", windows=WINDOWS, value_col="value"
-                )
-                out.append(reduced)
+    for model, iam in IAMS.items():
+        block = ds.sel(rcp=rcp, model=model, ssp=ssp,
+                       valuation=VALUATION, scaling=SCALING)
+        effect = block["monetized_deaths"] - block["monetized_histclim_deaths"]
+        for gcm in [str(g) for g in ds["gcm"].values]:
+            arr = (effect.sel(gcm=gcm).squeeze()
+                   .transpose("year", "region").values)
+            frame = pd.DataFrame(
+                {"hierid": pd.Series(regions).repeat(len(years)).values,
+                 "year": years * len(regions),
+                 "value": arr.T.reshape(-1)}
+            )
+            applied = cilreg.apply_weights(
+                weights, frame, kind="extensive", weight="pop",
+                data_version="world-combo-201710",
+            ).frame
+            applied["batch"] = batch
+            applied["gcm"] = gcm
+            applied["iam"] = iam
+            applied["ssp"] = ssp
+            reduced = window_means(
+                applied, time_col="year", windows=WINDOWS, value_col="value"
+            )
+            out.append(reduced)
         print(batch, rcp, ssp, flush=True)
     return out
 
@@ -128,11 +132,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--adm", choices=["adm1", "adm2"], required=True)
     parser.add_argument("--rcp", choices=["rcp45", "rcp85"], required=True)
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--workers", type=int, default=16)
     args = parser.parse_args()
 
     weights_dir = WEIGHTS.format(adm=args.adm)
-    tasks = [(b, args.rcp, weights_dir) for b in BATCHES]
+    tasks = [(b, ssp, args.rcp, weights_dir) for b in BATCHES for ssp in SSPS]
     if args.workers == 1:
         results = [batch_frames(t) for t in tasks]
     else:
