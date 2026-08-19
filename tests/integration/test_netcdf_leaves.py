@@ -291,3 +291,75 @@ class TestUnitsBackstop:
             nc, variables=["share"], region_dim="unit_id", region_col="unit_id"
         )
         assert len(out) == 2
+
+
+class TestRegionLabels:
+    def _write_uncoordinated_leaf(self, path):
+        import numpy as np
+        import xarray as xr
+
+        # region dimension with no coordinate; ids in a separate variable,
+        # the mortality tree layout
+        ds = xr.Dataset(
+            {
+                "rebased": (("year", "region"), np.arange(6.0).reshape(3, 2)),
+                "regions": (("region",), np.array(["u1", "u2"], dtype=object)),
+            },
+            coords={"year": [2050, 2051, 2052]},
+        )
+        ds.to_netcdf(path)
+
+    def test_labels_variable_becomes_the_region_column(self, tmp_path):
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
+
+        p = tmp_path / "leaf.nc4"
+        self._write_uncoordinated_leaf(p)
+        frame = read_netcdf_leaf(
+            p, variables=["rebased"], region_dim="region",
+            region_col="unit_id", region_labels="regions",
+        )
+        assert sorted(frame["unit_id"].unique()) == ["u1", "u2"]
+        assert len(frame) == 6
+
+    def test_without_labels_the_column_is_positional(self, tmp_path):
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
+
+        p = tmp_path / "leaf.nc4"
+        self._write_uncoordinated_leaf(p)
+        frame = read_netcdf_leaf(
+            p, variables=["rebased"], region_dim="region", region_col="unit_id",
+        )
+        assert sorted(frame["unit_id"].unique()) == [0, 1]
+
+    def test_missing_labels_variable_raises(self, tmp_path):
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
+
+        p = tmp_path / "leaf.nc4"
+        self._write_uncoordinated_leaf(p)
+        with pytest.raises(ValueError, match="no variable 'nope'"):
+            read_netcdf_leaf(
+                p, variables=["rebased"], region_dim="region",
+                region_col="unit_id", region_labels="nope",
+            )
+
+    def test_labels_with_wrong_dimensions_raise(self, tmp_path):
+        import numpy as np
+        import xarray as xr
+
+        from cil_regionalization.netcdf_io import read_netcdf_leaf
+
+        p = tmp_path / "leaf.nc4"
+        ds = xr.Dataset(
+            {
+                "rebased": (("year", "region"), np.arange(6.0).reshape(3, 2)),
+                "regions": (("year", "region"),
+                            np.array([["a", "b"]] * 3, dtype=object)),
+            },
+            coords={"year": [2050, 2051, 2052]},
+        )
+        ds.to_netcdf(p)
+        with pytest.raises(ValueError, match="expected exactly"):
+            read_netcdf_leaf(
+                p, variables=["rebased"], region_dim="region",
+                region_col="unit_id", region_labels="regions",
+            )

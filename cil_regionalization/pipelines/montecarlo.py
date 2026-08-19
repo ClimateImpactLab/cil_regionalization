@@ -154,6 +154,7 @@ class DataConfig(_Strict):
     version: str = Field(min_length=1)
     group_col: Optional[str] = None
     region_dim: Optional[str] = None
+    region_labels: Optional[str] = None
 
     @model_validator(mode="after")
     def _region_dim_matches_format(self) -> "DataConfig":
@@ -167,6 +168,11 @@ class DataConfig(_Strict):
                 "data.region_dim is only meaningful for data.format='netcdf'; "
                 "parquet and csv leaves must already carry the artifact's "
                 "source key columns"
+            )
+        if self.format != "netcdf" and self.region_labels is not None:
+            raise ValueError(
+                "data.region_labels is only meaningful for "
+                "data.format='netcdf'"
             )
         return self
 
@@ -400,14 +406,20 @@ def run_pipeline(
     failures = [o for o in outcomes if o["error"] is not None]
     if failures:
         done = len(outcomes) - len(failures)
+        # thousands of leaves usually fail the same way; report each
+        # distinct error once with a count, not one message per leaf
+        by_error: dict[str, list] = {}
+        for f in failures:
+            by_error.setdefault(f["error"][:400], []).append(f["leaf"])
         detail = "; ".join(
-            f"{'/'.join(f['leaf'])}: {f['error']}" for f in failures[:5]
+            f"{len(leaves)} leaves (first {'/'.join(leaves[0])}): {err}"
+            for err, leaves in list(by_error.items())[:3]
         )
         raise ValueError(
             f"pipeline: partial run, {done} of {len(outcomes)} leaves "
-            f"succeeded and {len(failures)} failed ({detail}). No statistics "
-            f"were written; per-leaf outputs of successful leaves remain "
-            f"under {cfg.output.dir}."
+            f"succeeded and {len(failures)} failed with "
+            f"{len(by_error)} distinct errors ({detail}). No statistics "
+            f"were written."
         )
 
     # Leaves arrive already reduced to window means (see _process_leaf),
@@ -529,6 +541,7 @@ def _read_leaf(path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact") ->
         variables=variables,
         region_dim=data_cfg.region_dim,
         region_col=source_keys[0],
+        region_labels=data_cfg.region_labels,
         kind=data_cfg.kind,
     )
 

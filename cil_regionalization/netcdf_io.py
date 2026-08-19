@@ -42,6 +42,7 @@ def read_netcdf_leaf(
     variables: Sequence[str],
     region_dim: str,
     region_col: str,
+    region_labels: str | None = None,
     kind: str | None = None,
 ) -> pd.DataFrame:
     """Read one NetCDF leaf into a long frame.
@@ -52,6 +53,14 @@ def read_netcdf_leaf(
     in config rather than assumed; it is renamed to ``region_col``, the
     weights artifact's source key column. Everything else flattens to
     ordinary columns.
+
+    Some trees carry no coordinate on the region dimension and store
+    the region ids in a separate variable instead (the mortality trees
+    keep them in ``regions``). Without a coordinate the region column
+    would come out as positional integers, so ``region_labels`` names
+    that variable and its values become the region coordinate before
+    flattening. Declared like everything else: the reader does not
+    guess which variable holds the ids.
 
     ``kind`` optionally names the aggregation kind the caller intends,
     enabling the units backstop: a variable whose ``units`` attribute
@@ -101,6 +110,21 @@ def read_netcdf_leaf(
                 f"NetCDF leaf {path}: region_dim {region_dim!r} is not a "
                 f"dimension of {variables} (dimensions: {sorted(dims)})"
             )
+        if region_labels is not None:
+            if region_labels not in ds.variables:
+                raise ValueError(
+                    f"NetCDF leaf {path} has no variable {region_labels!r} "
+                    f"to take region ids from (available: "
+                    f"{sorted(ds.variables)})"
+                )
+            labels = ds[region_labels]
+            if labels.dims != (region_dim,):
+                raise ValueError(
+                    f"NetCDF leaf {path}: region_labels {region_labels!r} "
+                    f"has dimensions {labels.dims}; expected exactly "
+                    f"({region_dim!r},)"
+                )
+            ds = ds.assign_coords({region_dim: labels.values.astype(str)})
         frame = ds[variables].to_dataframe().reset_index()
     if region_dim != region_col:
         if region_col in frame.columns:

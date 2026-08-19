@@ -65,6 +65,7 @@ ssp = ["SSP1", "SSP2", "SSP3", "SSP4"]
 [data]
 format = "netcdf"
 region_dim = "region"
+region_labels = "regions"
 value_col = "rebased"
 kind = "extensive"
 version = "world-combo-201710"

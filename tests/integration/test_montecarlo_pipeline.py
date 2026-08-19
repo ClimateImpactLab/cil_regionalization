@@ -699,3 +699,20 @@ class TestOutputNaming:
         # one row per target x window x sample member
         assert len(reduced) == 2 * 2 * 6
         assert not (out / "leaves").exists()
+
+
+class TestFailureReport:
+    def test_identical_failures_reported_once_with_count(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        # poison every leaf identically: wrong value column
+        cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["data"]["value_col"] = "not_a_column"
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        with pytest.raises(ValueError) as err:
+            run_pipeline(cfg)
+        message = str(err.value)
+        assert "6 failed with 1 distinct errors" in message
+        # the message stays bounded: one description, not one per leaf
+        assert message.count("not_a_column") <= 2
