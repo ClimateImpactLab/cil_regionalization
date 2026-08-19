@@ -101,7 +101,9 @@ class TreeConfig(_Strict):
     root: str = Field(min_length=1)
     levels: list[str] = Field(min_length=1)
     filename: str = Field(min_length=1)
+    subtract_filename: Optional[str] = None
     expect: dict[str, list[str]]
+    exclude: list[list[str]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _expect_covers_levels(self) -> "TreeConfig":
@@ -113,6 +115,23 @@ class TreeConfig(_Strict):
         for level, values in self.expect.items():
             if not values:
                 raise ValueError(f"tree.expect.{level} must list at least one value")
+        if self.subtract_filename == self.filename:
+            raise ValueError(
+                "tree.subtract_filename equals tree.filename; subtracting a "
+                "file from itself is always zero"
+            )
+        for cell in self.exclude:
+            if len(cell) != len(self.levels):
+                raise ValueError(
+                    f"tree.exclude entry {cell} must have one value per "
+                    f"level {self.levels}"
+                )
+            for level, value in zip(self.levels, cell):
+                if value not in self.expect[level]:
+                    raise ValueError(
+                        f"tree.exclude entry {cell}: {value!r} is not a "
+                        f"declared value of level {level!r}"
+                    )
         return self
 
 
@@ -167,11 +186,37 @@ class StatsConfig(_Strict):
     windows: list[tuple[float, float]] = Field(min_length=1)
     quantiles: list[float] = Field(default_factory=list)
     include_mean: bool = True
+    model_weights: Optional[str] = None
+    model_weight_level: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _weights_come_together(self) -> "StatsConfig":
+        if (self.model_weights is None) != (self.model_weight_level is None):
+            raise ValueError(
+                "stats.model_weights and stats.model_weight_level come "
+                "together: the file says what the weights are, the level "
+                "says which sample dimension they attach to"
+            )
+        if (self.model_weight_level is not None
+                and self.model_weight_level not in self.sample_dims):
+            raise ValueError(
+                f"stats.model_weight_level {self.model_weight_level!r} must "
+                f"be one of stats.sample_dims {self.sample_dims}"
+            )
+        return self
 
 
 class PipelineOutputConfig(_Strict):
+    """Where results land. ``stem`` names the statistics and manifest
+    files, so several runs can share one directory. ``write_reduced``
+    keeps the pooled window-mean frame (one row per target, window,
+    and sample member), which downstream regrouping needs; per-draw
+    quantities cannot be recovered from the statistics file."""
+
     dir: str = Field(min_length=1)
     write_leaves: bool = True
+    stem: str = "statistics"
+    write_reduced: bool = False
 
 
 class RunConfig(_Strict):
@@ -186,6 +231,23 @@ class MonteCarloPipelineConfig(_Strict):
     output: PipelineOutputConfig
     policies: SourceUnitPolicies = Field(default_factory=SourceUnitPolicies)
     run: RunConfig = Field(default_factory=RunConfig)
+
+    @model_validator(mode="after")
+    def _subtract_has_no_denominator(self) -> "MonteCarloPipelineConfig":
+        if (self.tree.subtract_filename is not None
+                and self.data.denominator_col is not None):
+            raise ValueError(
+                "tree.subtract_filename with data.denominator_col is not "
+                "supported: differencing a ratio's numerator and denominator "
+                "is a different operation from differencing a value"
+            )
+        if (self.stats.model_weight_level is not None
+                and self.stats.model_weight_level not in self.tree.levels):
+            raise ValueError(
+                f"stats.model_weight_level {self.stats.model_weight_level!r} "
+                f"must be a tree level {self.tree.levels}"
+            )
+        return self
 
 
 def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
@@ -220,6 +282,7 @@ class Leaf:
     values: tuple[str, ...]
     path: Path
     output_path: Path | None
+    subtract_path: Path | None = None
 
     def labels(self, levels: list[str]) -> dict[str, str]:
         return dict(zip(levels, self.values))
@@ -265,25 +328,36 @@ def resolve_plan(cfg: MonteCarloPipelineConfig) -> PipelinePlan:
     root = Path(cfg.tree.root)
     out_root = Path(cfg.output.dir)
     value_lists = [cfg.tree.expect[level] for level in cfg.tree.levels]
+    excluded = {tuple(cell) for cell in cfg.tree.exclude}
     leaves: list[Leaf] = []
     missing: list[Leaf] = []
     for combo in itertools.product(*value_lists):
+        if tuple(combo) in excluded:
+            continue
         rel = Path(*combo)
         path = root / rel / cfg.tree.filename
+        subtract_path = (
+            root / rel / cfg.tree.subtract_filename
+            if cfg.tree.subtract_filename is not None
+            else None
+        )
         output_path = (
             out_root / "leaves" / rel / f"aggregated_{cfg.tree.filename}"
             if cfg.output.write_leaves
             else None
         )
-        leaf = Leaf(values=tuple(combo), path=path, output_path=output_path)
+        leaf = Leaf(values=tuple(combo), path=path, output_path=output_path,
+                    subtract_path=subtract_path)
         leaves.append(leaf)
-        if not path.exists():
+        if not path.exists() or (
+            subtract_path is not None and not subtract_path.exists()
+        ):
             missing.append(leaf)
     return PipelinePlan(
         leaves=leaves,
         missing=missing,
-        stats_path=out_root / "statistics.parquet",
-        manifest_path=out_root / "pipeline.manifest.json",
+        stats_path=out_root / f"{cfg.output.stem}.parquet",
+        manifest_path=out_root / f"{cfg.output.stem}.manifest.json",
     )
 
 
@@ -341,17 +415,27 @@ def run_pipeline(
     # targets x dims x years. One pooled-statistics call serves every
     # window: the window label is an ordinary identity dimension.
     combined = pd.concat([o.pop("frame") for o in outcomes], ignore_index=True)
+    weight_col = None
+    if cfg.stats.model_weights is not None:
+        combined, weight_col = _merge_model_weights(
+            combined, cfg.stats.model_weights, cfg.stats.model_weight_level
+        )
     stats = pooled_statistics(
         combined,
         sample_dims=cfg.stats.sample_dims,
         value_col=cfg.data.value_col,
         quantiles=cfg.stats.quantiles,
         include_mean=cfg.stats.include_mean,
+        weight_col=weight_col,
     )
 
     out_root = Path(cfg.output.dir)
     out_root.mkdir(parents=True, exist_ok=True)
     stats.to_parquet(plan.stats_path, index=False)
+    reduced_path = None
+    if cfg.output.write_reduced:
+        reduced_path = out_root / f"{cfg.output.stem}.reduced.parquet"
+        combined.to_parquet(reduced_path, index=False)
     manifest = {
         "leaves": outcomes,
         "n_leaves": len(outcomes),
@@ -363,6 +447,11 @@ def run_pipeline(
         "sample_dims": cfg.stats.sample_dims,
         "windows": [_window_label(lo, hi) for lo, hi in cfg.stats.windows],
         "quantiles": cfg.stats.quantiles,
+        "reduced": str(reduced_path) if reduced_path else None,
+        "model_weights": cfg.stats.model_weights,
+        "model_weight_level": cfg.stats.model_weight_level,
+        "subtract_filename": cfg.tree.subtract_filename,
+        "excluded_leaves": [list(c) for c in cfg.tree.exclude],
     }
     plan.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
@@ -374,6 +463,47 @@ def run_pipeline(
             "manifest": str(plan.manifest_path),
         },
     )
+
+
+def _merge_model_weights(
+    combined: pd.DataFrame, weights_path: str, level: str
+) -> tuple[pd.DataFrame, str]:
+    """Attach one weight per climate model to every sample member.
+
+    The weight file is an SMME table (columns ``model`` and ``weight``,
+    tab separated). Names match after the usual normalization: strip a
+    trailing ``*``, lowercase, and drop the trees' ``surrogate_``
+    prefix. Every value of the level must match a weight row.
+    """
+    table = pd.read_csv(weights_path, sep="\t")
+    if not {"model", "weight"}.issubset(table.columns):
+        raise ValueError(
+            f"model weights file {weights_path} needs 'model' and 'weight' "
+            f"columns; found {sorted(table.columns)}"
+        )
+    table["_key"] = (
+        table["model"].str.replace("*", "", regex=False).str.lower()
+    )
+    keys = (
+        combined[level]
+        .str.replace("surrogate_", "", regex=False)
+        .str.lower()
+    )
+    mapping = table.set_index("_key")["weight"]
+    unmatched = sorted(set(keys) - set(mapping.index))
+    if unmatched:
+        raise ValueError(
+            f"{len(unmatched)} values of {level!r} have no row in the model "
+            f"weights file (first: {unmatched[:5]})"
+        )
+    col = "model_weight"
+    if col in combined.columns:
+        raise ValueError(
+            f"combined frame already has a {col!r} column; cannot attach "
+            f"model weights"
+        )
+    out = combined.assign(**{col: mapping.reindex(keys).values})
+    return out, col
 
 
 def _read_leaf(path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact") -> pd.DataFrame:
@@ -403,6 +533,38 @@ def _read_leaf(path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact") ->
     )
 
 
+def _subtract_leaf(
+    frame: pd.DataFrame, path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact"
+) -> pd.DataFrame:
+    """Difference a second file's values from the first, row for row.
+
+    The effect of climate change in the projection trees is the
+    scenario file minus its histclim sibling; this performs that
+    subtraction before any weighting. The two files must cover the
+    same rows: every key of one present in the other, no duplicates.
+    """
+    other = _read_leaf(path, data_cfg, artifact)
+    keys = [c for c in frame.columns if c != data_cfg.value_col]
+    if sorted(other.columns) != sorted(frame.columns):
+        raise ValueError(
+            f"subtract file {path} has columns {sorted(other.columns)}; "
+            f"expected {sorted(frame.columns)}"
+        )
+    merged = frame.merge(
+        other, on=keys, suffixes=("", "_subtract"), validate="one_to_one"
+    )
+    if len(merged) != len(frame):
+        raise ValueError(
+            f"subtract file {path} covers {len(merged)} of {len(frame)} "
+            f"rows; the two files must cover the same regions and years"
+        )
+    merged[data_cfg.value_col] = (
+        merged[data_cfg.value_col].astype("float64")
+        - merged[f"{data_cfg.value_col}_subtract"].astype("float64")
+    )
+    return merged.drop(columns=[f"{data_cfg.value_col}_subtract"])
+
+
 def _process_leaf(task: tuple) -> dict:
     """Apply weights to one leaf, then reduce it to window means.
 
@@ -416,6 +578,8 @@ def _process_leaf(task: tuple) -> dict:
     leaf, artifact, levels, data_cfg, weight, policies, stats_cfg = task
     try:
         frame = _read_leaf(leaf.path, data_cfg, artifact)
+        if leaf.subtract_path is not None:
+            frame = _subtract_leaf(frame, leaf.subtract_path, data_cfg, artifact)
         for name, value in leaf.labels(levels).items():
             if name in frame.columns:
                 raise ValueError(

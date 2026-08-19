@@ -179,7 +179,7 @@ class TestEndToEnd:
         # Per-leaf outputs are mirrored under the output dir.
         leaf_out = tmp_path / "out" / "leaves" / "k0" / "z0" / "aggregated_damages.parquet"
         assert leaf_out.exists()
-        manifest = json.loads((tmp_path / "out" / "pipeline.manifest.json").read_text())
+        manifest = json.loads((tmp_path / "out" / "statistics.manifest.json").read_text())
         assert manifest["n_leaves"] == 6
         assert manifest["artifact_source_version"] == SOURCE_VERSION
 
@@ -559,3 +559,143 @@ class TestWindowReductionPerLeaf:
         )
         assert "year" in on_disk.columns
         assert len(on_disk) == 8
+
+
+def _build_subtract_tree(root: Path, levels: dict[str, list[str]]) -> None:
+    """A histclim sibling next to every leaf: value minus 7, so the
+    difference is exactly 7 everywhere and stats are hand-derivable."""
+    _build_tree(root, levels)
+    for combo in itertools.product(*levels.values()):
+        leaf_dir = root.joinpath(*combo)
+        df = pd.read_parquet(leaf_dir / "damages.parquet")
+        df["value"] = df["value"] - 7.0
+        df.to_parquet(leaf_dir / "histclim.parquet", index=False)
+
+
+class TestSubtract:
+    def test_difference_flows_through_to_statistics(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_subtract_tree(tree, _LEVELS)
+        cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["tree"]["subtract_filename"] = "histclim.parquet"
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+        # value - (value - 7) = 7 per unit-year; u1 wholly in T1 and half
+        # of u2 also lands in T1, so every statistic in T1 is 7 * 1.5
+        t1 = result.stats[result.stats["target_id"] == "T1"]
+        assert (t1["value"].round(9) == 10.5).all()
+
+    def test_missing_subtract_file_counts_as_missing(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)  # no histclim siblings
+        cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["tree"]["subtract_filename"] = "histclim.parquet"
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        plan = run_pipeline(cfg, dry_run=True)
+        assert len(plan.missing) == len(plan.leaves)
+
+    def test_subtracting_the_same_file_is_rejected(self, weights_dir, tmp_path):
+        cfg = _pipeline_cfg(weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["tree"]["subtract_filename"] = "damages.parquet"
+        with pytest.raises(ValueError, match="always zero"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+
+class TestExclude:
+    def test_excluded_cell_is_skipped_not_missing(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        import shutil
+        shutil.rmtree(tree / "k1" / "z2")  # absent on disk
+        cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["tree"]["exclude"] = [["k1", "z2"]]
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+        assert len(result.leaf_reports) == 5
+
+    def test_exclude_of_undeclared_value_is_rejected(self, weights_dir, tmp_path):
+        cfg = _pipeline_cfg(weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["tree"]["exclude"] = [["k1", "z9"]]
+        with pytest.raises(ValueError, match="not a declared value"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+
+class TestModelWeights:
+    def _weights_file(self, tmp_path: Path) -> Path:
+        p = tmp_path / "weights.tsv"
+        pd.DataFrame(
+            {"model": ["Z0*", "z1", "z2"], "weight": [0.6, 0.3, 0.1]}
+        ).to_csv(p, sep="\t", index=False)
+        return p
+
+    def test_weighted_mean_uses_the_weights(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["stats"]["model_weights"] = str(self._weights_file(tmp_path))
+        raw["stats"]["model_weight_level"] = "zeppelin"
+        raw["stats"]["quantiles"] = []
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+
+        unweighted = run_pipeline(
+            _pipeline_cfg(weights_dir, tree, tmp_path / "out2", levels=_LEVELS)
+        )
+        merged = result.stats.merge(
+            unweighted.stats[unweighted.stats["statistic"] == "mean"],
+            on=["target_id", "window", "statistic"],
+            suffixes=("_w", "_u"),
+        )
+        means = merged[merged["statistic"] == "mean"]
+        assert (means["value_w"] != means["value_u"]).any()
+        manifest = json.loads(
+            (Path(result.paths["manifest"])).read_text()
+        )
+        assert manifest["model_weight_level"] == "zeppelin"
+
+    def test_unmatched_model_is_rejected(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        p = tmp_path / "weights.tsv"
+        pd.DataFrame({"model": ["z0"], "weight": [1.0]}).to_csv(p, sep="\t", index=False)
+        cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["stats"]["model_weights"] = str(p)
+        raw["stats"]["model_weight_level"] = "zeppelin"
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        with pytest.raises(ValueError, match="no row in the model"):
+            run_pipeline(cfg)
+
+    def test_weight_level_must_be_sample_dim(self, weights_dir, tmp_path):
+        cfg = _pipeline_cfg(weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["stats"]["model_weights"] = "x.tsv"
+        raw["stats"]["model_weight_level"] = "nope"
+        with pytest.raises(ValueError, match="sample_dims"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+
+class TestOutputNaming:
+    def test_stem_and_reduced_frame(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["output"]["stem"] = "mortality_physical_rcpX"
+        raw["output"]["write_reduced"] = True
+        raw["output"]["write_leaves"] = False
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+        out = tmp_path / "out"
+        assert (out / "mortality_physical_rcpX.parquet").exists()
+        assert (out / "mortality_physical_rcpX.manifest.json").exists()
+        reduced = pd.read_parquet(out / "mortality_physical_rcpX.reduced.parquet")
+        # one row per target x window x sample member
+        assert len(reduced) == 2 * 2 * 6
+        assert not (out / "leaves").exists()

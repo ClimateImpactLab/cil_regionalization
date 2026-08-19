@@ -106,12 +106,22 @@ raises on a mismatch.
 
 ## Reading the Monte Carlo trees
 
-In the mortality and labor trees, the effect of climate change is a
-file's `rebased` variable minus the same variable of its `-histclim`
-sibling, whatever the file stem (mortality's `...-combined.nc4`,
-labor's `uninteracted_main_model.nc4`); `rebased` on its own is not
-it. No adaptation is the exception and stands alone. The Climate
+In the mortality, labor, and energy trees, the effect of climate
+change is a file's `rebased` variable minus the same variable of its
+`-histclim` sibling, whatever the file stem; `rebased` on its own is
+not it. No adaptation is the exception and stands alone. The Climate
 Impact Lab memo "The art of rebasing and histclim" has the reasoning.
+
+Energy adds two traps of its own. The physical values are GJ per
+capita, although the files say kWh/pc. The dollar `-price...-levels`
+files understate by exactly 0.0036, because a GJ quantity was
+multiplied by a per-kWh price; divide by 0.0036 to repair. Energy
+also has no Monte Carlo draws: its uncertainty lives in delta-method
+trees, where `rebased` holds the variance and `rebased_bcde` the
+gradient per regression coefficient. Aggregate the gradients with the
+weights and take one quadratic form against the embedded covariance
+matrix (`aggregate_gradient` and `delta_method`); summing
+independently drawn region values understates the aggregate spread.
 
 ## Climate model weights
 
@@ -172,7 +182,11 @@ aggregates the effect of climate change on Mexican mortality rates to
 municipalities on both GADM versions. `examples/labor/` aggregates
 the effect of climate change on labor supply to Indian states,
 physical in minutes per worker per day and valued in 2005 PPP USD.
-Notebook outputs are committed, so they read without running.
+`examples/energy/` aggregates the effect of climate change on energy
+use to United States states with delta-method uncertainty: gradient
+aggregation, the quadratic form, and the spread that independent
+draws would lose. Notebook outputs are committed, so they read
+without running.
 
 ## Installation
 
@@ -249,7 +263,8 @@ confirm a regenerated set started from the same input.
 ## More detail
 
 `fetch_weights`, `apply_weights`, `summarize_samples`,
-`window_means`, `pooled_statistics`, `WeightsArtifact`, and
+`window_means`, `pooled_statistics`, `read_gradient_leaf`,
+`aggregate_gradient`, `delta_method`, `WeightsArtifact`, and
 `load_config` are the supported API, re-exported at the package root.
 `window_means` and `pooled_statistics` are the two halves of
 `summarize_samples`, for pipelines that reduce time per leaf before

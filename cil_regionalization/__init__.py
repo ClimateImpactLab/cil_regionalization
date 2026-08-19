@@ -58,6 +58,11 @@ except ImportError:
 from cil_regionalization.apply import WeightsArtifact, apply_weights
 from cil_regionalization.config import Config, SourceUnitPolicies, load_config
 from cil_regionalization.fetch import clear_cache, fetch_weights, list_cached
+from cil_regionalization.gradients import (
+    aggregate_gradient,
+    delta_method,
+    read_gradient_leaf,
+)
 from cil_regionalization.netcdf_io import read_netcdf_leaf
 from cil_regionalization.stats import (
     UnweightedModelWeightsWarning,
@@ -71,12 +76,15 @@ __all__ = [
     "SourceUnitPolicies",
     "UnweightedModelWeightsWarning",
     "WeightsArtifact",
+    "aggregate_gradient",
     "apply_weights",
     "clear_cache",
+    "delta_method",
     "fetch_weights",
     "list_cached",
     "load_config",
     "pooled_statistics",
+    "read_gradient_leaf",
     "read_netcdf_leaf",
     "summarize_samples",
     "window_means",
