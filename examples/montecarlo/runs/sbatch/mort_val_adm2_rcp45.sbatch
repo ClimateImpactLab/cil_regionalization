@@ -2,7 +2,7 @@
 #SBATCH --partition=cil
 #SBATCH --account=cil
 #SBATCH --job-name=mort_val_adm2_rcp45
-#SBATCH --time=48:00:00
+#SBATCH --time=18:00:00
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=192G
 #SBATCH --output=mort_val_adm2_rcp45_%j.log

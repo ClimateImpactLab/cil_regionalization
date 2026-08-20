@@ -384,10 +384,25 @@ def run_pipeline(
         )
 
     artifact = WeightsArtifact.load(cfg.weights.dir, stem=cfg.weights.stem)
+    if cfg.stats.model_weights is not None:
+        # fail before the run, not after it: every declared value of the
+        # weight level must have a row in the table
+        mapping = _load_model_weight_map(cfg.stats.model_weights)
+        declared = cfg.tree.expect[cfg.stats.model_weight_level]
+        unmatched = sorted(
+            v for v in declared
+            if v.replace("surrogate_", "").lower() not in mapping
+        )
+        if unmatched:
+            raise ValueError(
+                f"{len(unmatched)} values of "
+                f"{cfg.stats.model_weight_level!r} have no row in the model "
+                f"weights file (first: {unmatched[:5]})"
+            )
+
     tasks = [
         (
             leaf,
-            artifact,
             cfg.tree.levels,
             cfg.data,
             cfg.weights.weight,
@@ -396,12 +411,25 @@ def run_pipeline(
         )
         for leaf in plan.leaves
     ]
+    initargs = (cfg.weights.dir, cfg.weights.stem, cfg.stats.model_weights)
 
     if cfg.run.n_workers == 1 or len(tasks) <= 1:
+        _init_worker(*initargs)
         outcomes = [_process_leaf(t) for t in tasks]
     else:
-        with mp.Pool(processes=cfg.run.n_workers) as pool:
-            outcomes = pool.map(_process_leaf, tasks)
+        # The artifact loads once per worker (initializer), not once per
+        # task: shipping it in every task pickle made long-lived workers
+        # churn through thousands of unpickled copies, and their resident
+        # memory grew with leaves processed. maxtasksperchild recycles
+        # workers to bound what churn remains; chunksize=1 so recycling
+        # counts actual leaves.
+        with mp.Pool(
+            processes=cfg.run.n_workers,
+            initializer=_init_worker,
+            initargs=initargs,
+            maxtasksperchild=16,
+        ) as pool:
+            outcomes = pool.map(_process_leaf, tasks, chunksize=1)
 
     failures = [o for o in outcomes if o["error"] is not None]
     if failures:
@@ -427,11 +455,7 @@ def run_pipeline(
     # targets x dims x years. One pooled-statistics call serves every
     # window: the window label is an ordinary identity dimension.
     combined = pd.concat([o.pop("frame") for o in outcomes], ignore_index=True)
-    weight_col = None
-    if cfg.stats.model_weights is not None:
-        combined, weight_col = _merge_model_weights(
-            combined, cfg.stats.model_weights, cfg.stats.model_weight_level
-        )
+    weight_col = "model_weight" if cfg.stats.model_weights is not None else None
     stats = pooled_statistics(
         combined,
         sample_dims=cfg.stats.sample_dims,
@@ -477,15 +501,13 @@ def run_pipeline(
     )
 
 
-def _merge_model_weights(
-    combined: pd.DataFrame, weights_path: str, level: str
-) -> tuple[pd.DataFrame, str]:
-    """Attach one weight per climate model to every sample member.
+def _load_model_weight_map(weights_path: str) -> dict[str, float]:
+    """The SMME table as normalized-name -> weight.
 
     The weight file is an SMME table (columns ``model`` and ``weight``,
     tab separated). Names match after the usual normalization: strip a
     trailing ``*``, lowercase, and drop the trees' ``surrogate_``
-    prefix. Every value of the level must match a weight row.
+    prefix.
     """
     table = pd.read_csv(weights_path, sep="\t")
     if not {"model", "weight"}.issubset(table.columns):
@@ -493,29 +515,26 @@ def _merge_model_weights(
             f"model weights file {weights_path} needs 'model' and 'weight' "
             f"columns; found {sorted(table.columns)}"
         )
-    table["_key"] = (
-        table["model"].str.replace("*", "", regex=False).str.lower()
+    keys = table["model"].str.replace("*", "", regex=False).str.lower()
+    return dict(zip(keys, table["weight"].astype(float)))
+
+
+# Per-worker state, set once by the pool initializer. The weights
+# artifact and the model-weight table are identical for every leaf, so
+# they load once per worker process instead of travelling inside every
+# task.
+_WORKER_STATE: dict = {}
+
+
+def _init_worker(
+    weights_dir: str, weights_stem: str, model_weights: Optional[str]
+) -> None:
+    _WORKER_STATE["artifact"] = WeightsArtifact.load(
+        weights_dir, stem=weights_stem
     )
-    keys = (
-        combined[level]
-        .str.replace("surrogate_", "", regex=False)
-        .str.lower()
+    _WORKER_STATE["model_weights"] = (
+        _load_model_weight_map(model_weights) if model_weights else None
     )
-    mapping = table.set_index("_key")["weight"]
-    unmatched = sorted(set(keys) - set(mapping.index))
-    if unmatched:
-        raise ValueError(
-            f"{len(unmatched)} values of {level!r} have no row in the model "
-            f"weights file (first: {unmatched[:5]})"
-        )
-    col = "model_weight"
-    if col in combined.columns:
-        raise ValueError(
-            f"combined frame already has a {col!r} column; cannot attach "
-            f"model weights"
-        )
-    out = combined.assign(**{col: mapping.reindex(keys).values})
-    return out, col
 
 
 def _read_leaf(path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact") -> pd.DataFrame:
@@ -588,7 +607,8 @@ def _process_leaf(task: tuple) -> dict:
     the full aggregated frame (years intact); only the in-memory frame
     handed back for pooling is reduced.
     """
-    leaf, artifact, levels, data_cfg, weight, policies, stats_cfg = task
+    leaf, levels, data_cfg, weight, policies, stats_cfg = task
+    artifact = _WORKER_STATE["artifact"]
     try:
         frame = _read_leaf(leaf.path, data_cfg, artifact)
         if leaf.subtract_path is not None:
@@ -622,6 +642,13 @@ def _process_leaf(task: tuple) -> dict:
             windows=stats_cfg.windows,
             value_col=data_cfg.value_col,
         )
+        if _WORKER_STATE.get("model_weights") is not None:
+            # one climate model per leaf, so its weight is a constant
+            # column here; attaching it per leaf replaces a merge over
+            # the full combined frame that dominated end-of-run memory
+            value = leaf.labels(levels)[stats_cfg.model_weight_level]
+            key = value.replace("surrogate_", "").lower()
+            reduced["model_weight"] = _WORKER_STATE["model_weights"][key]
 
         balance = applied.mass_balance
         return {

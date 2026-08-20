@@ -43,6 +43,24 @@ QUANTILES = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
 IAMS = {"IIASA GDP": "low", "OECD Env-Growth": "high"}
 
 
+def weighted_gcms(rcp: str, gcms: list[str]) -> list[str]:
+    """The gcms the rcp's SMME table declares, in zarr naming.
+
+    The zarrs carry one gcm dimension shared by both rcps, padded with
+    NaN where an rcp was not run: rcp45 holds 32 real models plus an
+    all-NaN surrogate_GFDL-ESM2G_06 slice. The weight table is the
+    declaration of the rcp's ensemble, so it decides what aggregates.
+    """
+    smme = pd.read_csv(SMME.format(rcp=rcp), sep="\t")["model"]
+    declared = set(smme.str.replace("*", "", regex=False).str.lower())
+    kept = [g for g in gcms
+            if g.replace("surrogate_", "").lower() in declared]
+    dropped = sorted(set(gcms) - set(kept))
+    if dropped:
+        print(f"{rcp}: not in the SMME table, skipped: {dropped}", flush=True)
+    return kept
+
+
 def batch_frames(task) -> list[pd.DataFrame]:
     """Window-mean frames for every (gcm, iam) slice of one batch and ssp.
 
@@ -55,12 +73,13 @@ def batch_frames(task) -> list[pd.DataFrame]:
     ds = xr.open_zarr(str(ZARRS / f"mortality_damages_{batch}.zarr"))
     regions = [str(r) for r in ds["region"].values]
     years = [int(y) for y in ds["year"].values]
+    gcms = weighted_gcms(rcp, [str(g) for g in ds["gcm"].values])
     out = []
     for model, iam in IAMS.items():
         block = ds.sel(rcp=rcp, model=model, ssp=ssp,
                        valuation=VALUATION, scaling=SCALING)
         effect = block["monetized_deaths"] - block["monetized_histclim_deaths"]
-        for gcm in [str(g) for g in ds["gcm"].values]:
+        for gcm in gcms:
             arr = (effect.sel(gcm=gcm).squeeze()
                    .transpose("year", "region").values)
             frame = pd.DataFrame(

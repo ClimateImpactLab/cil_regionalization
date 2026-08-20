@@ -1,0 +1,97 @@
+# Production run: soy physical effect (log kg/Ha, full adaptation
+# minus histclim), ADM2, rcp45.
+#
+# Tree: the winsorized Monte Carlo generation the sector's registry
+# points at (per-leaf 1st/99th percentile clamp of rebased). Under
+# rcp45 the tree has no surrogate_GFDL-ESM2G_06; the winsorization
+# step skipped that cell.
+#
+# The effect aggregates as an intensive quantity weighted by SAGE
+# cropped area for this crop. Regions with no soy area carry NaN
+# weight in the artifact; on_zero_weight = "skip" declares them, and
+# targets with no soy cropland are absent from the output rather
+# than zero. Each crop has its own set of covered units; do not
+# compare two crop maps assuming the same coverage.
+#
+# The third window ends at 2098, not 2099: the NEX-GDDP climate input
+# lacks precipitation for some models after 2098, so the projections
+# stop there.
+
+[weights]
+dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/weights/ir_adm2_croparea_soy"
+weight = "croparea"
+
+[policies]
+on_zero_weight = "skip"
+
+[tree]
+root = "/project/cil/gcp/outputs/agriculture/impacts-mealy/montecarlo/soy-2025_1pct_winsorization/montecarlo"
+levels = ["batch", "rcp", "gcm", "iam", "ssp"]
+filename = "soy-160221.nc4"
+subtract_filename = "soy-160221-histclim.nc4"
+
+[tree.expect]
+batch = ["batch0", "batch1", "batch2", "batch3", "batch4", "batch5", "batch6", "batch7", "batch8", "batch9", "batch10", "batch11", "batch12", "batch13", "batch14"]
+rcp = ["rcp45"]
+gcm = [
+    "ACCESS1-0",
+    "BNU-ESM",
+    "CCSM4",
+    "CESM1-BGC",
+    "CNRM-CM5",
+    "CSIRO-Mk3-6-0",
+    "CanESM2",
+    "GFDL-CM3",
+    "GFDL-ESM2G",
+    "GFDL-ESM2M",
+    "IPSL-CM5A-LR",
+    "IPSL-CM5A-MR",
+    "MIROC-ESM",
+    "MIROC-ESM-CHEM",
+    "MIROC5",
+    "MPI-ESM-LR",
+    "MPI-ESM-MR",
+    "MRI-CGCM3",
+    "NorESM1-M",
+    "bcc-csm1-1",
+    "inmcm4",
+    "surrogate_CanESM2_89",
+    "surrogate_CanESM2_94",
+    "surrogate_CanESM2_99",
+    "surrogate_GFDL-CM3_89",
+    "surrogate_GFDL-CM3_94",
+    "surrogate_GFDL-CM3_99",
+    "surrogate_GFDL-ESM2G_01",
+    "surrogate_GFDL-ESM2G_11",
+    "surrogate_MRI-CGCM3_01",
+    "surrogate_MRI-CGCM3_06",
+    "surrogate_MRI-CGCM3_11",
+]
+iam = ["high", "low"]
+ssp = ["SSP2", "SSP3", "SSP4"]
+
+[data]
+format = "netcdf"
+region_dim = "region"
+region_labels = "regions"
+value_col = "rebased"
+kind = "intensive"
+version = "world-combo-201710"
+
+[stats]
+sample_dims = ["batch", "gcm"]
+time_col = "year"
+windows = [[2020, 2039], [2040, 2059], [2080, 2098]]
+quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
+include_mean = true
+model_weights = "/project/cil/gcp/climate/SMME-weights/rcp45_SMME_weights.tsv"
+model_weight_level = "gcm"
+
+[output]
+dir = "/project/cil/gcp/impact_map/agriculture/soy/adm2"
+stem = "soy_physical_log_rcp45"
+write_leaves = false
+write_reduced = false
+
+[run]
+n_workers = 16
