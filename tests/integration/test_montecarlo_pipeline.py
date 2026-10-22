@@ -716,3 +716,155 @@ class TestFailureReport:
         assert "6 failed with 1 distinct errors" in message
         # the message stays bounded: one description, not one per leaf
         assert message.count("not_a_column") <= 2
+
+
+class TestPassthrough:
+    """No [weights] section: the same walk, subtraction, reduction, and
+    pooled statistics with no spatial aggregation, keyed by the leaf's
+    own regions."""
+
+    def _cfg_dict(self, tree: Path, out: Path, *, windows=None) -> dict:
+        return {
+            "tree": {
+                "root": str(tree),
+                "levels": list(_LEVELS),
+                "filename": "damages.parquet",
+                "expect": _LEVELS,
+            },
+            "data": {
+                "kind": "extensive",
+                "version": SOURCE_VERSION,
+                "value_col": "value",
+            },
+            "stats": {
+                "sample_dims": list(_LEVELS),
+                "time_col": "year",
+                "windows": windows or [[2050, 2051], [2080, 2081]],
+                "quantiles": [0.05, 0.95],
+            },
+            "output": {"dir": str(out), "write_leaves": False},
+        }
+
+    def test_parquet_statistics_per_unit(self, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        cfg = MonteCarloPipelineConfig.model_validate(
+            self._cfg_dict(tree, tmp_path / "out")
+        )
+        result = run_pipeline(cfg)
+
+        # No weights were applied, so there is no coverage or mass
+        # accounting to report.
+        assert len(result.leaf_reports) == 6
+        for report in result.leaf_reports:
+            assert report["error"] is None
+            assert report["coverage"] is None
+            assert report["mass_balance_rel_error"] is None
+
+        stats = result.stats
+        assert set(stats.columns) == {"unit_id", "statistic", "value", "window"}
+        # 2 units x 2 windows x 3 statistics
+        assert len(stats) == 12
+
+        # Hand check: u1's value per (leaf i, year) is 100 + 10 i +
+        # (year - 2050); window 2050-2051 mean per leaf is 100 + 10 i +
+        # 0.5, and the pooled mean over i = 0..5 is 100 + 25 + 0.5.
+        u1_mean = stats.query(
+            "unit_id == 'u1' and statistic == 'mean' and window == '2050-2051'"
+        )["value"].iloc[0]
+        assert u1_mean == pytest.approx(100.0 + 25.0 + 0.5)
+
+        manifest = json.loads(
+            (tmp_path / "out" / "statistics.manifest.json").read_text()
+        )
+        assert manifest["weight"] is None
+        assert "passthrough" in manifest["spatial_aggregation"]
+        assert manifest["artifact_source_version"] is None
+
+    def test_netcdf_region_col_and_single_year_window(self, tmp_path):
+        pytest.importorskip("xarray")
+        tree = tmp_path / "tree_nc"
+        _build_netcdf_tree(tree, _LEVELS)
+        raw = self._cfg_dict(
+            tree, tmp_path / "out", windows=[[2050, 2051], [2081, 2081]]
+        )
+        raw["tree"]["filename"] = "damages.nc4"
+        raw["data"]["format"] = "netcdf"
+        raw["data"]["region_dim"] = "spatial_thing"
+        raw["data"]["region_col"] = "hierid"
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+
+        stats = result.stats
+        assert set(stats.columns) == {"hierid", "statistic", "value", "window"}
+        assert set(stats["hierid"]) == {"u1", "u2"}
+        # the single-year window is labeled by the year alone
+        assert set(stats["window"]) == {"2050-2051", "2081"}
+        # and the statistics file carries plain strings, not the
+        # categorical encoding the pooled frame used internally
+        assert not isinstance(stats["hierid"].dtype, pd.CategoricalDtype)
+
+        # u1 at 2081 for leaf i is 100 + 10 i + 31; pooled mean over
+        # i = 0..5 is 100 + 25 + 31.
+        u1_2081 = stats.query(
+            "hierid == 'u1' and statistic == 'mean' and window == '2081'"
+        )["value"].iloc[0]
+        assert u1_2081 == pytest.approx(100.0 + 25.0 + 31.0)
+
+    def test_subtraction_flows_through(self, tmp_path):
+        tree = tmp_path / "tree"
+        _build_subtract_tree(tree, _LEVELS)
+        raw = self._cfg_dict(tree, tmp_path / "out")
+        raw["tree"]["subtract_filename"] = "histclim.parquet"
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+        # value - (value - 7) = 7 per unit and year, with no half-unit
+        # splitting because nothing aggregates
+        assert (result.stats["value"].round(9) == 7.0).all()
+
+    def test_parallel_matches_serial(self, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        serial = run_pipeline(
+            MonteCarloPipelineConfig.model_validate(
+                self._cfg_dict(tree, tmp_path / "out_s")
+            )
+        )
+        raw = self._cfg_dict(tree, tmp_path / "out_p")
+        raw["run"] = {"n_workers": 2}
+        parallel = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        key = ["unit_id", "statistic", "window"]
+        pd.testing.assert_frame_equal(
+            serial.stats.sort_values(key).reset_index(drop=True),
+            parallel.stats.sort_values(key).reset_index(drop=True),
+        )
+
+    def test_netcdf_without_region_col_is_rejected(self, tmp_path):
+        raw = self._cfg_dict(tmp_path / "t", tmp_path / "o")
+        raw["tree"]["filename"] = "damages.nc4"
+        raw["data"]["format"] = "netcdf"
+        raw["data"]["region_dim"] = "spatial_thing"
+        with pytest.raises(ValueError, match="region_col"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_region_col_with_weights_is_rejected(self, weights_dir, tmp_path):
+        cfg = _pipeline_cfg(weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS)
+        raw = cfg.model_dump()
+        raw["data"]["format"] = "netcdf"
+        raw["data"]["region_dim"] = "spatial_thing"
+        raw["data"]["region_col"] = "hierid"
+        with pytest.raises(ValueError, match="artifact schema"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_ratio_without_weights_is_rejected(self, tmp_path):
+        raw = self._cfg_dict(tmp_path / "t", tmp_path / "o")
+        raw["data"]["kind"] = "ratio"
+        raw["data"]["denominator_col"] = "den"
+        with pytest.raises(ValueError, match="ratio needs"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_policies_without_weights_is_rejected(self, tmp_path):
+        raw = self._cfg_dict(tmp_path / "t", tmp_path / "o")
+        raw["policies"] = {"on_zero_weight": "skip"}
+        with pytest.raises(ValueError, match="nothing for it to govern"):
+            MonteCarloPipelineConfig.model_validate(raw)

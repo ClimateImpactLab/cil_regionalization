@@ -81,6 +81,9 @@ class TestBuildManifest:
         assert m.grid_resolution == 1.0
         assert "cil_regionalization" in m.package_versions
         assert m.python_version  # non-empty
+        # grid-mode runs carry the grid identity as the source version,
+        # so grid artifacts pass the application-time version check
+        assert m.source_version == "grid-1.0deg-center-[-180,180)"
 
     def test_fallback_counts_extensible(self):
         m = build_manifest(_cfg())

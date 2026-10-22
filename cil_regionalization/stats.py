@@ -190,8 +190,9 @@ def summarize_samples(
 
     if weight_col is not None:
         varying = (
-            work.groupby(identity + sample_dims, sort=False)[weight_col]
-            .nunique(dropna=False)
+            work.groupby(identity + sample_dims, sort=False, observed=True)[
+                weight_col
+            ].nunique(dropna=False)
         )
         if (varying > 1).any():
             n = int((varying > 1).sum())
@@ -205,7 +206,7 @@ def summarize_samples(
     if weight_col is not None:
         agg[weight_col] = (weight_col, "first")
     window_mean = (
-        work.groupby(identity + sample_dims, sort=False)
+        work.groupby(identity + sample_dims, sort=False, observed=True)
         .agg(**agg)
         .reset_index()
     )
@@ -231,7 +232,7 @@ def _statistic_pieces(
     """Per-statistic frames over the pooled sample members, unweighted
     through pandas, weighted through the historical step distribution."""
     if weight_col is None:
-        grouped = members.groupby(identity, sort=False)[value_col]
+        grouped = members.groupby(identity, sort=False, observed=True)[value_col]
         pieces: list[pd.DataFrame] = []
         if include_mean:
             piece = grouped.mean().reset_index()
@@ -247,7 +248,7 @@ def _statistic_pieces(
         _quantile_label(q) for q in quantiles
     ]
     rows: dict[str, list[tuple]] = {label: [] for label in labels}
-    for key, group in members.groupby(identity, sort=False):
+    for key, group in members.groupby(identity, sort=False, observed=True):
         key_tuple = key if isinstance(key, tuple) else (key,)
         values = group[value_col].to_numpy(dtype=float)
         weights = group[weight_col].to_numpy(dtype=float)
@@ -407,7 +408,9 @@ def window_means(
                 f"(data spans {data[time_col].min()} to {data[time_col].max()})"
             )
         piece = (
-            in_window.groupby(group, sort=False)[value_col].mean().reset_index()
+            in_window.groupby(group, sort=False, observed=True)[value_col]
+            .mean()
+            .reset_index()
         )
         piece[window_col] = label
         pieces.append(piece)
@@ -419,6 +422,11 @@ def _window_label(lo: float, hi: float) -> str:
     def fmt(x: float) -> str:
         return str(int(x)) if float(x) == int(x) else f"{x:g}"
 
+    # A single-year window is labeled by the year alone: "2099", not
+    # "2099-2099". It reads as what it is, the end-year products the
+    # published figures show.
+    if lo == hi:
+        return fmt(lo)
     return f"{fmt(lo)}-{fmt(hi)}"
 
 

@@ -722,3 +722,129 @@ class TestUnweightedGcmWarning:
                 "ignore", category=UnweightedModelWeightsWarning
             )
             pooled_statistics(self._gcm_frame(), sample_dims=["gcm"])
+
+
+class TestSingleYearWindow:
+    """A window whose start equals its end is labeled by the year alone."""
+
+    def _series(self) -> pd.DataFrame:
+        return _frame(
+            [
+                {"zeppelin": d, "epoch": y, "value": v + 10.0 * i}
+                for i, d in enumerate(["d1", "d2"])
+                for y, v in [(2050, 1.0), (2051, 3.0), (2081, 7.0)]
+            ]
+        )
+
+    def test_label_is_the_year_alone(self):
+        from cil_regionalization.stats import window_means
+
+        out = window_means(
+            self._series(),
+            time_col="epoch",
+            windows=[(2050, 2051), (2081, 2081)],
+        )
+        assert set(out["window"]) == {"2050-2051", "2081"}
+
+    def test_single_year_window_carries_that_year_untouched(self):
+        from cil_regionalization.stats import window_means
+
+        out = window_means(
+            self._series(),
+            time_col="epoch",
+            windows=[(2081, 2081)],
+        )
+        d1 = out.loc[out["zeppelin"] == "d1", "value"].iloc[0]
+        assert d1 == pytest.approx(7.0)
+
+    def test_overlapping_range_and_year_windows_coexist(self):
+        # The production request: 2080-2099 and 2099 side by side. The
+        # single year is inside the range window, which is fine; the
+        # labels differ and each window means independently.
+        from cil_regionalization.stats import window_means
+
+        rows = [
+            {"zeppelin": "d1", "epoch": 2080, "value": 2.0},
+            {"zeppelin": "d1", "epoch": 2099, "value": 4.0},
+        ]
+        out = window_means(
+            _frame(rows),
+            time_col="epoch",
+            windows=[(2080, 2099), (2099, 2099)],
+        )
+        by_window = out.set_index("window")["value"]
+        assert by_window["2080-2099"] == pytest.approx(3.0)
+        assert by_window["2099"] == pytest.approx(4.0)
+
+
+class TestCategoricalIdentityColumns:
+    """Identity columns arriving as pandas categoricals (the passthrough
+    pipeline dictionary-encodes its region column for memory) must give
+    the same statistics as plain strings, on every pandas version:
+    every groupby in the module pins observed=True."""
+
+    def _members(self) -> pd.DataFrame:
+        return _frame(
+            [
+                {"target": t, "zeppelin": d, "value": v, "w": w}
+                for t, base in [("T1", 0.0), ("T2", 100.0)]
+                for d, v, w in [
+                    ("d1", base + 1.0, 0.6),
+                    ("d2", base + 3.0, 0.3),
+                    ("d3", base + 5.0, 0.1),
+                ]
+            ]
+        )
+
+    def test_weighted_statistics_match_string_identity(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        plain = self._members()
+        cat = plain.assign(target=plain["target"].astype("category"))
+        out_plain = pooled_statistics(
+            plain, sample_dims=["zeppelin"], quantiles=[0.5], weight_col="w"
+        )
+        out_cat = pooled_statistics(
+            cat, sample_dims=["zeppelin"], quantiles=[0.5], weight_col="w"
+        )
+        out_cat["target"] = out_cat["target"].astype(str)
+        key = ["target", "statistic"]
+        pd.testing.assert_frame_equal(
+            out_plain.sort_values(key).reset_index(drop=True),
+            out_cat.sort_values(key).reset_index(drop=True),
+            check_dtype=False,
+            check_categorical=False,
+        )
+
+    def test_unweighted_statistics_match_string_identity(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        plain = self._members().drop(columns="w")
+        cat = plain.assign(target=plain["target"].astype("category"))
+        out_plain = pooled_statistics(
+            plain, sample_dims=["zeppelin"], quantiles=[0.5]
+        )
+        out_cat = pooled_statistics(cat, sample_dims=["zeppelin"], quantiles=[0.5])
+        out_cat["target"] = out_cat["target"].astype(str)
+        key = ["target", "statistic"]
+        pd.testing.assert_frame_equal(
+            out_plain.sort_values(key).reset_index(drop=True),
+            out_cat.sort_values(key).reset_index(drop=True),
+            check_dtype=False,
+            check_categorical=False,
+        )
+
+    def test_window_means_accept_categorical_group_columns(self):
+        from cil_regionalization.stats import window_means
+
+        rows = _frame(
+            [
+                {"target": t, "epoch": y, "value": v}
+                for t in ["T1", "T2"]
+                for y, v in [(2050, 1.0), (2051, 3.0)]
+            ]
+        )
+        rows["target"] = rows["target"].astype("category")
+        out = window_means(rows, time_col="epoch", windows=[(2050, 2051)])
+        assert len(out) == 2
+        assert set(out["value"]) == {2.0}

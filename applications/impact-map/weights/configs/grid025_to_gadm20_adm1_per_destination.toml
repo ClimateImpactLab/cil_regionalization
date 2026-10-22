@@ -1,0 +1,49 @@
+# GDPCIR 0.25-degree grid to GADM 2.0 ADM1 weights, per_destination.
+#
+# For population-weighted means of intensive climate variables (the
+# grid identity "grid-0.25deg-center-[-180,180)" matches the CMIP6
+# GDPCIR stores; data callers state that string as data_version).
+# Population weighting shows what people experience; an area-weighted
+# version would give a different number.
+
+normalization = "per_destination"
+
+[project]
+name = "grid025_gadm20_adm1_per_destination"
+description = "0.25 degree grid to GADM 2.0 ADM1 population weights for intensive climate aggregation; grid identity grid-0.25deg-center-[-180,180)"
+
+[regions]
+path = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/targets/gadm20/adm1.parquet"
+id_fields = ["ISO", "ID_1"]
+version = "gadm-2.0-impactmap-copy-2025"
+
+[grid]
+mode = "generate"
+resolution = 0.25
+offset = "center"
+lon_convention = "[-180,180)"
+
+[[weights]]
+name = "pop"
+raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "local"
+coverage = "exact_fraction"
+
+# one caslake node: 48 logical units
+[backend.local]
+dask = "local"
+n_workers = 24
+threads_per_worker = 2
+
+[output]
+dir = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/weights/grid025_gadm20_adm1_per_destination"
+format = "parquet"
+
+[validation]
+sum_tolerance = 1e-6

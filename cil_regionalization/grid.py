@@ -69,6 +69,17 @@ class GridSpec:
     path: str | None = None
     table: str | None = None
 
+    @property
+    def source_version(self) -> str:
+        """The grid's identity as a source version string.
+
+        A grid is fully described by its resolution, offset and
+        longitude convention, so those are the version: data built on
+        the same grid states the same string and the application-time
+        version check compares them, exactly as polygon versions do.
+        """
+        return f"grid-{self.resolution}deg-{self.offset}-{self.lon_convention}"
+
     @classmethod
     def from_config(cls, cfg: GridConfig) -> "GridSpec":
         if cfg.mode == "generate":
