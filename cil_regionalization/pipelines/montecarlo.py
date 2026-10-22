@@ -21,6 +21,18 @@ Composes the library core and adds no mathematics. The sequence:
        write the combined statistics plus a pipeline manifest recording
        every leaf and its accounting.
 
+Passthrough: leaving the ``[weights]`` section out entirely runs the
+same tree walk, subtraction, window reduction, and pooled statistics
+with no spatial aggregation at all. The leaf's own regions are the
+output rows, keyed by the column ``data.region_col`` names (there is
+no artifact to name it), and no coverage or mass-balance accounting
+exists because no weights were applied. This produces the statistics
+one step before any aggregated product: if a pattern in an aggregated
+map looks odd, the passthrough twin says whether it came from the
+weighting or from the data. Ratios stay out of passthrough: dividing
+numerator by denominator happens at an aggregation target, and without
+weights there is no such step.
+
 The window mean moves before concatenation purely for memory: it is
 computed per sample member either way, so the staging is provably
 equivalent (the equivalence is a pinned test, not an assumption) while
@@ -36,6 +48,14 @@ sample.
 A run either completes every declared leaf or raises naming what
 finished and what did not; there is no silently partial output. The
 statistics file is written only after every leaf succeeded.
+
+Memory at scale, measured rather than estimated: a full mortality ADM2
+run (about 4,000 leaves by 42,726 targets, roughly 500 million member
+rows) peaked at 188.3 GB resident in the parent process at the
+pooled-statistics stage. Requests of 128 GB died three times at that
+scale before the instrumented run produced the number. Size ADM2-scale
+requests at 224 GB or more, and read the memory[...] lines the run
+prints before trusting any smaller figure.
 
 Dry run resolves the tree and reports the plan (leaves, their paths,
 missing entries, output locations) without creating or writing anything.
@@ -155,6 +175,7 @@ class DataConfig(_Strict):
     group_col: Optional[str] = None
     region_dim: Optional[str] = None
     region_labels: Optional[str] = None
+    region_col: Optional[str] = None
 
     @model_validator(mode="after")
     def _region_dim_matches_format(self) -> "DataConfig":
@@ -173,6 +194,12 @@ class DataConfig(_Strict):
             raise ValueError(
                 "data.region_labels is only meaningful for "
                 "data.format='netcdf'"
+            )
+        if self.format != "netcdf" and self.region_col is not None:
+            raise ValueError(
+                "data.region_col is only meaningful for data.format="
+                "'netcdf'; parquet and csv leaves already carry their key "
+                "columns under their own names"
             )
         return self
 
@@ -230,13 +257,46 @@ class RunConfig(_Strict):
 
 
 class MonteCarloPipelineConfig(_Strict):
-    weights: WeightsRef
+    """``weights`` is optional: without it the pipeline runs in
+    passthrough, producing statistics per source region with no spatial
+    aggregation (see the module docstring)."""
+
+    weights: Optional[WeightsRef] = None
     tree: TreeConfig
     data: DataConfig
     stats: StatsConfig
     output: PipelineOutputConfig
     policies: SourceUnitPolicies = Field(default_factory=SourceUnitPolicies)
     run: RunConfig = Field(default_factory=RunConfig)
+
+    @model_validator(mode="after")
+    def _passthrough_is_coherent(self) -> "MonteCarloPipelineConfig":
+        if self.weights is None:
+            if self.data.kind == "ratio" or self.data.denominator_col is not None:
+                raise ValueError(
+                    "a ratio needs [weights]: dividing numerator by "
+                    "denominator happens at the aggregation target, and "
+                    "without weights there is no aggregation step to do "
+                    "it in"
+                )
+            if self.data.format == "netcdf" and self.data.region_col is None:
+                raise ValueError(
+                    "without [weights] there is no artifact to name the "
+                    "region column; declare data.region_col (the "
+                    "projection trees key regions as 'hierid')"
+                )
+            if self.policies != SourceUnitPolicies():
+                raise ValueError(
+                    "[policies] governs how source units meet the weights; "
+                    "without [weights] there is nothing for it to govern"
+                )
+        elif self.data.region_col is not None:
+            raise ValueError(
+                "data.region_col is only for passthrough runs without "
+                "[weights]; with an artifact the source key column comes "
+                "from the artifact schema"
+            )
+        return self
 
     @model_validator(mode="after")
     def _subtract_has_no_denominator(self) -> "MonteCarloPipelineConfig":
@@ -383,7 +443,11 @@ def run_pipeline(
             f"does not run over a partial universe."
         )
 
-    artifact = WeightsArtifact.load(cfg.weights.dir, stem=cfg.weights.stem)
+    artifact = (
+        WeightsArtifact.load(cfg.weights.dir, stem=cfg.weights.stem)
+        if cfg.weights is not None
+        else None
+    )
     if cfg.stats.model_weights is not None:
         # fail before the run, not after it: every declared value of the
         # weight level must have a row in the table
@@ -405,13 +469,24 @@ def run_pipeline(
             leaf,
             cfg.tree.levels,
             cfg.data,
-            cfg.weights.weight,
+            cfg.weights.weight if cfg.weights is not None else None,
             cfg.policies,
             cfg.stats,
         )
         for leaf in plan.leaves
     ]
-    initargs = (cfg.weights.dir, cfg.weights.stem, cfg.stats.model_weights)
+    initargs = (
+        cfg.weights.dir if cfg.weights is not None else None,
+        cfg.weights.stem if cfg.weights is not None else None,
+        cfg.stats.model_weights,
+    )
+    # the log states which code ran: an editable install picks up
+    # whatever is on disk at launch, so the file path plus this marker
+    # ties a run to a pipeline build
+    print(f"pipeline code: {Path(__file__).resolve()} "
+          f"(worker-init, per-leaf weights, memory instrumentation)",
+          flush=True)
+    _log_memory("start")
 
     if cfg.run.n_workers == 1 or len(tasks) <= 1:
         _init_worker(*initargs)
@@ -422,14 +497,27 @@ def run_pipeline(
         # churn through thousands of unpickled copies, and their resident
         # memory grew with leaves processed. maxtasksperchild recycles
         # workers to bound what churn remains; chunksize=1 so recycling
-        # counts actual leaves.
+        # counts actual leaves. imap_unordered streams results so memory
+        # can be logged as the run accumulates.
+        outcomes = []
+        worker_peak = 0.0
         with mp.Pool(
             processes=cfg.run.n_workers,
             initializer=_init_worker,
             initargs=initargs,
             maxtasksperchild=16,
         ) as pool:
-            outcomes = pool.map(_process_leaf, tasks, chunksize=1)
+            for outcome in pool.imap_unordered(_process_leaf, tasks,
+                                               chunksize=1):
+                outcomes.append(outcome)
+                worker_peak = max(worker_peak,
+                                  outcome.get("worker_peak_gb") or 0.0)
+                if len(outcomes) % 250 == 0 or len(outcomes) == len(tasks):
+                    _log_memory(
+                        f"leaves {len(outcomes)}/{len(tasks)}, "
+                        f"max worker peak {worker_peak:.1f}G"
+                    )
+    _log_memory("all leaves collected")
 
     failures = [o for o in outcomes if o["error"] is not None]
     if failures:
@@ -455,6 +543,7 @@ def run_pipeline(
     # targets x dims x years. One pooled-statistics call serves every
     # window: the window label is an ordinary identity dimension.
     combined = pd.concat([o.pop("frame") for o in outcomes], ignore_index=True)
+    _log_memory(f"after concat ({len(combined)} rows)")
     weight_col = "model_weight" if cfg.stats.model_weights is not None else None
     stats = pooled_statistics(
         combined,
@@ -464,6 +553,14 @@ def run_pipeline(
         include_mean=cfg.stats.include_mean,
         weight_col=weight_col,
     )
+    # Passthrough leaves dictionary-encode their region and window
+    # columns for the pooled frame (see _process_leaf); the statistics
+    # file goes out as plain strings either way, matching the schema of
+    # every aggregated product.
+    for col in stats.columns:
+        if isinstance(stats[col].dtype, pd.CategoricalDtype):
+            stats[col] = stats[col].astype(str)
+    _log_memory("after pooled statistics")
 
     out_root = Path(cfg.output.dir)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -472,14 +569,23 @@ def run_pipeline(
     if cfg.output.write_reduced:
         reduced_path = out_root / f"{cfg.output.stem}.reduced.parquet"
         combined.to_parquet(reduced_path, index=False)
+    _log_memory("after writes")
     manifest = {
         "leaves": outcomes,
         "n_leaves": len(outcomes),
-        "weight": cfg.weights.weight,
+        "weight": cfg.weights.weight if cfg.weights is not None else None,
+        "spatial_aggregation": (
+            "weighted" if cfg.weights is not None
+            else "none: passthrough per source region"
+        ),
         "kind": cfg.data.kind,
         "data_version": cfg.data.version,
-        "artifact_source_version": artifact.source_version,
-        "artifact_regions_version": artifact.regions_version,
+        "artifact_source_version": (
+            artifact.source_version if artifact is not None else None
+        ),
+        "artifact_regions_version": (
+            artifact.regions_version if artifact is not None else None
+        ),
         "sample_dims": cfg.stats.sample_dims,
         "windows": [_window_label(lo, hi) for lo, hi in cfg.stats.windows],
         "quantiles": cfg.stats.quantiles,
@@ -519,6 +625,49 @@ def _load_model_weight_map(weights_path: str) -> dict[str, float]:
     return dict(zip(keys, table["weight"].astype(float)))
 
 
+def _peak_rss_gb() -> float:
+    """This process's peak resident memory in GB."""
+    import resource
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # ru_maxrss is kilobytes on Linux, bytes on macOS
+    return peak / 1e6 if sys.platform.startswith("linux") else peak / 1e9
+
+
+def _current_rss_gb() -> Optional[float]:
+    """This process's current resident memory in GB (Linux only)."""
+    try:
+        with open("/proc/self/statm") as f:
+            pages = int(f.read().split()[1])
+        return pages * 4096 / 1e9
+    except OSError:
+        return None
+
+
+def _cgroup_gb() -> Optional[float]:
+    """The job cgroup's memory charge in GB, the number the OOM killer
+    compares against the limit; includes every worker and page cache."""
+    for path in ("/sys/fs/cgroup/memory.current",
+                 "/sys/fs/cgroup/memory/memory.usage_in_bytes"):
+        try:
+            with open(path) as f:
+                return int(f.read()) / 1e9
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _log_memory(phase: str) -> None:
+    parts = [f"peak={_peak_rss_gb():.1f}G"]
+    current = _current_rss_gb()
+    if current is not None:
+        parts.insert(0, f"rss={current:.1f}G")
+    cgroup = _cgroup_gb()
+    if cgroup is not None:
+        parts.append(f"cgroup={cgroup:.1f}G")
+    print(f"memory[{phase}]: {' '.join(parts)}", flush=True)
+
+
 # Per-worker state, set once by the pool initializer. The weights
 # artifact and the model-weight table are identical for every leaf, so
 # they load once per worker process instead of travelling inside every
@@ -527,17 +676,23 @@ _WORKER_STATE: dict = {}
 
 
 def _init_worker(
-    weights_dir: str, weights_stem: str, model_weights: Optional[str]
+    weights_dir: Optional[str],
+    weights_stem: Optional[str],
+    model_weights: Optional[str],
 ) -> None:
-    _WORKER_STATE["artifact"] = WeightsArtifact.load(
-        weights_dir, stem=weights_stem
+    _WORKER_STATE["artifact"] = (
+        WeightsArtifact.load(weights_dir, stem=weights_stem)
+        if weights_dir is not None
+        else None
     )
     _WORKER_STATE["model_weights"] = (
         _load_model_weight_map(model_weights) if model_weights else None
     )
 
 
-def _read_leaf(path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact") -> pd.DataFrame:
+def _read_leaf(
+    path: Path, data_cfg: DataConfig, artifact: Optional["WeightsArtifact"]
+) -> pd.DataFrame:
     """Read one leaf in the declared format; no inference from extensions."""
     if data_cfg.format == "parquet":
         return pd.read_parquet(path)
@@ -546,12 +701,17 @@ def _read_leaf(path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact") ->
     # netcdf: lazy import so the extra stays optional for parquet users.
     from cil_regionalization.netcdf_io import read_netcdf_leaf
 
-    source_keys = list(artifact.schema.source_units.key_columns)
-    if len(source_keys) != 1:
-        raise ValueError(
-            f"NetCDF leaves map one region dimension onto one source key "
-            f"column; this artifact keys sources by {source_keys}"
-        )
+    if artifact is not None:
+        source_keys = list(artifact.schema.source_units.key_columns)
+        if len(source_keys) != 1:
+            raise ValueError(
+                f"NetCDF leaves map one region dimension onto one source key "
+                f"column; this artifact keys sources by {source_keys}"
+            )
+        region_col = source_keys[0]
+    else:
+        # passthrough: no artifact to name the key; config declares it
+        region_col = data_cfg.region_col
     variables = [data_cfg.value_col]
     if data_cfg.denominator_col is not None:
         variables.append(data_cfg.denominator_col)
@@ -559,7 +719,7 @@ def _read_leaf(path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact") ->
         path,
         variables=variables,
         region_dim=data_cfg.region_dim,
-        region_col=source_keys[0],
+        region_col=region_col,
         region_labels=data_cfg.region_labels,
         kind=data_cfg.kind,
     )
@@ -598,7 +758,8 @@ def _subtract_leaf(
 
 
 def _process_leaf(task: tuple) -> dict:
-    """Apply weights to one leaf, then reduce it to window means.
+    """Apply weights to one leaf (unless passthrough), then reduce it
+    to window means.
 
     Returns accounting, never raises. Module-level and tuple-argument so
     a multiprocessing pool can run it; errors come back as strings so
@@ -621,27 +782,50 @@ def _process_leaf(task: tuple) -> dict:
                 )
             frame[name] = value
 
-        applied = apply_weights(
-            artifact,
-            frame,
-            kind=data_cfg.kind,
-            weight=weight,
-            data_version=data_cfg.version,
-            value_col=data_cfg.value_col,
-            denominator_col=data_cfg.denominator_col,
-            policies=policies,
-            group_col=data_cfg.group_col,
-        )
+        if artifact is None:
+            # passthrough: the leaf's own regions are the product rows,
+            # and there is no coverage or mass accounting because no
+            # weights were applied
+            out_frame = frame
+            coverage = None
+            rel_error = None
+        else:
+            applied = apply_weights(
+                artifact,
+                frame,
+                kind=data_cfg.kind,
+                weight=weight,
+                data_version=data_cfg.version,
+                value_col=data_cfg.value_col,
+                denominator_col=data_cfg.denominator_col,
+                policies=policies,
+                group_col=data_cfg.group_col,
+            )
+            out_frame = applied.frame
+            coverage = applied.coverage.counts
+            balance = applied.mass_balance
+            rel_error = balance.rel_error if balance is not None else None
         if leaf.output_path is not None:
             leaf.output_path.parent.mkdir(parents=True, exist_ok=True)
-            applied.frame.to_parquet(leaf.output_path, index=False)
+            out_frame.to_parquet(leaf.output_path, index=False)
 
         reduced = window_means(
-            applied.frame,
+            out_frame,
             time_col=stats_cfg.time_col,
             windows=stats_cfg.windows,
             value_col=data_cfg.value_col,
         )
+        if artifact is None:
+            # Dictionary-encode the two high-cardinality repeated string
+            # columns before thousands of reduced leaves concatenate in
+            # the parent. Categories come out sorted, so every leaf of
+            # one tree shares the same dtype and concat keeps it.
+            if (data_cfg.region_col is not None
+                    and data_cfg.region_col in reduced.columns):
+                reduced[data_cfg.region_col] = (
+                    reduced[data_cfg.region_col].astype("category")
+                )
+            reduced["window"] = reduced["window"].astype("category")
         if _WORKER_STATE.get("model_weights") is not None:
             # one climate model per leaf, so its weight is a constant
             # column here; attaching it per leaf replaces a merge over
@@ -650,18 +834,16 @@ def _process_leaf(task: tuple) -> dict:
             key = value.replace("surrogate_", "").lower()
             reduced["model_weight"] = _WORKER_STATE["model_weights"][key]
 
-        balance = applied.mass_balance
         return {
             "leaf": list(leaf.values),
             "path": str(leaf.path),
             "rows_in": int(len(frame)),
-            "rows_out": int(len(applied.frame)),
+            "rows_out": int(len(out_frame)),
             "rows_reduced": int(len(reduced)),
-            "coverage": applied.coverage.counts,
-            "mass_balance_rel_error": (
-                balance.rel_error if balance is not None else None
-            ),
+            "coverage": coverage,
+            "mass_balance_rel_error": rel_error,
             "output": str(leaf.output_path) if leaf.output_path else None,
+            "worker_peak_gb": round(_peak_rss_gb(), 2),
             "error": None,
             "frame": reduced,
         }

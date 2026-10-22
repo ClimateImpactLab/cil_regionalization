@@ -243,3 +243,15 @@ class TestUniformResolutionInference:
     def test_decreasing_coords_rejected(self):
         with pytest.raises(ValueError, match="strictly increasing"):
             infer_uniform_resolution([5.0, 3.0, 1.0])
+
+
+class TestSourceVersion:
+    def test_grid_identity_string(self):
+        g = _grid(resolution=0.25, offset="center", lon_convention="[-180,180)")
+        assert g.source_version == "grid-0.25deg-center-[-180,180)"
+
+    def test_changes_with_any_field(self):
+        base = _grid(resolution=0.25).source_version
+        assert _grid(resolution=1.0).source_version != base
+        assert _grid(offset="edge").source_version != base
+        assert _grid(lon_convention="[0,360)").source_version != base

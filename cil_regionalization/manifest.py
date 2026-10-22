@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from cil_regionalization.grid import GridSpec
+
 from cil_regionalization.config import Config
 from cil_regionalization.schema import OutputSchema
 
@@ -160,5 +162,11 @@ def build_manifest(cfg: Config) -> Manifest:
         normalization=cfg.normalization,
         source_mode="polygons" if cfg.source is not None else "grid",
         regions_version=cfg.regions.version,
-        source_version=cfg.source.version if cfg.source is not None else None,
+        # grid-mode sources are versioned by the grid's own identity, so
+        # grid artifacts pass the application-time version check the same
+        # way polygon artifacts do
+        source_version=(
+            cfg.source.version if cfg.source is not None
+            else GridSpec.from_config(cfg.grid).source_version
+        ),
     )
