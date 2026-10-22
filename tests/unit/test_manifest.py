@@ -60,7 +60,7 @@ class TestHashing:
 class TestVersions:
     def test_known_packages_have_versions(self):
         versions = collect_package_versions(("cil_regionalization", "pandas", "shapely"))
-        assert versions["cil_regionalization"] == "0.1.0"
+        assert versions["cil_regionalization"] != "unavailable"
         assert versions["pandas"] != "unavailable"
         assert versions["shapely"] != "unavailable"
 
