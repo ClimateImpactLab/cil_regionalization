@@ -94,6 +94,7 @@ else:  # pragma: no cover
 
 from cil_regionalization.apply import WeightsArtifact, apply_weights
 from cil_regionalization.config import SourceUnitPolicies, _Strict
+from cil_regionalization.manifest import collect_package_versions
 from cil_regionalization.stats import _window_label, pooled_statistics, window_means
 
 
@@ -594,6 +595,7 @@ def run_pipeline(
         "model_weight_level": cfg.stats.model_weight_level,
         "subtract_filename": cfg.tree.subtract_filename,
         "excluded_leaves": [list(c) for c in cfg.tree.exclude],
+        "package_versions": collect_package_versions(),
     }
     plan.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
