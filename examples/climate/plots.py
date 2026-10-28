@@ -1,4 +1,4 @@
-"""The maps the notebook draws. Nothing here computes anything.
+"""The maps the notebook draws.
 
 Every map is the Philippines and Germany side by side, on one colour
 scale shared by both. The colour bar says what the quantity is; the title
