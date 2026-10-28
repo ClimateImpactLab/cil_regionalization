@@ -33,6 +33,11 @@ See the top-level README for the library itself.
 
       cilreg run examples/climate/grid025_to_ir_phl_deu.toml
 
+- On Midway3, the same weights for every impact region are at
+  `/project/cil/gcp/impact_map_inputs/weights/grid025_ir_per_destination`,
+  generated from `weights/configs/grid025_to_ir_per_destination.toml`
+  in [impactmap-data-gen](https://github.com/ClimateImpactLab/impactmap-data-gen).
+
 For other weights, see "The same weights, from a CSV" and "Impact
 regions" in the notebook. `from_table` takes a DataFrame or a path to
 a `.csv`, `.csv.gz` or `.parquet`.
