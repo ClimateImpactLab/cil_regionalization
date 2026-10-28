@@ -11,6 +11,10 @@
   and GADM 4.1. It shows the ratio route for rates, what the boundary
   revision changed, results under both versions with an interactive
   map, and which units the two versions can and cannot compare.
+- `climate/` starts one step earlier, from raw daily BCSD temperature
+  for the Philippines and Germany: it turns the grid into degree days
+  and days above 35 C and aggregates them to provinces and to impact
+  regions. Every step is written out in the notebook.
 - `gadm20/` prepares the GADM 2.0 target layers and holds the
   configurations that generated the published GADM 2.0 weight files.
 - `gadm41/` does the same for GADM 4.1.

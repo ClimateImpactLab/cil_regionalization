@@ -1,0 +1,71 @@
+{
+  "backend": "local",
+  "config_hash": "cf2309ead89b389fb4eb149e701920110f35b5ec938c7607733ff00bb23a6e18",
+  "coverage": "exact_fraction",
+  "extra": {
+    "min_segment_area": {
+      "max_discarded_share": 0.0,
+      "segments_dropped": 0,
+      "threshold_m2": 1.0,
+      "units_fully_dropped": []
+    }
+  },
+  "fallback_counts": {
+    "area": {
+      "native": 400
+    },
+    "pop": {
+      "native": 400
+    }
+  },
+  "grid_mode": "generate",
+  "grid_resolution": 0.25,
+  "id_fields": [
+    "hierid"
+  ],
+  "inputs": {
+    "weight:pop": "825600dd31691a1f7cbace62b59a6a431490400f9a865c5138e94c589787dd54"
+  },
+  "lon_convention": "[-180,180)",
+  "normalization": "per_destination",
+  "outputs": {
+    "weights.parquet": "053dc1ceacfcaf5925e7a5bb86eb951fd183f9ff2a7cb34ff2b77fa693787760"
+  },
+  "package_versions": {
+    "cil_regionalization": "0.2.0",
+    "exactextract": "0.3.0",
+    "geopandas": "1.2.0",
+    "numpy": "2.5.4",
+    "pandas": "3.1.0",
+    "pyarrow": "26.0.0",
+    "pydantic": "2.14.1",
+    "pyproj": "3.8.0",
+    "rasterio": "1.5.2",
+    "shapely": "2.2.0"
+  },
+  "partial_coverage": null,
+  "project_description": "0.25 degree grid to world-combo-201710 impact region population weights for intensive climate aggregation, the Philippines and Germany; grid identity grid-0.25deg-center-[-180,180)",
+  "project_name": "grid025_ir_phl_deu_per_destination",
+  "python_version": "3.13.3",
+  "regions_version": "world-combo-201710",
+  "row_counts": {
+    "nearest_cell": 0,
+    "regions": 400,
+    "segments": 3463,
+    "total": 3463
+  },
+  "source_coverage": {},
+  "source_key_columns": [
+    "cell_ix",
+    "cell_iy"
+  ],
+  "source_mode": "grid",
+  "source_version": "grid-0.25deg-center-[-180,180)",
+  "timing_seconds": {
+    "compute_total": 6.409819924971089
+  },
+  "weight_names": [
+    "pop",
+    "area"
+  ]
+}

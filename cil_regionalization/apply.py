@@ -60,14 +60,18 @@ increment notes for the reasoning.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Mapping, Sequence
 
+import numpy as np
 import pandas as pd
 
 from cil_regionalization.backends.base import WeightsResult
-from cil_regionalization.config import SourceUnitPolicies
+from cil_regionalization.config import GridConfig, SourceUnitPolicies
+from cil_regionalization.grid import GRID_SOURCE_PATTERN as _GRID_SOURCE
+from cil_regionalization.grid import GridSpec
 from cil_regionalization.schema import (
     GRID_CELLS,
     OutputSchema,
@@ -80,8 +84,14 @@ from cil_regionalization.validate import (
     SourceCoverageReport,
     check_mass_balance,
     check_source_coverage,
+    check_sum_to_one,
     enforce_source_policies,
 )
+
+# column spellings accepted for cell centroids in external tables,
+# including the pix_cent_x / pix_cent_y of CIL segment weight files
+_LON_COLUMNS = ("cell_lon", "lon", "longitude", "pix_cent_x")
+_LAT_COLUMNS = ("cell_lat", "lat", "latitude", "pix_cent_y")
 
 
 VariableKind = Literal["extensive", "intensive", "ratio"]
@@ -179,6 +189,302 @@ class WeightsArtifact:
             source_version=manifest.get("source_version"),
             partial_coverage=manifest.get("partial_coverage"),
         )
+
+    @classmethod
+    def from_table(
+        cls,
+        table: pd.DataFrame | str | os.PathLike,
+        *,
+        id_fields: Sequence[str],
+        weights: Mapping[str, str],
+        source: str,
+        source_keys: Sequence[str] | None = None,
+        normalization: str = "per_destination",
+        regions_version: str | None = None,
+        check: bool = True,
+        tolerance: float = 1e-6,
+    ) -> "WeightsArtifact":
+        """Build an artifact from a weight table produced elsewhere.
+
+        ``table`` is a frame, or a path to a CSV or parquet file, with
+        one row per (region, source unit) and one normalized weight
+        column per weight. No manifest is needed: what the manifest
+        would record is passed here.
+
+        ``weights`` maps each weight name to its column, for example
+        ``{"pop": "popwt"}``; columns are renamed to the ``{name}wt``
+        form `apply_weights` reads. ``source`` becomes the artifact's
+        ``source_version``, which `apply_weights` compares against the
+        data's ``data_version``.
+
+        When ``source`` names a grid (``grid-0.25deg-center-[-180,180)``,
+        the form `GridSpec.source_version` writes), source units are
+        grid cells. Without ``cell_ix`` / ``cell_iy`` they are derived
+        from a longitude and a latitude column (spelled
+        ``cell_lon``/``cell_lat``, ``lon``/``lat``,
+        ``longitude``/``latitude`` or ``pix_cent_x``/``pix_cent_y``).
+        Longitudes are wrapped into the grid's convention first, so the
+        180.125 centroid CIL files carry becomes -179.875, and every
+        point must sit on a cell centroid.
+
+        Given ``cell_ix`` / ``cell_iy`` are used as they are, after a
+        bounds check. When a longitude or latitude column is also
+        present, each row's index must map back to that centroid on the
+        named grid, which catches indices built on a different grid of
+        the same shape (a [0,360) table read as [-180,180), shifted by
+        half the columns, or latitudes counted from the north). When
+        neither column is present the indices are taken on trust: the
+        only defense is that ``source`` names the grid they were built
+        on exactly, since `apply_weights` compares it to the data's
+        version as a literal string and nothing checks the geography.
+
+        Any other ``source`` is a polygon source version and
+        ``source_keys`` names the id columns of its units.
+
+        With ``check`` the table must have no duplicated (region,
+        source unit) rows and every weight must sum to 1 within each
+        normalization group (`check_sum_to_one`); both failures raise
+        naming the offending groups.
+        """
+        if normalization not in ("per_destination", "per_source"):
+            raise ValueError(
+                f"normalization must be 'per_destination' or 'per_source'; "
+                f"got {normalization!r}"
+            )
+        id_fields = list(id_fields)
+        if not id_fields:
+            raise ValueError("from_table: id_fields must name at least one column")
+        if not weights:
+            raise ValueError("from_table: weights must map at least one name to a column")
+
+        grid_match = _GRID_SOURCE.match(source)
+        if grid_match is None and source.startswith("grid-"):
+            raise ValueError(
+                f"source {source!r} looks like a grid but is not of the form "
+                f"'grid-<resolution>deg-<center|edge>-<[-180,180)|[0,360)>'"
+            )
+        if grid_match is None and not source_keys:
+            raise ValueError(
+                f"source {source!r} is not a grid, so source_keys must name the "
+                f"id columns of its source units"
+            )
+        if grid_match is not None and source_keys:
+            raise ValueError(
+                "source_keys is only for polygon sources; grid sources are "
+                "keyed by cell_ix and cell_iy"
+            )
+
+        if isinstance(table, pd.DataFrame):
+            frame = table.copy()
+        else:
+            string_cols = id_fields + list(source_keys or [])
+            frame = _read_table(table, string_cols)
+
+        missing = [c for c in id_fields if c not in frame.columns]
+        if missing:
+            raise ValueError(
+                f"from_table: id_fields {missing} are not columns of the table "
+                f"(columns: {list(frame.columns)})"
+            )
+
+        if grid_match is not None:
+            spec = GridSpec.from_config(GridConfig(
+                mode="generate",
+                resolution=float(grid_match["res"]),
+                offset=grid_match["offset"],
+                lon_convention=grid_match["conv"],
+            ))
+            if spec.source_version != source:
+                raise ValueError(
+                    f"source {source!r} names the grid that writes its identity "
+                    f"as {spec.source_version!r}; use that spelling, since "
+                    f"apply_weights compares versions as exact strings"
+                )
+            frame = _attach_grid_cells(frame, spec)
+            source_units = GRID_CELLS
+        else:
+            source_units = SourceUnits.from_string_ids(source_keys)
+            absent = [c for c in source_units.key_columns if c not in frame.columns]
+            if absent:
+                raise ValueError(
+                    f"from_table: source_keys {absent} are not columns of the "
+                    f"table (columns: {list(frame.columns)})"
+                )
+        source_cols = list(source_units.key_columns)
+        overlap = sorted(set(id_fields) & set(source_cols))
+        if overlap:
+            raise ValueError(
+                f"from_table: {overlap} cannot be both an id field and a "
+                f"source key"
+            )
+
+        renames: dict[str, str] = {}
+        for name, col in weights.items():
+            if col not in frame.columns:
+                raise ValueError(
+                    f"from_table: weight {name!r} names column {col!r}, which "
+                    f"is not in the table (columns: {list(frame.columns)})"
+                )
+            target = weight_column(name)
+            if target != col and target in frame.columns:
+                raise ValueError(
+                    f"from_table: renaming {col!r} to {target!r} for weight "
+                    f"{name!r} would overwrite an existing column"
+                )
+            renames[col] = target
+        frame = frame.rename(columns=renames)
+        for target in renames.values():
+            frame[target] = frame[target].astype("float64")
+
+        schema = OutputSchema(
+            id_fields=tuple(id_fields),
+            weight_names=tuple(weights),
+            source_units=source_units,
+            normalization=normalization,
+        )
+
+        if check:
+            key = id_fields + source_cols
+            dup = frame.duplicated(subset=key, keep=False)
+            if dup.any():
+                shown = frame.loc[dup, key].drop_duplicates().head(5)
+                raise ValueError(
+                    f"from_table: {int(dup.sum())} rows share a (region, source "
+                    f"unit) key {key}; duplicated rows would double count. "
+                    f"First duplicated keys:\n{shown.to_string(index=False)}"
+                )
+            report = check_sum_to_one(frame, schema, tolerance=tolerance)
+            if not report.ok:
+                raise ValueError(
+                    f"from_table: weights do not sum to 1 within each "
+                    f"{list(schema.normalization_group)} group under "
+                    f"{normalization} normalization.\n{report.summary()}"
+                )
+
+        return cls(
+            frame=frame,
+            schema=schema,
+            regions_version=regions_version,
+            source_version=source,
+        )
+
+
+def _read_table(path: str | os.PathLike, string_cols: list[str]) -> pd.DataFrame:
+    """Read a CSV or parquet weight table, ids as strings."""
+    name = str(path).lower()
+    if name.endswith((".parquet", ".pq")):
+        frame = pd.read_parquet(path)
+        for c in string_cols:
+            if c in frame.columns:
+                frame[c] = frame[c].astype("string")
+        return frame
+    if name.endswith((".csv", ".csv.gz")):
+        return pd.read_csv(path, dtype={c: "string" for c in string_cols})
+    raise ValueError(
+        f"from_table: cannot tell the format of {path!s}; expected a .csv, "
+        f".csv.gz, .parquet or .pq file"
+    )
+
+
+def _find_column(
+    frame: pd.DataFrame, spellings: tuple[str, ...], what: str
+) -> str | None:
+    """The one column among ``spellings``, None if absent; several raise."""
+    found = [c for c in spellings if c in frame.columns]
+    if len(found) > 1:
+        raise ValueError(
+            f"from_table: several {what} columns {found}; keep exactly one"
+        )
+    return found[0] if found else None
+
+
+def _pick_column(frame: pd.DataFrame, spellings: tuple[str, ...], what: str) -> str:
+    col = _find_column(frame, spellings, what)
+    if col is None:
+        raise ValueError(
+            f"from_table: no {what} column; expected one of {list(spellings)} "
+            f"or explicit cell_ix and cell_iy columns"
+        )
+    return col
+
+
+def _wrap_lon(lon: np.ndarray, spec: GridSpec) -> np.ndarray:
+    """Longitudes moved into the grid's [origin, origin + 360) domain."""
+    return np.mod(lon - spec.lon_origin, 360.0) + spec.lon_origin
+
+
+def _attach_grid_cells(frame: pd.DataFrame, spec: GridSpec) -> pd.DataFrame:
+    """Add integer cell indices (and centroids) for a grid source."""
+    has_ix = "cell_ix" in frame.columns
+    has_iy = "cell_iy" in frame.columns
+    if has_ix != has_iy:
+        raise ValueError("from_table: cell_ix and cell_iy must be given together")
+    if has_ix:
+        for c in ("cell_ix", "cell_iy"):
+            if not pd.api.types.is_integer_dtype(frame[c]):
+                raise ValueError(f"from_table: {c} must be integer, got {frame[c].dtype}")
+        ix = frame["cell_ix"].to_numpy(dtype="int64")
+        iy = frame["cell_iy"].to_numpy(dtype="int64")
+        bad = (ix < 0) | (ix >= spec.n_ix) | (iy < 0) | (iy >= spec.n_iy)
+        if bad.any():
+            raise ValueError(
+                f"from_table: {int(bad.sum())} rows have cell indices outside "
+                f"the {spec.n_ix} x {spec.n_iy} grid"
+            )
+        # round-trip any centroid columns the table also carries: the
+        # bounds check alone passes indices built on another grid of the
+        # same shape
+        lon_col = _find_column(frame, _LON_COLUMNS, "longitude")
+        lat_col = _find_column(frame, _LAT_COLUMNS, "latitude")
+        if lon_col is not None or lat_col is not None:
+            c_lon, c_lat = spec.centroid(ix, iy)
+            tol = 1e-6 * spec.resolution
+            bad = np.zeros(len(frame), dtype=bool)
+            with np.errstate(invalid="ignore"):
+                if lon_col is not None:
+                    lon = frame[lon_col].to_numpy(dtype="float64")
+                    bad |= ~np.isfinite(lon) | (
+                        np.abs(c_lon - _wrap_lon(lon, spec)) > tol)
+                if lat_col is not None:
+                    lat = frame[lat_col].to_numpy(dtype="float64")
+                    bad |= ~np.isfinite(lat) | (np.abs(c_lat - lat) > tol)
+            if bad.any():
+                cols = [c for c in (lon_col, lat_col) if c is not None]
+                shown = frame.loc[bad, ["cell_ix", "cell_iy"] + cols].head(5)
+                raise ValueError(
+                    f"from_table: {int(bad.sum())} rows have cell_ix/cell_iy "
+                    f"whose centroids on {spec.source_version} do not match "
+                    f"their {cols}; the indices were likely built on a "
+                    f"different grid. First:\n{shown.to_string(index=False)}"
+                )
+        return frame.astype({"cell_ix": "int64", "cell_iy": "int64"})
+
+    lon_col = _pick_column(frame, _LON_COLUMNS, "longitude")
+    lat_col = _pick_column(frame, _LAT_COLUMNS, "latitude")
+    lon = frame[lon_col].to_numpy(dtype="float64")
+    lat = frame[lat_col].to_numpy(dtype="float64")
+    wrapped = _wrap_lon(lon, spec)
+    ix, iy = spec.index_of(wrapped, lat)
+    c_lon, c_lat = spec.centroid(ix, iy)
+    tol = 1e-6 * spec.resolution
+    with np.errstate(invalid="ignore"):
+        bad = (
+            ~np.isfinite(lon) | ~np.isfinite(lat)
+            | (ix < 0) | (ix >= spec.n_ix) | (iy < 0) | (iy >= spec.n_iy)
+            | (np.abs(c_lon - wrapped) > tol) | (np.abs(c_lat - lat) > tol)
+        )
+    if bad.any():
+        shown = frame.loc[bad, [lon_col, lat_col]].head(5)
+        raise ValueError(
+            f"from_table: {int(bad.sum())} rows are not cell centroids of "
+            f"{spec.source_version}; first:\n{shown.to_string(index=False)}"
+        )
+    out = frame.copy()
+    out["cell_ix"] = ix.astype("int64")
+    out["cell_iy"] = iy.astype("int64")
+    out["cell_lon"] = c_lon.astype("float64")
+    out["cell_lat"] = c_lat.astype("float64")
+    return out
 
 
 @dataclass(frozen=True)

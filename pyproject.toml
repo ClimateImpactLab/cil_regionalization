@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cil_regionalization"
-version = "0.2.0"
+version = "0.3.0"
 description = "Config-driven segment weights mapping climate grid cells to regions, with local and BigQuery backends producing identical schemas."
 requires-python = ">=3.10"
 readme = "README.md"

@@ -92,6 +92,205 @@ class TestReader:
             read_bcsd_daily(p, "tasmax")
 
 
+def _write_dated(path, start, n_days, calendar, lon=None, time_dim="time",
+                 units="days since 1950-01-01", write_calendar=True,
+                 coordinate=True):
+    """A daily file with a CF time coordinate on ``calendar``.
+
+    ``start`` is a (year, month, day) tuple; step ``i`` is ``start``
+    plus ``i`` days on that calendar, and its values are ``i`` plus a
+    per-cell offset, so a value identifies the step it came from.
+    ``coordinate=False`` writes the identical data with no time
+    variable, the layout the reader handled before calendars.
+    """
+    import datetime
+
+    import cftime
+
+    if lon is None:
+        lon = np.array([0.125, 90.125, 180.125, 270.125])
+    lat = np.array([-0.125, 0.125])
+    first = cftime.datetime(*start, calendar=calendar)
+    dates = [first + datetime.timedelta(days=i) for i in range(n_days)]
+    offsets = np.arange(len(lat) * len(lon), dtype="f4").reshape(
+        1, len(lat), len(lon)) / 100.0
+    values = (np.arange(n_days, dtype="f4").reshape(n_days, 1, 1)
+              + offsets).astype("f4")
+    with netCDF4.Dataset(path, "w") as ds:
+        ds.createDimension(time_dim, n_days)
+        ds.createDimension("lat", len(lat))
+        ds.createDimension("lon", len(lon))
+        if coordinate:
+            t = ds.createVariable(time_dim, "f8", (time_dim,))
+            t.units = units
+            if write_calendar:
+                t.calendar = calendar
+            t[:] = cftime.date2num(dates, units=units, calendar=calendar)
+        ds.createVariable("lat", "f8", ("lat",))[:] = lat
+        ds.createVariable("lon", "f8", ("lon",))[:] = lon
+        ds.createVariable("tasmax", "f4", (time_dim, "lat", "lon"))[:] = values
+    return values, dates
+
+
+class TestCalendar:
+    @pytest.mark.parametrize("calendar", [
+        "noleap", "365_day", "gregorian", "standard", "proleptic_gregorian",
+    ])
+    def test_365_day_file_is_byte_identical_to_undated_read(
+            self, tmp_path, calendar):
+        # 2021 is not a leap year, so every accepted calendar has 365
+        # days; the dated read must reproduce the pre-calendar reader
+        # exactly, which is what reading the same data with no time
+        # coordinate still does
+        dated, undated = str(tmp_path / "a.nc"), str(tmp_path / "b.nc")
+        _write_dated(dated, (2021, 1, 1), 365, calendar)
+        _write_dated(undated, (2021, 1, 1), 365, calendar, coordinate=False)
+        g1 = read_bcsd_daily(dated, "tasmax")
+        g0 = read_bcsd_daily(undated, "tasmax")
+        assert g0.dates is None
+        assert g1.values.dtype == g0.values.dtype
+        assert g1.values.shape == g0.values.shape
+        assert g1.values.tobytes() == g0.values.tobytes()
+        assert g1.lat.tobytes() == g0.lat.tobytes()
+        assert g1.lon.tobytes() == g0.lon.tobytes()
+
+    def test_365_day_values_keep_file_order(self, tmp_path):
+        p = str(tmp_path / "a.nc")
+        raw, _ = _write_dated(p, (2021, 1, 1), 365, "noleap")
+        grid = read_bcsd_daily(p, "tasmax")
+        # time order untouched; longitudes rolled exactly as before
+        assert np.array_equal(grid.values, raw[:, :, [2, 3, 0, 1]])
+
+    @pytest.mark.parametrize("calendar", [
+        "gregorian", "standard", "proleptic_gregorian",
+    ])
+    def test_leap_year_drops_feb_29(self, tmp_path, calendar):
+        p = str(tmp_path / "a.nc")
+        raw, _ = _write_dated(p, (2020, 1, 1), 366, calendar)
+        grid = read_bcsd_daily(p, "tasmax")
+        assert grid.values.shape[0] == 365
+        assert np.datetime64("2020-02-29") not in grid.dates
+        assert grid.dates[58] == np.datetime64("2020-02-28")
+        assert grid.dates[59] == np.datetime64("2020-03-01")
+        # step 59 of the file was Feb 29; everything else survives in order
+        expected = np.delete(raw, 59, axis=0)[:, :, [2, 3, 0, 1]]
+        assert np.array_equal(grid.values, expected)
+
+    def test_feb_29_found_by_date_not_position(self, tmp_path):
+        # a 366-step file from 2019-03-01 to 2020-02-29 puts Feb 29 last;
+        # a positional drop of step 59 would remove 2019-04-29 instead
+        p = str(tmp_path / "a.nc")
+        raw, dates = _write_dated(p, (2019, 3, 1), 366, "standard")
+        assert (dates[-1].month, dates[-1].day) == (2, 29)
+        grid = read_bcsd_daily(p, "tasmax")
+        assert grid.dates[-1] == np.datetime64("2020-02-28")
+        assert np.datetime64("2019-04-29") in grid.dates
+        assert np.array_equal(grid.values, raw[:365][:, :, [2, 3, 0, 1]])
+
+    def test_dates_support_month_grouping(self, tmp_path):
+        p = str(tmp_path / "a.nc")
+        _write_dated(p, (2020, 1, 1), 366, "proleptic_gregorian")
+        grid = read_bcsd_daily(p, "tasmax")
+        assert grid.dates.dtype == np.dtype("datetime64[D]")
+        months = grid.dates.astype("datetime64[M]").astype(int) % 12 + 1
+        lengths = np.bincount(months)[1:]
+        assert lengths.tolist() == [31, 28, 31, 30, 31, 30,
+                                    31, 31, 30, 31, 30, 31]
+
+    def test_day_dimension_with_cf_coordinate_decodes(self, tmp_path):
+        p = str(tmp_path / "a.nc")
+        _write_dated(p, (2020, 1, 1), 366, "standard", time_dim="day")
+        grid = read_bcsd_daily(p, "tasmax")
+        assert grid.values.shape[0] == 365
+        assert len(grid.dates) == 365
+
+    def test_missing_calendar_attribute_means_standard(self, tmp_path):
+        p = str(tmp_path / "a.nc")
+        _write_dated(p, (2020, 1, 1), 366, "standard", write_calendar=False)
+        grid = read_bcsd_daily(p, "tasmax")
+        assert grid.values.shape[0] == 365
+
+    def test_360_day_raises_as_undecided(self, tmp_path):
+        p = str(tmp_path / "a.nc")
+        _write_dated(p, (2021, 1, 1), 360, "360_day")
+        with pytest.raises(ValueError, match="no rule has been decided"):
+            read_bcsd_daily(p, "tasmax")
+
+    @pytest.mark.parametrize("calendar", ["julian", "all_leap", "366_day"])
+    def test_other_calendars_raise(self, tmp_path, calendar):
+        p = str(tmp_path / "a.nc")
+        _write_dated(p, (2021, 1, 1), 365, calendar)
+        with pytest.raises(ValueError, match="is not supported"):
+            read_bcsd_daily(p, "tasmax")
+
+    def test_partial_year_reads_by_default(self, tmp_path):
+        # Jan 1 to Mar 31 2020 on a Gregorian calendar: 91 steps, one of
+        # them Feb 29. The default reader still drops it by date and
+        # returns dates, but does not check how many days remain.
+        p = str(tmp_path / "partial.nc")
+        raw, _ = _write_dated(p, (2020, 1, 1), 91, "standard")
+        grid = read_bcsd_daily(p, "tasmax")
+        assert grid.values.shape[0] == 90
+        assert len(grid.dates) == 90
+        assert np.datetime64("2020-02-29") not in grid.dates
+        assert grid.dates[-1] == np.datetime64("2020-03-31")
+        expected = np.delete(raw, 59, axis=0)[:, :, [2, 3, 0, 1]]
+        assert np.array_equal(grid.values, expected)
+
+    def test_partial_year_rejected_when_full_year_required(self, tmp_path):
+        p = str(tmp_path / "partial.nc")
+        _write_dated(p, (2020, 1, 1), 91, "standard")
+        with pytest.raises(
+                ValueError,
+                match=r"partial\.nc: 90 days remain after dropping Feb 29 "
+                      r"\(calendar 'standard', 91 in the file\)"):
+            read_bcsd_daily(p, "tasmax", require_full_year=True)
+
+    def test_full_year_passes_when_required(self, tmp_path):
+        p = str(tmp_path / "a.nc")
+        _write_dated(p, (2020, 1, 1), 366, "gregorian")
+        grid = read_bcsd_daily(p, "tasmax", require_full_year=True)
+        assert grid.values.shape[0] == 365
+
+    def test_require_full_year_is_keyword_only(self, tmp_path):
+        p = str(tmp_path / "a.nc")
+        _write_dated(p, (2021, 1, 1), 365, "noleap")
+        with pytest.raises(TypeError):
+            read_bcsd_daily(p, "tasmax", True)
+
+    def test_unsupported_calendar_rejected_regardless(self, tmp_path):
+        p = str(tmp_path / "a.nc")
+        _write_dated(p, (2021, 1, 1), 30, "360_day")
+        with pytest.raises(ValueError, match="no rule has been decided"):
+            read_bcsd_daily(p, "tasmax")
+        with pytest.raises(ValueError, match="no rule has been decided"):
+            read_bcsd_daily(p, "tasmax", require_full_year=True)
+
+    def test_undecodable_day_index_passes_through(self, tmp_path):
+        # the pattern files' layout: an integer day index with units
+        # 'day' and no reference date; nothing to decode, no 365 rule
+        p = str(tmp_path / "a.nc")
+        lat = np.array([-0.125, 0.125])
+        with netCDF4.Dataset(p, "w") as ds:
+            ds.createDimension("day", 3)
+            ds.createDimension("lat", 2)
+            ds.createDimension("lon", 2)
+            d = ds.createVariable("day", "i4", ("day",))
+            d.units = "day"
+            d[:] = [1, 2, 3]
+            ds.createVariable("lat", "f8", ("lat",))[:] = lat
+            ds.createVariable("lon", "f8", ("lon",))[:] = lat
+            ds.createVariable("tasmax", "f4", ("day", "lat", "lon"))[:] = 1.0
+        grid = read_bcsd_daily(p, "tasmax")
+        assert grid.values.shape[0] == 3
+        assert grid.dates is None
+
+    def test_positional_construction_unchanged(self):
+        v = np.zeros((1, 1, 1), dtype="f4")
+        grid = DailyGrid(v, np.zeros(1), np.zeros(1))
+        assert grid.dates is None
+
+
 def _year(base_max=300.0, base_min=280.0):
     shape = (365, 2, 2)
     return (np.full(shape, base_max, dtype="f4"),
