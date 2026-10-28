@@ -10,9 +10,12 @@ What a consumer of published weights touches, in call order:
 `summarize_samples`, for pipelines that reduce time per leaf before
 pooling.
 
-plus `WeightsArtifact` (the loaded weights) and, for weight generation,
-`Config` / `load_config` with the `cilreg` CLI. Everything not
-exported here is internal and may change without notice.
+plus `WeightsArtifact` (the loaded weights; `WeightsArtifact.from_table`
+builds one from a weight table produced elsewhere), the schema types
+`OutputSchema`, `SourceUnits` and `GRID_CELLS` for constructing an
+artifact by hand, and, for weight generation, `Config` / `load_config`
+with the `cilreg` CLI. Everything not exported here is internal and may
+change without notice.
 
 Package import does two small env-repairs so CLI, notebooks, and library
 users all get a working geospatial stack without per-process incantations:
@@ -64,6 +67,7 @@ from cil_regionalization.gradients import (
     read_gradient_leaf,
 )
 from cil_regionalization.netcdf_io import read_netcdf_leaf
+from cil_regionalization.schema import GRID_CELLS, OutputSchema, SourceUnits
 from cil_regionalization.stats import (
     UnweightedModelWeightsWarning,
     pooled_statistics,
@@ -73,7 +77,10 @@ from cil_regionalization.stats import (
 
 __all__ = [
     "Config",
+    "GRID_CELLS",
+    "OutputSchema",
     "SourceUnitPolicies",
+    "SourceUnits",
     "UnweightedModelWeightsWarning",
     "WeightsArtifact",
     "aggregate_gradient",
