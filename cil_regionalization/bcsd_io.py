@@ -40,6 +40,8 @@ import numpy as np
 
 HOT_K = 308.15   # 35 C = 95 F, applied to daily tasmax
 COLD_K = 273.15  # 0 C = 32 F, applied to daily tasmin
+# the grid read_bcsd_daily returns, as GridSpec.source_version writes it
+BCSD_GRID = "grid-0.25deg-center-[-180,180)"
 
 # calendars on which dropping Feb 29 by date leaves the 365-day no-leap
 # year that derive_daily's fixed month slices assume
@@ -75,6 +77,60 @@ class DailyGrid:
     lat: np.ndarray
     lon: np.ndarray
     dates: np.ndarray | None = None
+
+    def to_cells(self, fields, grid: str = BCSD_GRID):
+        """Per-cell arrays as the table `apply_weights` takes.
+
+        ``fields`` maps a column name to a (lat, lon) array on this
+        grid, for example a variable computed from ``values``. The
+        result has one row per grid cell, with ``cell_ix`` and
+        ``cell_iy`` on ``grid`` and one column per field. Cells where
+        any field is NaN are left out; `apply_weights` raises if a
+        weighted cell is missing, so nothing is dropped silently.
+
+        Every latitude and longitude must be a cell centre on ``grid``,
+        or this raises. An index computed from the wrong origin, or from
+        cell edges instead of centres, would otherwise move every value
+        one cell over with no error.
+        """
+        import pandas as pd
+
+        from cil_regionalization.grid import GridSpec
+
+        spec = GridSpec.from_source_version(grid)
+        shape = (len(self.lat), len(self.lon))
+        for name, arr in fields.items():
+            if np.shape(arr) != shape:
+                raise ValueError(
+                    f"field {name!r} has shape {np.shape(arr)}; expected "
+                    f"(lat, lon) = {shape}"
+                )
+        lon = np.mod(np.asarray(self.lon, dtype="float64") - spec.lon_origin,
+                     360.0) + spec.lon_origin
+        lat = np.asarray(self.lat, dtype="float64")
+        ix, _ = spec.index_of(lon, np.zeros_like(lon))
+        _, iy = spec.index_of(np.full_like(lat, spec.lon_origin), lat)
+        c_lon, _ = spec.centroid(ix, np.zeros_like(ix))
+        _, c_lat = spec.centroid(np.zeros_like(iy), iy)
+        tol = 1e-6 * spec.resolution
+        for axis, given, centre, idx, n in (("lon", lon, c_lon, ix, spec.n_ix),
+                                             ("lat", lat, c_lat, iy, spec.n_iy)):
+            with np.errstate(invalid="ignore"):
+                bad = (~np.isfinite(given) | (idx < 0) | (idx >= n)
+                       | (np.abs(given - centre) > tol))
+            if bad.any():
+                raise ValueError(
+                    f"{int(bad.sum())} {axis} values are not cell centres on "
+                    f"{grid}; first: {given[bad][:5].tolist()}"
+                )
+        frame = pd.DataFrame({
+            "cell_ix": np.tile(ix, len(iy)),
+            "cell_iy": np.repeat(iy, len(ix)),
+            **{name: np.asarray(arr).reshape(-1) for name, arr in fields.items()},
+        })
+        if fields:
+            frame = frame[np.isfinite(frame[list(fields)]).all(axis=1)]
+        return frame.reset_index(drop=True)
 
 
 def _decode_dates(ds, time_dim: str, path: str):

@@ -61,7 +61,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal, Mapping, Sequence
@@ -71,6 +70,7 @@ import pandas as pd
 
 from cil_regionalization.backends.base import WeightsResult
 from cil_regionalization.config import GridConfig, SourceUnitPolicies
+from cil_regionalization.grid import GRID_SOURCE_PATTERN as _GRID_SOURCE
 from cil_regionalization.grid import GridSpec
 from cil_regionalization.schema import (
     GRID_CELLS,
@@ -88,11 +88,6 @@ from cil_regionalization.validate import (
     enforce_source_policies,
 )
 
-# a grid's identity string, as GridSpec.source_version writes it
-_GRID_SOURCE = re.compile(
-    r"^grid-(?P<res>[0-9]*\.?[0-9]+)deg-(?P<offset>center|edge)-"
-    r"(?P<conv>\[-180,180\)|\[0,360\))$"
-)
 # column spellings accepted for cell centroids in external tables,
 # including the pix_cent_x / pix_cent_y of CIL segment weight files
 _LON_COLUMNS = ("cell_lon", "lon", "longitude", "pix_cent_x")

@@ -29,6 +29,7 @@ keeps every (ix, iy) globally unique and makes the BigQuery side trivial.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable, Tuple
 
@@ -41,6 +42,13 @@ from cil_regionalization.config import GridConfig
 _LAT_ORIGIN = -90.0
 _LAT_SPAN = 180.0
 _LON_SPAN = 360.0
+
+
+# a grid's identity string, as GridSpec.source_version writes it
+GRID_SOURCE_PATTERN = re.compile(
+    r"^grid-(?P<res>[0-9]*\.?[0-9]+)deg-(?P<offset>center|edge)-"
+    r"(?P<conv>\[-180,180\)|\[0,360\))$"
+)
 
 
 def _lon_origin(convention: str) -> float:
@@ -114,6 +122,35 @@ class GridSpec:
             path=cfg.path,
             table=cfg.table,
         )
+
+    @classmethod
+    def from_source_version(cls, source: str) -> "GridSpec":
+        """The grid a source version string names.
+
+        ``source`` is the identity `source_version` writes, for example
+        ``grid-0.25deg-center-[-180,180)``. Any other spelling raises,
+        including one that names the same grid differently
+        (``grid-.25deg-...``), since versions are compared as exact
+        strings.
+        """
+        m = GRID_SOURCE_PATTERN.match(source)
+        if m is None:
+            raise ValueError(
+                f"{source!r} is not a grid identity of the form "
+                f"'grid-<resolution>deg-<center|edge>-<[-180,180)|[0,360)>'"
+            )
+        spec = cls.from_config(GridConfig(
+            mode="generate",
+            resolution=float(m["res"]),
+            offset=m["offset"],
+            lon_convention=m["conv"],
+        ))
+        if spec.source_version != source:
+            raise ValueError(
+                f"{source!r} names the grid that writes its identity as "
+                f"{spec.source_version!r}; use that spelling"
+            )
+        return spec
 
     @property
     def _centroid_half(self) -> float:
