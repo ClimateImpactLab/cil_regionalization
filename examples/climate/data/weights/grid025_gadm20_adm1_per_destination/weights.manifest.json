@@ -31,7 +31,7 @@
  "lon_convention": "[-180,180)",
  "normalization": "per_destination",
  "outputs": {
-  "weights.parquet": "14943508b2694d607d9b8a231b2fe4d006d4aa4344bfc42c9fe86572eeb56b93"
+  "weights.parquet": "ecc2d6ff556e52c05b377cb27d56d4a87c59424366fe3a9df815815fde77cc71"
  },
  "package_versions": {
   "cil_regionalization": "0.1.0",
@@ -51,9 +51,9 @@
  "python_version": "3.11.12",
  "regions_version": "gadm-2.0-impactmap-copy-2025",
  "row_counts": {
-  "regions": 49,
-  "segments": 5309,
-  "total": 5309
+  "regions": 98,
+  "segments": 2356,
+  "total": 2356
  },
  "source_coverage": {},
  "source_key_columns": [
@@ -70,7 +70,7 @@
   "area"
  ],
  "crop": {
-  "query": "ISO in ['IDN', 'DEU']",
+  "query": "ISO in ['PHL', 'DEU']",
   "source_artifact": "grid025_gadm20_adm1_per_destination",
   "source_sha256": "286389405e52934307402d084c40c4c66cbf85e37be54301495ee2699bee854f"
  }

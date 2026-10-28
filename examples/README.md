@@ -12,16 +12,25 @@
   revision changed, results under both versions with an interactive
   map, and which units the two versions can and cannot compare.
 - `climate/` starts one step earlier, from gridded daily climate: one
-  year of raw BCSD tasmax and tasmin for Indonesia and Germany, on a
-  Gregorian calendar the reader brings down to 365 days, turned into
+  year of raw BCSD tasmax and tasmin for the Philippines and Germany,
+  on a Gregorian calendar the reader brings down to 365 days, turned into
   heating and cooling degree days per grid cell and aggregated to
   provinces with the grid weights, under population and area
-  weighting. The same code gives the two climates opposite results,
-  which is how the numbers check themselves. It also reads the same
-  weights from a plain CSV with `from_table` and shows the two routes
-  agree. The impact region level uses an outside table: one row per
-  grid cell and impact region, shares already normalized, provenance
-  not recorded in the file, included to show reading an outside table.
+  weighting. The same code gives the two climates opposite results.
+  It also reads the same weights from a plain CSV with `from_table`
+  and shows the two give the same numbers. The impact region level
+  uses segment weights read the same way: one row per grid cell and
+  impact region, with shares that already add up to one per region.
+  Source: weights used for aggregation on the Berkeley servers,
+  https://gitlab.com/ClimateImpactLab/Climate/climate_transform_specs
+  /project/cil/home_dirs/jonahmgilbert/archive/data/agglomerated-world-new_BCSD_grid_segment_weights_area_pop.csv
+  A second transform, days with a high above 35 C, goes through the
+  same weights. `grid025_to_ir_phl_deu.toml` generates the library's
+  own impact region weights for the two countries, and the notebook
+  compares the degree days each set gives. It also groups the daily
+  highs by month and by season (JJA and DJF) from the grid's dates.
+  Every step is written out in the notebook; `data.py`
+  holds the file paths and `plots.py` the maps.
   Running the notebook needs `jupyter` and `matplotlib` beyond the
   `[netcdf]` extra; there is no separate extra for those.
 - `gadm20/` prepares the GADM 2.0 target layers and holds the

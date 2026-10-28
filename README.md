@@ -186,8 +186,8 @@ physical in minutes per worker per day and valued in 2005 PPP USD.
 use to United States states with delta-method uncertainty: gradient
 aggregation, the quadratic form, and the spread that independent
 draws would lose. `examples/climate/` starts from raw daily BCSD
-temperature for Indonesia and Germany and aggregates heating and
-cooling degree days to impact regions, through an outside table read
+temperature for the Philippines and Germany and aggregates heating and
+cooling degree days to impact regions, through segment weights read
 with `from_table`, and to provinces with the grid weights. Notebook
 outputs are committed, so they read without running.
 
