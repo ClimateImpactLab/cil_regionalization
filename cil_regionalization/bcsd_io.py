@@ -11,6 +11,19 @@ cell's pre-roll longitude. A roll that shifted the globe by half fails
 the identity immediately rather than corrupting every downstream
 number silently.
 
+Calendars differ across the baseline GCMs: some files are no-leap
+(``noleap``, ``365_day``) and some are Gregorian (``gregorian``,
+``standard``, ``proleptic_gregorian``) with 366 days in leap years.
+When the time dimension carries a CF time coordinate, the reader
+decodes it with the file's own calendar and drops Feb 29 by date,
+never by position. This is the rule the lab's earlier BCSD transforms
+applied. The reader does not check how many days remain unless asked
+to (``require_full_year=True``); ``derive_daily`` already requires 365
+downstream. Any other calendar raises;
+``360_day`` raises explicitly because no rule has been decided for it.
+The pattern files carry an integer day index with no reference date,
+so there is nothing to decode and they pass through unchanged.
+
 ``derive_daily`` computes the derived variables per grid cell and
 year, before any spatial step: means from (tasmax + tasmin) / 2,
 threshold counts from the extreme the threshold belongs to (days
@@ -27,6 +40,12 @@ import numpy as np
 
 HOT_K = 308.15   # 35 C = 95 F, applied to daily tasmax
 COLD_K = 273.15  # 0 C = 32 F, applied to daily tasmin
+
+# calendars on which dropping Feb 29 by date leaves the 365-day no-leap
+# year that derive_daily's fixed month slices assume
+ACCEPTED_CALENDARS = frozenset(
+    {"gregorian", "standard", "proleptic_gregorian", "noleap", "365_day"}
+)
 
 
 def _import_netcdf4():
@@ -46,20 +65,73 @@ class DailyGrid:
 
     ``values`` is (time, lat, lon) float32 with masked cells as NaN,
     ``lat`` and ``lon`` are ascending cell centers with lon in
-    [-180,180).
+    [-180,180). ``dates`` is the decoded date of each time step as
+    datetime64[D], Feb 29 already removed, so a caller can group by
+    month without rebuilding the calendar; None when the file carries
+    no decodable time coordinate (the pattern files' day index).
     """
 
     values: np.ndarray
     lat: np.ndarray
     lon: np.ndarray
+    dates: np.ndarray | None = None
 
 
-def read_bcsd_daily(path: str, variable: str) -> DailyGrid:
+def _decode_dates(ds, time_dim: str, path: str):
+    """Decoded dates of the time dimension, or None if it has none.
+
+    A time dimension decodes when its coordinate variable has units of
+    the CF form '<unit> since <reference>'. A missing calendar
+    attribute means 'standard', the CF default. Returns the calendar
+    name and an object array of cftime dates, one per time step.
+    """
+    if time_dim not in ds.variables:
+        return None
+    tvar = ds.variables[time_dim]
+    units = getattr(tvar, "units", None)
+    if not isinstance(units, str) or " since " not in units:
+        return None
+    calendar = str(getattr(tvar, "calendar", "standard")).strip().lower()
+    if calendar == "360_day":
+        raise ValueError(
+            f"{path}: calendar '360_day' is not supported; no rule has "
+            f"been decided for mapping a 360-day year onto the 365-day "
+            f"no-leap year"
+        )
+    if calendar not in ACCEPTED_CALENDARS:
+        raise ValueError(
+            f"{path}: calendar {calendar!r} is not supported; expected "
+            f"one of {sorted(ACCEPTED_CALENDARS)}"
+        )
+    netCDF4 = _import_netcdf4()
+    dates = netCDF4.num2date(
+        np.asarray(tvar[:]), units=units, calendar=calendar,
+        only_use_cftime_datetimes=True,
+    )
+    return calendar, np.atleast_1d(np.asarray(dates, dtype=object))
+
+
+def read_bcsd_daily(
+    path: str,
+    variable: str,
+    *,
+    require_full_year: bool = False,
+) -> DailyGrid:
     """Read one BCSD daily file and normalize its conventions.
 
     Handles both longitude conventions and both time dimension names
     by inspecting coordinates, not the path. The longitude roll is
-    verified by value identity at a probe cell on every call.
+    verified by value identity at a probe cell on every call. When the
+    time dimension has a CF time coordinate it is decoded with the
+    file's calendar and Feb 29 is dropped by date; see the module
+    docstring for the calendar rule.
+
+    ``require_full_year`` additionally requires exactly 365 days to
+    remain after the drop, raising with the file and the count if not,
+    so a production recipe fails at read time rather than in
+    ``derive_daily``. It applies to files with a decoded time
+    coordinate; the default keeps the reader's earlier behaviour of
+    not checking the count.
     """
     netCDF4 = _import_netcdf4()
     with netCDF4.Dataset(path) as ds:
@@ -75,12 +147,42 @@ def read_bcsd_daily(path: str, variable: str) -> DailyGrid:
                 f"{path}: variable {variable!r} has dimensions {dims}; "
                 f"expected (..., 'lat', 'lon')"
             )
+        # decode before reading the data so an unsupported calendar
+        # fails without loading a year of grids
+        decoded = _decode_dates(ds, time_dims[0], path)
         raw = ds.variables[variable][:]
         lat = np.asarray(ds.variables["lat"][:], dtype="float64")
         lon = np.asarray(ds.variables["lon"][:], dtype="float64")
     if np.ma.isMaskedArray(raw):
         raw = raw.filled(np.nan)
     values = np.asarray(raw, dtype="float32")
+
+    dates = None
+    if decoded is not None:
+        calendar, cf_dates = decoded
+        time_axis = dims.index(time_dims[0])
+        if len(cf_dates) != values.shape[time_axis]:
+            raise ValueError(
+                f"{path}: time coordinate has {len(cf_dates)} steps but "
+                f"{variable!r} has {values.shape[time_axis]}"
+            )
+        keep = np.array([not (d.month == 2 and d.day == 29)
+                         for d in cf_dates], dtype=bool)
+        if not keep.all():
+            values = np.compress(keep, values, axis=time_axis)
+            cf_dates = cf_dates[keep]
+        if require_full_year and len(cf_dates) != 365:
+            raise ValueError(
+                f"{path}: {len(cf_dates)} days remain after dropping "
+                f"Feb 29 (calendar {calendar!r}, {len(keep)} in the "
+                f"file); expected exactly 365"
+            )
+        # with Feb 29 gone every date exists on the proleptic Gregorian
+        # calendar, so datetime64 represents all of them exactly
+        dates = np.array(
+            [f"{d.year:04d}-{d.month:02d}-{d.day:02d}" for d in cf_dates],
+            dtype="datetime64[D]",
+        )
 
     if np.any(np.diff(lat) <= 0):
         raise ValueError(f"{path}: latitudes are not ascending")
@@ -106,7 +208,7 @@ def read_bcsd_daily(path: str, variable: str) -> DailyGrid:
             f"{path}: longitude roll failed the value-identity check; "
             f"values did not move with their coordinates"
         )
-    return DailyGrid(values=out_values, lat=lat, lon=out_lon)
+    return DailyGrid(values=out_values, lat=lat, lon=out_lon, dates=dates)
 
 
 @dataclass(frozen=True)
