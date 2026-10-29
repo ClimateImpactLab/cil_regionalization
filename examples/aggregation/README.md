@@ -14,9 +14,9 @@ weights, aggregates and maps one draw, shows percent of GDP with the
 quantile next to the single draw, plots the distribution of draws
 for every department, and runs the same aggregation against the GADM
 4.1 weights. All output is saved in the notebook, so you can
-read it without running anything. Running it needs `jupyter` and
-`matplotlib` beyond the `[netcdf]` extra; there is no separate extra
-for those.
+read it without running anything. To run it, install from a clone
+with `uv sync --extra examples`, which adds `jupyter` and `matplotlib`
+to the library at the versions in `uv.lock`.
 
 The script `run_example.py` runs the physical rates (the intensive
 kind, which the notebook only describes) plus the damages at both

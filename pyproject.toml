@@ -41,6 +41,13 @@ netcdf = [
     "xarray>=2023.1",
     "netcdf4>=1.6.0",
 ]
+# what the example notebooks need: the NetCDF readers plus jupyter
+# and matplotlib
+examples = [
+    "cil_regionalization[netcdf]",
+    "jupyter>=1.0",
+    "matplotlib>=3.7",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",

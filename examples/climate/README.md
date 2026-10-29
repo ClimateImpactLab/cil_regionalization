@@ -6,22 +6,24 @@ To run it, you'll need the data/ folder (about 5 MB). Everything runs locally, s
 
 ## Run it
 
-Install the library:
+Install the library and everything the notebooks need, at the versions in `uv.lock`, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/ClimateImpactLab/cil_regionalization.git
 cd cil_regionalization
-pip install '.[netcdf]' jupyter matplotlib
+uv sync --extra examples
 ```
+
+Without uv, `pip install '.[examples]'` installs the same packages at their newest versions instead.
 
 - quickstart:
     ```bash
-    jupyter lab examples/climate/quickstart.ipynb
+    uv run jupyter lab examples/climate/quickstart.ipynb
     ```
 
 - full example:
     ```bash
-    jupyter lab examples/climate/degree_days_from_daily_grid.ipynb
+    uv run jupyter lab examples/climate/degree_days_from_daily_grid.ipynb
     ```
 
 ## Files

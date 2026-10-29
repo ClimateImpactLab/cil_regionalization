@@ -210,8 +210,18 @@ pip install '.[netcdf]'      # also read NetCDF Monte Carlo trees
 `uv pip install .` works too. The geospatial stack (geopandas,
 shapely, rasterio, exactextract) installs with it and ships wheels on
 Linux and macOS. `[netcdf]` reads the NetCDF Monte Carlo trees,
-`[bigquery]` adds the BigQuery generation backend, `[dev]` adds
-pytest. Python 3.10 or newer.
+`[examples]` adds what the example notebooks need (the NetCDF readers,
+jupyter and matplotlib), `[bigquery]` adds the BigQuery generation
+backend, `[dev]` adds pytest. Python 3.10 or newer.
+
+To run the examples from a clone at the versions in `uv.lock` (on
+Python 3.11 and newer, the versions in
+`envs/requirements-cluster.freeze.txt`, which the test suite passed
+against):
+
+```
+uv sync --extra examples
+```
 
 The `envs/` directory and `examples/montecarlo/runs/` exist to
 reproduce the runs behind the published results on the University of
