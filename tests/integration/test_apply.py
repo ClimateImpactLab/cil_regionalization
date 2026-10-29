@@ -23,10 +23,18 @@ from __future__ import annotations
 
 import itertools
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.apply import (
+    WeightsArtifact,
+    _distinct_count,
+    _first_rows,
+    _group_codes,
+    _rows_in,
+    apply_weights,
+)
 from cil_regionalization.config import SourceUnitPolicies
 from cil_regionalization.schema import OutputSchema, SourceUnits
 
@@ -468,6 +476,140 @@ class TestCoveragePolicies:
         data = _mc_data()
         data = pd.concat([data, data.iloc[[0]]], ignore_index=True)
         with pytest.raises(ValueError, match="double count"):
+            apply_weights(
+                _level1_artifact(),
+                data,
+                kind="extensive",
+                weight="pop",
+                data_version=SOURCE_VERSION,
+            )
+
+
+def _old_rows_in(frame: pd.DataFrame, keys: list[str], ids: set) -> np.ndarray:
+    """The row-wise expression `_rows_in` replaced, kept as the oracle."""
+    return np.asarray(frame[keys].apply(tuple, axis=1).isin(ids), dtype=bool)
+
+
+class TestRowsInMatchesRowWiseTuples:
+    """`_rows_in` must give exactly the mask the row-wise tuple isin gave."""
+
+    def _check(self, frame, keys, ids):
+        new = _rows_in(frame, keys, ids)
+        old = _old_rows_in(frame, keys, ids)
+        assert new.dtype == bool
+        np.testing.assert_array_equal(new, old)
+        return new
+
+    def test_duplicate_keys(self):
+        # Keys repeat across a dimension, and one row is duplicated outright.
+        frame = pd.DataFrame(
+            {"cell_ix": [1, 1, 2, 3, 1, 1], "cell_iy": [5, 5, 6, 7, 9, 5],
+             "t": [0, 1, 0, 0, 0, 0]}
+        )
+        mask = self._check(frame, ["cell_ix", "cell_iy"], {(1, 5), (3, 7)})
+        assert mask.tolist() == [True, True, False, True, False, True]
+
+    def test_keys_missing_from_data_and_from_ids(self):
+        frame = pd.DataFrame({"unit_id": ["s1", "s2", "s3", "s9"], "t": [0] * 4})
+        mask = self._check(frame, ["unit_id"], {("s1",), ("s3",), ("s7",)})
+        assert mask.tolist() == [True, False, True, False]
+
+    def test_empty_applied_set(self):
+        frame = pd.DataFrame({"cell_ix": [1, 2], "cell_iy": [3, 4]})
+        mask = self._check(frame, ["cell_ix", "cell_iy"], set())
+        assert not mask.any()
+        mask = self._check(frame[["cell_ix"]], ["cell_ix"], set())
+        assert not mask.any()
+
+    def test_nan_key_from_itertuples(self):
+        # The applied ids are built from itertuples, so a NaN key arrives
+        # as a different float object than the one in the frame.
+        frame = pd.DataFrame({"x": [1.0, np.nan, 2.0], "y": [1, 1, 1]})
+        ids = {
+            tuple(r)
+            for r in frame.iloc[1:].itertuples(index=False, name=None)
+        }
+        self._check(frame, ["x", "y"], ids)
+
+    def test_empty_frame(self):
+        frame = pd.DataFrame({"unit_id": pd.Series([], dtype=object)})
+        assert len(self._check(frame, ["unit_id"], set())) == 0
+
+    def test_skip_policy_mass_balance_unchanged(self):
+        # End to end: unmatched rows must stay out of the conserved total.
+        data = _mc_data()
+        extra = data.iloc[:4].assign(unit_id="s_unknown", value=1e6)
+        result = apply_weights(
+            _level1_artifact(),
+            pd.concat([data, extra], ignore_index=True),
+            kind="extensive",
+            weight="pop",
+            data_version=SOURCE_VERSION,
+            policies=SourceUnitPolicies(on_unmatched="skip"),
+        )
+        assert result.mass_balance.source_total == float(data["value"].sum())
+
+
+def _mixed_frame(n: int = 400, seed: int = 0) -> pd.DataFrame:
+    """Repeating int, string and float keys with NaN and None among them."""
+    rng = np.random.default_rng(seed)
+    s = pd.Series(rng.choice(["a", "b", "c", None], n), dtype=object)
+    s[rng.random(n) < 0.05] = np.nan
+    f = rng.choice([0.5, 1.5, np.nan], n)
+    return pd.DataFrame(
+        {"i": rng.integers(0, 4, n), "s": s, "f": f, "t": rng.integers(0, 3, n)}
+    )
+
+
+class TestGroupCodesMatchPandas:
+    """The factorized keys must reproduce `duplicated` and `drop_duplicates`."""
+
+    @pytest.mark.parametrize(
+        "keys, dims",
+        [(["i"], ["t"]), (["i", "s"], ["t"]), (["s", "f"], ["i", "t"]),
+         (["i", "s"], [])],
+    )
+    def test_duplicate_check_and_first_rows(self, keys, dims):
+        frame = _mixed_frame()
+        src, src_card = _group_codes(frame, keys)
+        rows, rows_card = _group_codes(frame, dims, src, src_card)
+        expect_distinct = int((~frame.duplicated(subset=keys + dims)).sum())
+        assert _distinct_count(rows, rows_card) == expect_distinct
+        expect_first = frame[keys].drop_duplicates().index.to_numpy()
+        np.testing.assert_array_equal(_first_rows(src, src_card), expect_first)
+
+    def test_compression_path(self):
+        # Three nearly unique columns: the combined range passes the dense
+        # limit, so the codes are compressed between columns.
+        rng = np.random.default_rng(1)
+        n = 500
+        frame = pd.DataFrame(
+            {c: rng.integers(0, n, n) for c in ("a", "b", "c")}
+        )
+        frame = pd.concat([frame, frame.iloc[:7]], ignore_index=True)
+        codes, card = _group_codes(frame, ["a", "b", "c"])
+        assert card <= 8 * (len(frame) + 1) * (len(frame) + 1)
+        expect = int((~frame.duplicated()).sum())
+        assert _distinct_count(codes, card) == expect
+        np.testing.assert_array_equal(
+            _first_rows(codes, card), frame.drop_duplicates().index.to_numpy()
+        )
+
+    def test_hashed_count_branch(self):
+        codes = np.array([5, 10**12, 5, 7], dtype=np.int64)
+        assert _distinct_count(codes, 10**12 + 1) == 3
+        np.testing.assert_array_equal(_first_rows(codes, 10**12 + 1), [0, 1, 3])
+
+    def test_empty_frame(self):
+        frame = _mixed_frame().iloc[:0]
+        codes, card = _group_codes(frame, ["i", "s"])
+        assert _distinct_count(codes, card) == 0
+        assert len(_first_rows(codes, card)) == 0
+
+    def test_duplicate_error_reports_the_same_count(self):
+        data = _mc_data()
+        data = pd.concat([data, data.iloc[[0, 3, 3]]], ignore_index=True)
+        with pytest.raises(ValueError, match="data has 3 rows duplicated"):
             apply_weights(
                 _level1_artifact(),
                 data,

@@ -574,7 +574,13 @@ def apply_weights(
 
     dim_cols = [c for c in data.columns if c not in source_keys + value_cols]
     dup_key = source_keys + dim_cols
-    if data.duplicated(subset=dup_key).any():
+    # Each key column is hashed once: the source codes serve both the
+    # duplicate check and the set of source units present in the data.
+    source_codes, source_card = _group_codes(data, source_keys)
+    row_codes, row_card = _group_codes(data, dim_cols, source_codes, source_card)
+    has_duplicates = _distinct_count(row_codes, row_card) < len(data)
+    del row_codes
+    if has_duplicates:
         n = int(data.duplicated(subset=dup_key).sum())
         raise ValueError(
             f"data has {n} rows duplicated on (source keys + dimensions) "
@@ -587,12 +593,16 @@ def apply_weights(
         mask = weights_frame[source_keys].apply(tuple, axis=1).isin(allowed)
         weights_frame = weights_frame.loc[mask]
 
+    first_rows = _first_rows(source_codes, source_card)
+    del source_codes
     data_source_ids = {
         tuple(row)
-        for row in data[source_keys].drop_duplicates().itertuples(index=False, name=None)
+        for row in data[source_keys]
+        .take(first_rows)
+        .itertuples(index=False, name=None)
     }
     coverage = check_source_coverage(
-        weights_frame, artifact.schema, weight, sorted(data_source_ids)
+        weights_frame, artifact.schema, weight, data_source_ids
     )
     enforce_source_policies(coverage, policies or SourceUnitPolicies())
 
@@ -624,7 +634,7 @@ def apply_weights(
             .drop_duplicates()
             .itertuples(index=False, name=None)
         }
-        applied_mask = data[source_keys].apply(tuple, axis=1).isin(applied_ids)
+        applied_mask = _rows_in(data, source_keys, applied_ids)
         applied_data = data.loc[applied_mask]
         if kind == "extensive":
             balance = _run_mass_balance(
@@ -708,6 +718,83 @@ def _check_version_agreement(
             f"data states {data_version!r}. Rebuild the weights against the "
             f"data's version or use matching data."
         )
+
+
+# Direct-address tables are used while a code range stays within this
+# many slots per data row; past it, codes are compressed by hashing.
+_DENSE_SLOTS_PER_ROW = 8
+
+
+def _dense_ok(card: int, n_rows: int) -> bool:
+    return card <= _DENSE_SLOTS_PER_ROW * (n_rows + 1)
+
+
+def _group_codes(
+    frame: pd.DataFrame,
+    cols: list[str],
+    codes: np.ndarray | None = None,
+    card: int = 1,
+) -> tuple[np.ndarray, int]:
+    """One int64 code per row, equal exactly when the rows agree on ``cols``.
+
+    Missing values are all equal to each other, as in
+    `DataFrame.duplicated`. Each column is factorized once and the codes
+    are combined arithmetically, so codes lie in ``[0, card)``; they are
+    compressed by factorizing only when the combined range would outgrow
+    `_dense_ok`, which also keeps the product far from int64 overflow.
+    Passing ``codes``/``card`` extends an existing code with more columns.
+    """
+    n = len(frame)
+    for col in cols:
+        c, uniques = pd.factorize(frame[col])
+        c = c.astype(np.int64) + 1  # missing values (-1) become group 0
+        k = len(uniques) + 1
+        if codes is None:
+            codes, card = c, k
+            continue
+        if not _dense_ok(card * k, n):
+            codes, uniques = pd.factorize(codes)
+            card = len(uniques)
+        codes = codes * k + c
+        card *= k
+    if codes is None:
+        codes = np.zeros(n, dtype=np.int64)
+    return codes, card
+
+
+def _distinct_count(codes: np.ndarray, card: int) -> int:
+    """Number of distinct values in ``codes``, which lie in ``[0, card)``."""
+    if _dense_ok(card, len(codes)):
+        seen = np.zeros(card, dtype=bool)
+        seen[codes] = True
+        return int(np.count_nonzero(seen))
+    return len(pd.unique(codes))
+
+
+def _first_rows(codes: np.ndarray, card: int) -> np.ndarray:
+    """Positions of the first row of each distinct code, in row order.
+
+    The rows `drop_duplicates` would keep for the columns behind ``codes``.
+    """
+    n = len(codes)
+    if card > n:
+        codes, uniques = pd.factorize(codes)
+        card = len(uniques)
+    first = np.full(card, n, dtype=np.int64)
+    np.minimum.at(first, codes, np.arange(n, dtype=np.int64))
+    return np.sort(first[first < n])
+
+
+def _rows_in(
+    frame: pd.DataFrame, keys: list[str], ids: set[tuple]
+) -> np.ndarray:
+    """Boolean mask of the rows whose ``keys`` tuple is in ``ids``.
+
+    Same result as ``frame[keys].apply(tuple, axis=1).isin(ids)`` without
+    building one Python tuple per row, which at 100M rows cost minutes
+    and about 16 GiB.
+    """
+    return pd.MultiIndex.from_frame(frame[keys]).isin(ids)
 
 
 def _aggregate_extensive(
