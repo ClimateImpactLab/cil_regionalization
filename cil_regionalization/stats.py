@@ -46,6 +46,7 @@ from typing import Sequence
 
 import numpy as np
 import pandas as pd
+from scipy.special import ndtr, ndtri
 
 
 class UnweightedModelWeightsWarning(UserWarning):
@@ -501,3 +502,133 @@ def pooled_statistics(
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
     return out.reset_index(drop=True)
+
+
+def mixture_quantile(weights, means, variances, q):
+    """Quantile of a weighted mixture of normal distributions.
+
+    The last axis of ``weights``, ``means`` and ``variances`` is the
+    mixture component. Any leading axes (regions, say) are solved
+    independently and broadcast against each other, so one weight
+    vector can serve every region. Weights are rescaled to sum to one
+    per region, and components with zero weight are ignored. A zero
+    variance component is a point mass at its mean.
+
+    The quantile is the smallest x whose mixture CDF reaches ``q``.
+    It always lies between the smallest and largest component
+    quantile, and is found inside that bracket by Newton steps that
+    fall back to bisection. ``q`` may be a scalar or an array. The
+    result has the leading shape followed by the shape of ``q``, and
+    is a plain float when both are scalar. ``q = 0`` and ``q = 1``
+    return the ends of the support: infinite when any weighted
+    component has positive variance, otherwise the smallest or largest
+    point mass.
+    """
+    w, m, v = (np.asarray(a, dtype="float64") for a in (weights, means, variances))
+    if min(w.ndim, m.ndim, v.ndim) == 0 or not w.shape[-1] == m.shape[-1] == v.shape[-1]:
+        raise ValueError(
+            f"weights, means and variances must have a component axis of "
+            f"the same length; got shapes {w.shape}, {m.shape}, {v.shape}"
+        )
+    w, m, v = np.broadcast_arrays(w, m, v)
+    if not np.isfinite(w).all() or (w < 0).any():
+        raise ValueError("weights must be finite and non-negative")
+    total = w.sum(axis=-1, keepdims=True)
+    if (total == 0).any():
+        raise ValueError(f"weights sum to zero for {int((total == 0).sum())} regions")
+    active = w > 0
+    if not np.isfinite(m[active]).all():
+        raise ValueError("means must be finite")
+    if not np.isfinite(v[active]).all() or (v[active] < 0).any():
+        raise ValueError("variances must be finite and non-negative")
+
+    q_arr = np.asarray(q, dtype="float64")
+    if np.isnan(q_arr).any() or (q_arr < 0).any() or (q_arr > 1).any():
+        raise ValueError(f"quantiles must lie in [0, 1]; got {q}")
+
+    lead = w.shape[:-1]
+    n_c = w.shape[-1]
+    # zero weight components may hold NaN; give them harmless values
+    w = (w / total).reshape(-1, n_c)
+    m = np.where(active, m, 0.0).reshape(-1, n_c)
+    sd = np.sqrt(np.where(active, v, 0.0)).reshape(-1, n_c)
+    out = _mixture_quantiles(w, m, sd, active.reshape(-1, n_c), q_arr.ravel())
+    out = out.reshape(lead + q_arr.shape)
+    return float(out) if out.ndim == 0 else out
+
+
+def _mixture_quantiles(w, m, sd, active, p):
+    """Quantiles p for each row of a (row, component) mixture."""
+    n_r = w.shape[0]
+    out = np.empty((n_r, len(p)))
+    has_normal = (active & (sd > 0)).any(axis=1)
+    for k in np.flatnonzero(p == 0.0):
+        out[:, k] = np.where(has_normal, -np.inf, np.where(active, m, np.inf).min(axis=1))
+    for k in np.flatnonzero(p == 1.0):
+        out[:, k] = np.where(has_normal, np.inf, np.where(active, m, -np.inf).max(axis=1))
+    inner = np.flatnonzero((p > 0.0) & (p < 1.0))
+    if len(inner) == 0:
+        return out
+
+    # component quantiles, row by quantile by component
+    pk = p[inner]
+    comp = m[:, None, :] + sd[:, None, :] * ndtri(pk)[None, :, None]
+    lo = np.where(active[:, None, :], comp, np.inf).min(axis=2).ravel()
+    hi = np.where(active[:, None, :], comp, -np.inf).max(axis=2).ravel()
+    x = (w[:, None, :] * comp).sum(axis=2).ravel()
+    tol = 4 * np.finfo(float).eps * np.maximum(np.abs(lo), np.abs(hi))
+    result = hi.copy()
+    rows = np.repeat(np.arange(n_r), len(inner))
+    probs = np.tile(pk, n_r)
+    # above the median, solve on the upper tail to keep precision near 1
+    upper = probs > 0.5
+    step_old = hi - lo
+    todo = np.flatnonzero(hi - lo > tol)
+
+    for _ in range(200):
+        if len(todo) == 0:
+            break
+        r = rows[todo]
+        g, dens = _mixture_gap(w[r], m[r], sd[r], x[todo], probs[todo], upper[todo])
+        xt, lot, hit = x[todo], lo[todo], hi[todo]
+        hit = np.where(g >= 0, xt, hit)
+        lot = np.where(g < 0, xt, lot)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            step = g / dens
+        xn = xt - step
+        newton = (
+            np.isfinite(xn) & (xn > lot) & (xn < hit)
+            & (np.abs(step) <= 0.5 * step_old[todo])
+        )
+        # a step this small means x is already the answer, even when
+        # rounding puts the Newton point on the bracket edge
+        tl = tol[todo]
+        small = np.isfinite(step) & (np.abs(step) <= tl)
+        xn = np.where(newton | small, xn, lot + 0.5 * (hit - lot))
+        step_old[todo] = np.where(newton, np.abs(step), 0.5 * (hit - lot))
+        exact = g == 0
+        closed = hit - lot <= tl
+        done = exact | closed | small
+        result[todo] = np.where(exact, xt, np.where(small, xn, hit))
+        x[todo], lo[todo], hi[todo] = xn, lot, hit
+        todo = todo[~done]
+    if len(todo):
+        raise RuntimeError(f"mixture quantile did not converge for {len(todo)} cases")
+
+    out[:, inner] = result.reshape(n_r, len(inner))
+    return out
+
+
+def _mixture_gap(w, m, sd, x, p, upper):
+    """A function of x that is increasing and crosses zero at the
+    quantile, plus its derivative, the mixture density."""
+    normal = sd > 0
+    s = np.where(normal, sd, 1.0)
+    z = (x[:, None] - m) / s
+    # mass below x, or above x for the upper tail cases
+    side = np.where(upper[:, None], -z, z)
+    atom = np.where(upper[:, None], x[:, None] < m, x[:, None] >= m)
+    mass = (w * np.where(normal, ndtr(side), atom)).sum(axis=1)
+    gap = np.where(upper, (1.0 - p) - mass, mass - p)
+    dens = (w * np.where(normal, np.exp(-0.5 * z * z) / s, 0.0)).sum(axis=1)
+    return gap, dens / np.sqrt(2 * np.pi)

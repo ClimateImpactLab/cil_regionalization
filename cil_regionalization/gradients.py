@@ -18,6 +18,7 @@ in the coefficients: it is the gradient times the coefficient vector.
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -164,6 +165,49 @@ def aggregate_gradient(
             raise ValueError("a target has zero total weight; cannot normalize")
         out = out / norm[:, None]
     return targets, out
+
+
+def window_gradient(
+    gradients: np.ndarray,
+    years,
+    window: tuple[float, float],
+) -> np.ndarray:
+    """Mean of stacked yearly gradients over an inclusive year window.
+
+    ``gradients`` has year on the first axis, in the order of
+    ``years``; the other axes pass through unchanged, so the result
+    still carries the coefficient axis and the quadratic form can be
+    taken on it afterwards. Stacked leaves (year, coefficient, region)
+    and stacked aggregates (year, target, coefficient) both work, and
+    since both steps are linear, windowing before or after
+    `aggregate_gradient` gives the same answer.
+
+    The window bounds match `window_means`: both ends included, and a
+    window that selects no year raises. NaN entries drop out of the
+    mean the way NaN rows do there.
+    """
+    gradients = np.asarray(gradients, dtype="float64")
+    years = np.asarray(years)
+    if years.ndim != 1 or gradients.ndim < 1 or gradients.shape[0] != len(years):
+        raise ValueError(
+            f"gradients have leading axis {gradients.shape[:1]} but "
+            f"{years.size} years were given"
+        )
+    if len(np.unique(years)) != len(years):
+        raise ValueError("years has duplicates; they would distort the window mean")
+    lo, hi = window
+    if lo > hi:
+        raise ValueError(f"window start {lo} is after window end {hi}")
+    inside = (years >= lo) & (years <= hi)
+    if not inside.any():
+        raise ValueError(
+            f"window ({lo}, {hi}) selects no years "
+            f"(years span {years.min()} to {years.max()})"
+        )
+    with warnings.catch_warnings():
+        # all-NaN slices come back NaN, which is the answer we want
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.nanmean(gradients[inside], axis=0)
 
 
 def delta_method(

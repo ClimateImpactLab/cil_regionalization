@@ -6,12 +6,13 @@ so nothing can depend on batch, gcm, or year.
 from __future__ import annotations
 
 import itertools
+from statistics import NormalDist
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from cil_regionalization.stats import summarize_samples
+from cil_regionalization.stats import mixture_quantile, summarize_samples
 
 
 def _frame(rows: list[dict]) -> pd.DataFrame:
@@ -848,3 +849,102 @@ class TestCategoricalIdentityColumns:
         out = window_means(rows, time_col="epoch", windows=[(2050, 2051)])
         assert len(out) == 2
         assert set(out["value"]) == {2.0}
+
+
+class TestMixtureQuantile:
+    QS = [0.001, 0.05, 0.25, 0.5, 0.75, 0.95, 0.999]
+
+    def test_one_normal(self):
+        got = mixture_quantile([1.0], [3.0], [4.0], self.QS)
+        want = [NormalDist(3.0, 2.0).inv_cdf(q) for q in self.QS]
+        assert np.allclose(got, want, rtol=0, atol=1e-12)
+
+    def test_identical_normals_are_one_normal(self):
+        got = mixture_quantile([0.2, 0.5, 0.3], [-1.0] * 3, [0.25] * 3, self.QS)
+        want = [NormalDist(-1.0, 0.5).inv_cdf(q) for q in self.QS]
+        assert np.allclose(got, want, rtol=0, atol=1e-12)
+
+    def test_symmetric_pair_has_median_at_center(self):
+        assert mixture_quantile([1, 1], [5.0, 9.0], [1.0, 1.0], 0.5) == pytest.approx(7.0, abs=1e-12)
+        lo, hi = mixture_quantile([1, 1], [-2.0, 2.0], [0.5, 0.5], [0.1, 0.9])
+        assert lo == pytest.approx(-hi, abs=1e-12)
+
+    def test_cdf_at_the_quantile_is_q(self):
+        w, m, v = [0.2, 0.5, 0.3], [-3.0, 0.0, 4.0], [1.0, 0.25, 4.0]
+        dists = [NormalDist(mi, np.sqrt(vi)) for mi, vi in zip(m, v)]
+        for q in self.QS:
+            x = mixture_quantile(w, m, v, q)
+            assert sum(wi * d.cdf(x) for wi, d in zip(w, dists)) == pytest.approx(q, abs=1e-12)
+
+    def test_far_tails(self):
+        for q in (1e-10, 1 - 1e-10):
+            got = mixture_quantile([1.0], [0.0], [1.0], q)
+            assert got == pytest.approx(NormalDist().inv_cdf(q), rel=1e-9)
+
+    def test_weights_need_not_sum_to_one(self):
+        a = mixture_quantile([2.0, 6.0], [0.0, 3.0], [1.0, 2.0], self.QS)
+        b = mixture_quantile([0.25, 0.75], [0.0, 3.0], [1.0, 2.0], self.QS)
+        assert np.array_equal(a, b)
+
+    def test_zero_weight_component_is_ignored(self):
+        a = mixture_quantile([1.0, 0.0], [0.0, 100.0], [1.0, 1.0], self.QS)
+        b = mixture_quantile([1.0], [0.0], [1.0], self.QS)
+        assert np.array_equal(a, b)
+
+    def test_zero_variance_component_is_a_point_mass(self):
+        # half the mass sits at 0, half is N(10, 1): everything between
+        # about 0 and 0.5 maps to 0, and 0.75 is the normal's median
+        assert mixture_quantile([1, 1], [0.0, 10.0], [0.0, 1.0], 0.25) == pytest.approx(0.0, abs=1e-12)
+        assert mixture_quantile([1, 1], [0.0, 10.0], [0.0, 1.0], 0.75) == pytest.approx(10.0, abs=1e-12)
+        assert mixture_quantile([1.0], [2.5], [0.0], 0.3) == 2.5
+
+    def test_quantiles_at_zero_and_one(self):
+        assert mixture_quantile([1, 1], [0.0, 1.0], [1.0, 0.0], 0.0) == -np.inf
+        assert mixture_quantile([1, 1], [0.0, 1.0], [1.0, 0.0], 1.0) == np.inf
+        assert mixture_quantile([1, 1], [-1.0, 4.0], [0.0, 0.0], 0.0) == -1.0
+        assert mixture_quantile([1, 1], [-1.0, 4.0], [0.0, 0.0], 1.0) == 4.0
+
+    def test_shape_follows_q(self):
+        assert isinstance(mixture_quantile([1.0], [0.0], [1.0], 0.5), float)
+        out = mixture_quantile([1.0], [0.0], [1.0], [[0.1, 0.2], [0.3, 0.4]])
+        assert out.shape == (2, 2)
+
+    def test_regions_match_a_loop_over_regions(self):
+        rng = np.random.default_rng(3)
+        n_r, n_c = 200, 7
+        means = rng.normal(scale=5.0, size=(n_r, n_c))
+        variances = rng.gamma(2.0, size=(n_r, n_c))
+        variances[::17, 2] = 0.0  # some point masses
+        weights = rng.random(n_c)
+        weights[4] = 0.0
+        qs = [0.0, 0.05, 0.17, 0.5, 0.83, 0.95, 1.0]
+        got = mixture_quantile(weights, means, variances, qs)
+        assert got.shape == (n_r, len(qs))
+        for r in range(n_r):
+            want = mixture_quantile(weights, means[r], variances[r], qs)
+            assert np.allclose(got[r], want, rtol=1e-13, atol=1e-13)
+
+    def test_per_region_weights_and_leading_shape(self):
+        rng = np.random.default_rng(4)
+        weights = rng.random((2, 3, 5))
+        means = rng.normal(size=(2, 3, 5))
+        variances = rng.random((2, 3, 5))
+        got = mixture_quantile(weights, means, variances, [0.1, 0.9])
+        assert got.shape == (2, 3, 2)
+        assert got[1, 2, 0] == pytest.approx(
+            mixture_quantile(weights[1, 2], means[1, 2], variances[1, 2], 0.1), abs=1e-13
+        )
+
+    def test_bad_inputs_raise(self):
+        with pytest.raises(ValueError, match="same length"):
+            mixture_quantile([1.0, 1.0], [0.0], [1.0], 0.5)
+        with pytest.raises(ValueError, match="non-negative"):
+            mixture_quantile([-1.0, 2.0], [0.0, 1.0], [1.0, 1.0], 0.5)
+        with pytest.raises(ValueError, match="sum to zero"):
+            mixture_quantile([0.0], [0.0], [1.0], 0.5)
+        with pytest.raises(ValueError, match="sum to zero"):
+            mixture_quantile([[1.0, 1.0], [0.0, 0.0]], [0.0, 1.0], [1.0, 1.0], 0.5)
+        with pytest.raises(ValueError, match="variances"):
+            mixture_quantile([1.0], [0.0], [-1.0], 0.5)
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            mixture_quantile([1.0], [0.0], [1.0], 1.5)

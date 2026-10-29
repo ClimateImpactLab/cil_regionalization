@@ -65,11 +65,13 @@ from cil_regionalization.gradients import (
     aggregate_gradient,
     delta_method,
     read_gradient_leaf,
+    window_gradient,
 )
 from cil_regionalization.netcdf_io import read_netcdf_leaf
 from cil_regionalization.schema import GRID_CELLS, OutputSchema, SourceUnits
 from cil_regionalization.stats import (
     UnweightedModelWeightsWarning,
+    mixture_quantile,
     pooled_statistics,
     summarize_samples,
     window_means,
@@ -90,10 +92,12 @@ __all__ = [
     "fetch_weights",
     "list_cached",
     "load_config",
+    "mixture_quantile",
     "pooled_statistics",
     "read_gradient_leaf",
     "read_netcdf_leaf",
     "summarize_samples",
+    "window_gradient",
     "window_means",
 ]
 __version__ = "0.1.0"

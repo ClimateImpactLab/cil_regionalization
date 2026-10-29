@@ -16,6 +16,7 @@ from cil_regionalization.gradients import (
     aggregate_gradient,
     delta_method,
     read_gradient_leaf,
+    window_gradient,
 )
 from cil_regionalization.schema import OutputSchema, SourceUnits
 
@@ -88,6 +89,62 @@ class TestAggregateGradient:
         with pytest.raises(ValueError, match="scale has shape"):
             aggregate_gradient(art, regions, gradient, scale=np.ones(3),
                                normalize=True)
+
+
+class TestWindowGradient:
+    def _stack(self):
+        years = np.array([2040, 2041, 2042, 2043])
+        # year x coefficient x region, value = year offset * 10 + c + r
+        g = np.array(
+            [[[10 * k + c + r for r in range(3)] for c in range(2)]
+             for k in range(4)],
+            dtype=float,
+        )
+        return years, g
+
+    def test_bounds_are_inclusive(self):
+        years, g = self._stack()
+        out = window_gradient(g, years, (2041, 2042))
+        assert out.shape == (2, 3)
+        assert np.allclose(out, (g[1] + g[2]) / 2)
+
+    def test_single_year_window_is_that_year(self):
+        years, g = self._stack()
+        assert np.allclose(window_gradient(g, years, (2043, 2043)), g[3])
+
+    def test_commutes_with_aggregation(self):
+        art, regions, _ = _two_region_setup()
+        years = np.array([2000, 2001, 2002])
+        rng = np.random.default_rng(0)
+        g = rng.normal(size=(3, 2, 2))
+        first = aggregate_gradient(art, regions, window_gradient(g, years, (2000, 2002)))[1]
+        stacked = np.stack([aggregate_gradient(art, regions, gy)[1] for gy in g])
+        after = window_gradient(stacked, years, (2000, 2002))
+        assert np.allclose(first, after)
+
+    def test_nan_drops_out_of_the_mean(self):
+        years = np.array([1, 2])
+        g = np.array([[1.0, np.nan], [np.nan, np.nan]])
+        out = window_gradient(g, years, (1, 2))
+        assert out[0] == pytest.approx(1.0)
+        assert np.isnan(out[1])
+
+    def test_empty_window_raises(self):
+        years, g = self._stack()
+        with pytest.raises(ValueError, match="selects no years"):
+            window_gradient(g, years, (2050, 2059))
+
+    def test_reversed_window_raises(self):
+        years, g = self._stack()
+        with pytest.raises(ValueError, match="after window end"):
+            window_gradient(g, years, (2043, 2040))
+
+    def test_misaligned_years_raise(self):
+        years, g = self._stack()
+        with pytest.raises(ValueError, match="years were given"):
+            window_gradient(g, years[:3], (2040, 2043))
+        with pytest.raises(ValueError, match="duplicates"):
+            window_gradient(g, [2040, 2040, 2041, 2042], (2040, 2043))
 
 
 class TestDeltaMethod:

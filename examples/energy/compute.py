@@ -22,7 +22,6 @@ times the coefficient vector from the release's csvv.
 """
 from __future__ import annotations
 
-from math import erf, sqrt
 from pathlib import Path
 
 import netCDF4
@@ -97,25 +96,3 @@ def naive_valued_sd(weights, regions, gradient, vcv, factor):
     ).groupby(KEYS)["v"].sum().reset_index()
     var["sd"] = np.sqrt(var["v"]) * DOLLARS_2019 / GJ_PER_KWH
     return var[KEYS + ["sd"]]
-
-
-def mixture_quantile(means, sds, weights, q):
-    """Quantile of a weighted mixture of normals, by bisection."""
-    means = np.asarray(means, dtype="float64")
-    sds = np.asarray(sds, dtype="float64")
-    w = np.asarray(weights, dtype="float64")
-    w = w / w.sum()
-
-    def cdf(x):
-        z = (x - means) / (sds * sqrt(2.0))
-        return float((w * (0.5 * (1.0 + np.vectorize(erf)(z)))).sum())
-
-    lo = float((means - 6 * sds).min())
-    hi = float((means + 6 * sds).max())
-    for _ in range(200):
-        mid = 0.5 * (lo + hi)
-        if cdf(mid) < q:
-            lo = mid
-        else:
-            hi = mid
-    return 0.5 * (lo + hi)
