@@ -13,7 +13,8 @@ a seventh:
   https://www.nccs.nasa.gov/nex-gddp/
 - The quarter-degree province weights, grid025 to GADM 2.0 ADM1.
   Source: generated with this library from the GADM 2.0 ADM1 layer
-  and the GPW v4 rev 10 population raster. Not published.
+  and the GPW v4 rev 10 population raster, adjusted to UN World
+  Population Prospects. Not published.
 - The same weights as a plain CSV with cell centres.
 - The province outlines, simplified at 0.01 degrees.
   Source: GADM 2.0, https://gadm.org/, dissolved to ADM1 with

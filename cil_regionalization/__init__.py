@@ -33,6 +33,7 @@ users all get a working geospatial stack without per-process incantations:
 """
 from __future__ import annotations
 
+import importlib.metadata as _metadata
 import os as _os
 import sys as _sys
 import warnings as _warnings
@@ -100,4 +101,7 @@ __all__ = [
     "window_gradient",
     "window_means",
 ]
-__version__ = "0.1.0"
+try:
+    __version__ = _metadata.version("cil_regionalization")
+except _metadata.PackageNotFoundError:  # a source tree that is not installed
+    __version__ = "unavailable"

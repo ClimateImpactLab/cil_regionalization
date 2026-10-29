@@ -36,7 +36,7 @@ pip install '.[netcdf]' jupyter matplotlib
   cilreg run examples/climate/grid025_to_ir_phl_deu.toml
   ```
 
-- Weights covering all impact regions are also available on Midway3 at `/project/cil/gcp/impact_map_inputs/weights/grid025_ir_per_destination`. These are generated using `weights/configs/grid025_to_ir_per_destination.toml` in [impactmap-data-gen](https://github.com/ClimateImpactLab/impactmap-data-gen).
+- Weights covering all impact regions are also available on Midway3 at `/project/cil/gcp/impact_map_inputs/weights/grid025_ir_per_destination`. These are generated using `weights/configs/grid025_to_ir_per_destination.toml` in the impactmap-data-gen repository.
 
 To use other weights, see “The same weights, from a CSV” and “Impact regions” in the full notebook. `from_table` accepts a DataFrame or a path to a `.csv`, `.csv.gz`, or `.parquet` file.
 
