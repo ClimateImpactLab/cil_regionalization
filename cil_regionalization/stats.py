@@ -1,52 +1,34 @@
 """Statistics over Monte Carlo samples of already aggregated data.
 
-One pure function: window mean over time first, then the requested
-statistics over the pooled sample dimensions. No file discovery, no
-directory grammar, no job submission; the caller supplies a frame and
-declares which columns are the sample.
+One function: mean over the time window first, then the statistics over
+the pooled samples. The caller supplies a frame and says which columns
+are the sample.
 
-Ordering is the point
----------------------
-Aggregating across space and summarizing across samples do not commute.
-The correct order, and the only one this module offers, is:
+The order matters, because aggregating across space and summarizing
+across samples do not commute. Each draw is aggregated spatially first,
+then averaged over the window, then pooled. Quantiles are not additive:
+summing per-unit quantiles overstates the aggregate tail unless the
+units move together, which is the mistake this closes off. Input that
+already carries a statistic dimension is refused.
 
-    1. aggregate each Monte Carlo draw spatially (the `apply` module),
-    2. mean over the time window per draw,
-    3. statistics over the pooled draws.
+Pooling flattens every declared sample dimension into one sample, each
+member counting equally. ``weight_col`` names a per-member weight
+instead, which is how the SMME weights enter.
 
-The historical mistake this design exists to prevent: per-unit quantiles
-were computed upstream and then summed across units to make regional
-aggregates. Quantiles are not additive; the sum of per-unit quantiles
-equals the quantile of the sum only under perfect (comonotone)
-dependence between units, so summed upper-tail quantiles overstate the
-aggregate tail. This function refuses input that already carries a
-statistic dimension so that path stays closed.
-
-What pooling assumes
---------------------
-All declared sample dimensions are flattened into one sample. By
-default every member counts equally; with batch and gcm as the sample
-dimensions that weights every climate model the same. Climate Impact
-Lab projections weight models by the SMME weights instead.
-``weight_col`` names a per-member weight column and switches the
-statistics to the weighted definitions described on
-`summarize_samples`; the default stays unweighted so existing callers
-get identical numbers.
-
-Missing values: rows whose value is NaN drop out of the window mean, and
-sample members whose entire window is NaN drop out of the pooled
-statistics. A sample present for only part of the window contributes the
-mean of its available years.
+NaN values drop out of the window mean, and a member whose whole window
+is NaN drops out of the statistics.
 """
 from __future__ import annotations
 
 import re
 import warnings
-from typing import Sequence
+from typing import NamedTuple, Sequence
 
 import numpy as np
 import pandas as pd
 from scipy.special import ndtr, ndtri
+
+from cil_regionalization.apply import _dense_ok, _distinct_count
 
 
 class UnweightedModelWeightsWarning(UserWarning):
@@ -87,50 +69,32 @@ def summarize_samples(
     include_mean: bool = True,
     weight_col: str | None = None,
 ) -> pd.DataFrame:
-    """Window mean per sample member, then pooled statistics.
+    """Window mean per sample member, then statistics over the pooled sample.
 
-    ``data`` is target-level, one value per (identity dims, sample dims,
-    time). Identity dims are every column not named in ``sample_dims``,
-    ``time_col``, ``value_col``, or ``weight_col``; statistics are
-    computed independently for each identity combination, so target ids
-    and scenario dims pass through untouched. Nothing here knows
-    production dimension names.
+    ``data`` has one value per (identity, sample, time) row. Identity
+    columns are all the columns not named as sample, time, value or
+    weight. Statistics are computed per identity combination, and those
+    columns pass through. ``window`` is an inclusive (start, end) pair on
+    ``time_col``.
 
-    ``window`` is an inclusive (start, end) pair on ``time_col``. The
-    window mean runs first, per sample member; the requested statistics
-    then pool all sample dimensions flat (see the module docstring for
-    what that assumes).
+    ``weight_col`` names a per-member weight, constant across the
+    member's time rows. Weights must be finite and non-negative, and a
+    zero weight drops the member. Weighted quantiles are the left step
+    inverse of the weighted distribution, as the historical extraction
+    tool computed them, not the interpolated quantiles of the unweighted
+    path. The two differ even when every weight is equal, except at 0.5,
+    which is then the plain median. A quantile below the first step is
+    ``-inf``. Weights are not renormalized within a model, so in an
+    unbalanced sample a model's total weight grows with how often it
+    appears. Leaving ``weight_col`` unset with a ``gcm`` sample
+    dimension warns with `UnweightedModelWeightsWarning`.
 
-    ``weight_col`` optionally names a per-sample-member weight column,
-    constant across a member's time rows. The default is unweighted.
-    With weights, the mean is the weighted average and quantiles come
-    from the left step inverse of the weighted empirical distribution,
-    the definition the historical extraction tool used; this is a
-    different definition from the interpolated quantiles of the
-    unweighted path, so weighted and unweighted results differ even
-    when every weight is equal (the 0.5 quantile is the one exception:
-    with all weights equal it is the ordinary median, matching the
-    historical tool's special case). A quantile that falls below the
-    first step of the weighted distribution returns ``-inf``, as the
-    historical tool returned. Weights must be finite and non-negative;
-    a zero weight excludes a member, which is how the historical system
-    dropped models. When weights come per climate model, the same
-    weight repeats across every batch of that model, and members are
-    not renormalized within a model, again matching the historical
-    tool: in an unbalanced sample a model's total weight grows with how
-    often it appears. Leaving ``weight_col`` unset while a sample
-    dimension is named ``gcm`` warns once, since equal model weights
-    are not the convention the projections were built with; filter
-    `UnweightedModelWeightsWarning` to silence it.
+    Returns a long frame: identity columns, 'statistic', ``value_col``.
+    Labels are 'mean' and 'qNN' in percent ('q05', 'q95', 'q2.5').
 
-    Returns a long frame: identity dims + 'statistic' + ``value_col``.
-    Statistic labels are 'mean' and 'qNN' (two-digit percent, e.g. 'q05',
-    'q95'; non-integer percents keep their decimals, e.g. 'q2.5').
-
-    Raises if the input already carries a statistic dimension or
-    quantile-named columns: computing statistics of statistics, or
-    aggregating per-unit quantiles, is the historical error described in
-    the module docstring, and there is no valid call that looks like that.
+    Raises if ``data`` already has a 'statistic' column or
+    quantile-named columns. Statistics of per-unit quantiles are wrong;
+    see the module docstring.
     """
     _reject_presummarized(data, value_col)
 
@@ -222,6 +186,129 @@ def summarize_samples(
     return out.reset_index(drop=True)
 
 
+class _Groups(NamedTuple):
+    """Identity groups of a frame's rows, from `_identity_groups`."""
+
+    ids: np.ndarray  # int64 per row, in [0, n), numbered by first appearance
+    n: int
+    missing: np.ndarray | None  # rows with a missing identity value, or None
+
+
+def _key_codes(
+    frame: pd.DataFrame,
+    cols: list[str],
+    codes: np.ndarray | None = None,
+    card: int = 1,
+) -> tuple[np.ndarray, int, np.ndarray | None]:
+    """One int64 code per row, equal exactly when the rows agree on ``cols``.
+
+    Categorical columns use their stored codes, and each column is folded
+    into the running code in place, so only one column's codes exist at a
+    time. That is what keeps memory down at hundreds of millions of rows.
+    Missing values count as equal. Rows with one in any column come back
+    as a mask, or None. Passing ``codes`` and ``card`` extends an existing
+    code without modifying it.
+    """
+    n = len(frame)
+    owned = codes is None
+    missing = None
+    for col in cols:
+        values = frame[col]
+        stored = isinstance(values.dtype, pd.CategoricalDtype)
+        if stored:
+            c = values.cat.codes.to_numpy()  # the frame's own codes: never written
+            k = len(values.cat.categories) + 1
+        else:
+            c, uniques = pd.factorize(values)
+            k = len(uniques) + 1
+        na = c < 0
+        if na.any():
+            missing = na if missing is None else np.logical_or(missing, na, out=missing)
+        del na
+        if codes is None:
+            # missing values (-1) become 0 below
+            codes = c.astype(np.int64, copy=stored)
+            card = k
+        else:
+            if not _dense_ok(card * k, n):
+                codes, uniques = pd.factorize(codes)
+                card = len(uniques)
+                owned = True
+            if owned:
+                codes *= k
+            else:
+                codes = codes * k
+                owned = True
+            codes += c
+            card *= k
+        codes += 1
+        del c
+    if codes is None:
+        codes = np.zeros(n, dtype=np.int64)
+    return codes, card, missing
+
+
+def _identity_groups(frame: pd.DataFrame, identity: list[str]) -> _Groups:
+    """Dense group ids over the identity columns, in order of first
+    appearance, the order ``groupby(sort=False)`` yields groups in.
+    Rows missing an identity value keep their own groups here; the
+    grouping drops them (`_grouping_ids`), the duplicate check does not."""
+    codes, _, missing = _key_codes(frame, identity)
+    ids, uniques = pd.factorize(codes)
+    return _Groups(ids.astype(np.int64, copy=False), len(uniques), missing)
+
+
+def _has_duplicates(
+    frame: pd.DataFrame, groups: _Groups, sample_dims: list[str]
+) -> bool:
+    """Whether two rows agree on identity and sample dimensions, missing
+    values equal, as ``DataFrame.duplicated(subset=...).any()``."""
+    codes, card, _ = _key_codes(frame, sample_dims, groups.ids, groups.n)
+    return _distinct_count(codes, card) < len(frame)
+
+
+def _grouping_ids(groups: _Groups) -> tuple[np.ndarray, int]:
+    """Group id per row with the groups ``groupby(dropna=True)`` drops
+    (any identity value missing) removed: those rows get -1 and the rest
+    are renumbered, keeping the order of first appearance."""
+    if groups.missing is None:
+        return groups.ids, groups.n
+    keep = np.zeros(groups.n, dtype=bool)
+    keep[groups.ids[~groups.missing]] = True
+    remap = np.cumsum(keep) - 1
+    gid = remap[groups.ids]
+    gid[groups.missing] = -1
+    return gid, int(keep.sum())
+
+
+def _first_rows(gid: np.ndarray) -> np.ndarray:
+    """Position of each group's first row, in group order. Groups are
+    numbered by first appearance, so a group starts where the running
+    maximum of the ids steps up."""
+    running = np.maximum.accumulate(gid) if len(gid) else gid
+    return np.flatnonzero(np.diff(running, prepend=-1) > 0)
+
+
+def _group_order(gid: np.ndarray, n_groups: int):
+    """Rows ordered by group, original order within a group (the order a
+    groupby hands each group over in), without the -1 rows; and each
+    group's [start, end) in that order."""
+    n = len(gid)
+    if (n_groups + 1) * n < 2**62:
+        # one key per row, unique, so any sort is the stable order; a
+        # stable sort of the ids alone is several times slower
+        key = gid * n
+        key += np.arange(n)
+        order = np.argsort(key)
+        del key
+    else:
+        order = np.argsort(gid, kind="stable")
+    counts = np.bincount(gid + 1, minlength=n_groups + 1)
+    order = order[counts[0]:]
+    ends = np.cumsum(counts[1:])
+    return order, ends - counts[1:], ends
+
+
 def _statistic_pieces(
     members: pd.DataFrame,
     identity: list[str],
@@ -229,19 +316,36 @@ def _statistic_pieces(
     quantiles: list[float],
     include_mean: bool,
     weight_col: str | None,
+    groups: _Groups | None = None,
 ) -> list[pd.DataFrame]:
-    """Per-statistic frames over the pooled sample members, unweighted
-    through pandas, weighted through the historical step distribution."""
+    """One frame per statistic over each identity group's members.
+    Unweighted statistics come from pandas, weighted ones from the
+    historical step distribution. Pass ``groups`` if the caller already
+    has them."""
+    if groups is None:
+        groups = _identity_groups(members, identity)
+    gid, n_groups = _grouping_ids(groups)
+    keys = members[identity].take(_first_rows(gid)).reset_index(drop=True)
+
     if weight_col is None:
-        grouped = members.groupby(identity, sort=False, observed=True)[value_col]
+        values = members[value_col]
+        if len(gid) and gid.min() < 0:
+            values, gid = values[gid >= 0], gid[gid >= 0]
+        grouped = values.groupby(gid, sort=False)
+        # the frame a groupby over the columns returns (it infers key
+        # dtypes, e.g. object strings come back as str), from one row per
+        # group, already in group order; its value column is replaced
+        keys = (keys.assign(**{value_col: 0.0})
+                .groupby(identity, sort=False, observed=True)[value_col]
+                .first().reset_index())
         pieces: list[pd.DataFrame] = []
-        if include_mean:
-            piece = grouped.mean().reset_index()
-            piece[_STATISTIC_COLUMN] = "mean"
-            pieces.append(piece)
-        for q in quantiles:
-            piece = grouped.quantile(q).reset_index()
-            piece[_STATISTIC_COLUMN] = _quantile_label(q)
+        stats = [("mean", lambda: grouped.mean())] if include_mean else []
+        stats += [(_quantile_label(q), lambda q=q: grouped.quantile(q))
+                  for q in quantiles]
+        for label, compute in stats:
+            piece = keys.copy()
+            piece[value_col] = compute().reindex(range(n_groups)).to_numpy()
+            piece[_STATISTIC_COLUMN] = label
             pieces.append(piece)
         return pieces
 
@@ -249,10 +353,14 @@ def _statistic_pieces(
         _quantile_label(q) for q in quantiles
     ]
     rows: dict[str, list[tuple]] = {label: [] for label in labels}
-    for key, group in members.groupby(identity, sort=False, observed=True):
-        key_tuple = key if isinstance(key, tuple) else (key,)
-        values = group[value_col].to_numpy(dtype=float)
-        weights = group[weight_col].to_numpy(dtype=float)
+    order, starts, ends = _group_order(gid, n_groups)
+    all_values = members[value_col].to_numpy(dtype=float)[order]
+    all_weights = members[weight_col].to_numpy(dtype=float)[order]
+    del order
+    key_tuples = keys.itertuples(index=False, name=None)
+    for key_tuple, start, end in zip(key_tuples, starts, ends):
+        values = all_values[start:end]
+        weights = all_weights[start:end]
         keep = ~np.isnan(values)
         values, weights = values[keep], weights[keep]
         if len(values) == 0 or weights.sum() == 0:
@@ -352,22 +460,16 @@ def window_means(
     value_col: str = "value",
     window_col: str = "window",
 ) -> pd.DataFrame:
-    """Mean over each time window, per every other column combination.
+    """Mean over each time window, per combination of the other columns.
 
-    This is the first half of `summarize_samples`, split out so a
-    pipeline can apply it per leaf before pooling: the window mean is
-    taken independently per sample member, so reducing early and pooling
-    later gives the identical statistics while collapsing the time
-    dimension to the window count. It is not a statistics step. Nothing
-    here crosses sample members; the ordering `summarize_samples`
-    enforces (spatial aggregation, then window mean, then statistics
-    over the pooled sample) is preserved, just staged.
+    The first half of `summarize_samples`, split out so a pipeline can
+    reduce each leaf before pooling. It never crosses sample members, so
+    reducing early and pooling later gives the same statistics.
 
-    The output replaces ``time_col`` with ``window_col``, a label per
-    window ("2040-2059" style). Windows are therefore final at this
-    point: the time dimension is gone from the output, and calling this
-    function on already reduced data raises instead of silently
-    windowing labels. To change windows, rerun from unreduced data.
+    ``time_col`` is replaced by ``window_col``, labelled like "2040-2059",
+    or by the year alone for a one-year window. Data that already has
+    ``window_col`` is refused: its time dimension is gone, so to change
+    windows rerun from the unreduced data.
     """
     windows = [tuple(w) for w in windows]
     _reject_presummarized(data, value_col)
@@ -440,16 +542,12 @@ def pooled_statistics(
     include_mean: bool = True,
     weight_col: str | None = None,
 ) -> pd.DataFrame:
-    """Statistics over the flat pooled sample dimensions; no time step.
+    """Statistics over the pooled sample, for data reduced by `window_means`.
 
-    The second half of `summarize_samples`, for input whose time
-    dimension has already been reduced by `window_means` (the window
-    label column is just another identity dimension here). The same
-    guarantees hold: input already carrying a statistic dimension is
-    refused with the same explanation, the pooled sample is flat, and
-    identity dimensions pass through. ``weight_col`` behaves as on
-    `summarize_samples`, including the different quantile definition it
-    switches to. Output: identity dims + 'statistic' + ``value_col``.
+    The second half of `summarize_samples`. The window column is an
+    ordinary identity column here. ``weight_col`` behaves the same,
+    including its different quantile definition, and the same input is
+    refused. Returns identity columns, 'statistic', ``value_col``.
     """
     _reject_presummarized(data, value_col)
 
@@ -482,7 +580,10 @@ def pooled_statistics(
         drop = drop + [weight_col]
     identity = [c for c in data.columns if c not in drop]
     full_key = identity + sample_dims
-    if data.duplicated(subset=full_key).any():
+    # The identity codes are worked out once and serve both the duplicate
+    # check (extended by the sample dimensions) and the grouping below.
+    groups = _identity_groups(data, identity)
+    if _has_duplicates(data, groups, sample_dims):
         n = int(data.duplicated(subset=full_key).sum())
         raise ValueError(
             f"data has {n} rows duplicated on (identity + sample) {full_key}; "
@@ -495,8 +596,9 @@ def pooled_statistics(
         identity = ["_all"]
 
     pieces = _statistic_pieces(
-        work, identity, value_col, quantiles, include_mean, weight_col
+        work, identity, value_col, quantiles, include_mean, weight_col, groups
     )
+    del groups
     out = pd.concat(pieces, ignore_index=True)
     out = out[identity + [_STATISTIC_COLUMN, value_col]]
     if identity == ["_all"]:
@@ -515,14 +617,11 @@ def mixture_quantile(weights, means, variances, q):
     variance component is a point mass at its mean.
 
     The quantile is the smallest x whose mixture CDF reaches ``q``.
-    It always lies between the smallest and largest component
-    quantile, and is found inside that bracket by Newton steps that
-    fall back to bisection. ``q`` may be a scalar or an array. The
-    result has the leading shape followed by the shape of ``q``, and
-    is a plain float when both are scalar. ``q = 0`` and ``q = 1``
-    return the ends of the support: infinite when any weighted
-    component has positive variance, otherwise the smallest or largest
-    point mass.
+    ``q`` may be a scalar or an array. The result has the leading shape
+    followed by the shape of ``q``, and is a plain float when both are
+    scalar. ``q = 0`` and ``q = 1`` return the ends of the support:
+    infinite when any weighted component has positive variance,
+    otherwise the smallest or largest point mass.
     """
     w, m, v = (np.asarray(a, dtype="float64") for a in (weights, means, variances))
     if min(w.ndim, m.ndim, v.ndim) == 0 or not w.shape[-1] == m.shape[-1] == v.shape[-1]:

@@ -453,6 +453,110 @@ class TestPooledStatisticsGuards:
         assert set(out["statistic"]) == {"mean", "q50"}
 
 
+class TestIdentityGroups:
+    """The duplicate check and the grouping run on one set of codes
+    instead of `DataFrame.duplicated` and a groupby over the columns;
+    they must agree with those exactly, key dtypes and missing values
+    included."""
+
+    @staticmethod
+    def _members(seed: int, n: int = 3000) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        df = pd.DataFrame({
+            "kumquat": rng.choice(["a", "b", "c", None], n, p=[0.4, 0.3, 0.28, 0.02]),
+            "quince": rng.integers(0, 7, n).astype("float64"),
+            "fig": pd.Categorical(rng.choice(["x", "y", "z"], n),
+                                  categories=["z", "y", "x", "unused"]),
+            "zeppelin": rng.integers(0, 5, n),
+            "blimp": pd.Categorical(rng.choice(["p", "q"], n)),
+            "value": rng.normal(size=n),
+            "w": rng.random(n),
+        })
+        df.loc[rng.random(n) < 0.02, "quince"] = np.nan
+        df.loc[rng.random(n) < 0.02, "fig"] = np.nan
+        df.loc[rng.random(n) < 0.02, "blimp"] = np.nan
+        return df
+
+    IDENTITY = ["kumquat", "quince", "fig"]
+    SAMPLE = ["zeppelin", "blimp"]
+
+    @pytest.mark.parametrize("seed", range(5))
+    def test_grouping_matches_groupby(self, seed):
+        from cil_regionalization.stats import _grouping_ids, _identity_groups
+
+        df = self._members(seed)
+        gid, n = _grouping_ids(_identity_groups(df, self.IDENTITY))
+        grouped = df.groupby(self.IDENTITY, sort=False, observed=True)
+        dropped = df[self.IDENTITY].isna().any(axis=1).to_numpy()
+        expected = np.where(dropped, -1, grouped.ngroup().fillna(-1).to_numpy())
+        np.testing.assert_array_equal(gid, expected)
+        assert n == grouped.ngroups
+
+    @pytest.mark.parametrize("seed", range(5))
+    def test_duplicate_check_matches_duplicated(self, seed):
+        from cil_regionalization.stats import _has_duplicates, _identity_groups
+
+        df = self._members(seed)
+        key = self.IDENTITY + self.SAMPLE
+        unique = df.drop_duplicates(subset=key).reset_index(drop=True)
+        for frame in (df, unique):
+            got = _has_duplicates(frame, _identity_groups(frame, self.IDENTITY), self.SAMPLE)
+            assert got == frame.duplicated(subset=key).any()
+
+    def test_rows_differing_only_in_missing_keys_are_duplicates(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        df = _frame([
+            {"kumquat": None, "quince": np.nan, "zeppelin": "d1", "value": 1.0},
+            {"kumquat": None, "quince": np.nan, "zeppelin": "d1", "value": 2.0},
+        ])
+        with pytest.raises(ValueError, match="1 rows duplicated"):
+            pooled_statistics(df, sample_dims=["zeppelin"])
+
+    def test_extending_codes_leaves_them_unchanged(self):
+        from cil_regionalization.stats import _has_duplicates, _identity_groups
+
+        df = self._members(0)
+        groups = _identity_groups(df, self.IDENTITY)
+        before = groups.ids.copy()
+        _has_duplicates(df, groups, self.SAMPLE)
+        np.testing.assert_array_equal(groups.ids, before)
+
+    def test_key_ranges_past_the_dense_limit(self):
+        from cil_regionalization.stats import _grouping_ids, _identity_groups
+
+        rng = np.random.default_rng(7)
+        df = pd.DataFrame({c: rng.integers(0, 10**6, 500) for c in "abcd"})
+        df = pd.concat([df, df.iloc[:100]], ignore_index=True)
+        gid, n = _grouping_ids(_identity_groups(df, list("abcd")))
+        grouped = df.groupby(list("abcd"), sort=False)
+        np.testing.assert_array_equal(gid, grouped.ngroup().to_numpy())
+        assert n == grouped.ngroups == 500
+
+    @pytest.mark.parametrize("weighted", [False, True])
+    def test_statistics_match_a_groupby_over_the_columns(self, weighted):
+        """Every group's statistics from the rows a groupby over the
+        identity columns hands over, in the same group order and with
+        the same key dtypes."""
+        from cil_regionalization.stats import pooled_statistics
+
+        df = self._members(3).drop_duplicates(subset=self.IDENTITY + self.SAMPLE)
+        if not weighted:
+            df = df.drop(columns="w")
+        out = pooled_statistics(df, sample_dims=self.SAMPLE, quantiles=[0.17, 0.5],
+                                weight_col="w" if weighted else None)
+        mean = out.loc[out["statistic"] == "mean"].reset_index(drop=True)
+        grouped = df.groupby(self.IDENTITY, sort=False, observed=True)
+        if weighted:
+            expected = [np.average(g["value"], weights=g["w"]) for _, g in grouped]
+            keys = pd.DataFrame([k for k, _ in grouped], columns=self.IDENTITY)
+        else:
+            expected = grouped["value"].mean().to_numpy()
+            keys = grouped["value"].mean().reset_index()[self.IDENTITY]
+        pd.testing.assert_frame_equal(mean[self.IDENTITY], keys)
+        np.testing.assert_array_equal(mean["value"].to_numpy(), expected)
+
+
 class TestWeightedStatistics:
     """The weighted path reproduces the historical extraction tool's
     WeightedECDF: weighted average for the mean, left step inverse of
