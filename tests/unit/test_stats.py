@@ -431,6 +431,92 @@ class TestWindowMeansGuards:
             )
 
 
+class TestWindowMeansCodes:
+    """window_means groups each window by one id from codes worked out
+    once, instead of a groupby over the columns per window; it must
+    return what that groupby returns, row order and key dtypes included."""
+
+    WINDOWS = [(2020, 2029), (2030, 2039), (2039, 2039)]
+
+    @staticmethod
+    def _yearly(seed: int) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        keys = pd.DataFrame({
+            "kumquat": rng.choice(["a", "b", "c", None], 80, p=[0.4, 0.3, 0.28, 0.02]),
+            "quince": rng.integers(0, 7, 80).astype("float64"),
+            "fig": pd.Categorical(rng.choice(["x", "y", "z"], 80),
+                                  categories=["z", "y", "x", "unused"]),
+        })
+        keys.loc[rng.random(80) < 0.03, "quince"] = np.nan
+        keys.loc[rng.random(80) < 0.03, "fig"] = np.nan
+        df = keys.merge(pd.DataFrame({"epoch": range(2015, 2045)}), how="cross")
+        df["value"] = rng.normal(size=len(df))
+        df.loc[rng.random(len(df)) < 0.05, "value"] = np.nan
+        df = df.sample(frac=1.0, random_state=seed)  # first appearance differs per window
+        return df.drop_duplicates(subset=["kumquat", "quince", "fig", "epoch"])
+
+    @staticmethod
+    def _by_columns(df: pd.DataFrame, windows) -> pd.DataFrame:
+        from cil_regionalization.stats import _window_label
+
+        group = [c for c in df.columns if c not in ("epoch", "value")]
+        pieces = []
+        for lo, hi in windows:
+            piece = (df.loc[df["epoch"].between(lo, hi)]
+                     .groupby(group, sort=False, observed=True)["value"]
+                     .mean().reset_index())
+            piece["window"] = _window_label(lo, hi)
+            pieces.append(piece)
+        return pd.concat(pieces, ignore_index=True)[group + ["window", "value"]]
+
+    @pytest.mark.parametrize("seed", range(5))
+    def test_matches_a_groupby_over_the_columns(self, seed):
+        from cil_regionalization.stats import window_means
+
+        df = self._yearly(seed)
+        out = window_means(df, time_col="epoch", windows=self.WINDOWS)
+        pd.testing.assert_frame_equal(out, self._by_columns(df, self.WINDOWS),
+                                      check_exact=True)
+
+    def test_window_whose_rows_all_miss_a_key(self):
+        from cil_regionalization.stats import window_means
+
+        df = self._yearly(0)
+        df.loc[df["epoch"].between(2030, 2039), "kumquat"] = None
+        df = df.drop_duplicates(subset=["kumquat", "quince", "fig", "epoch"])
+        out = window_means(df, time_col="epoch", windows=self.WINDOWS)
+        pd.testing.assert_frame_equal(out, self._by_columns(df, self.WINDOWS),
+                                      check_exact=True)
+
+    def test_duplicates_outside_every_window_are_refused(self):
+        from cil_regionalization.stats import window_means
+
+        df = self._yearly(1)
+        outside = df.loc[df["epoch"] == 2016].iloc[[0]]
+        with pytest.raises(ValueError, match="1 rows duplicated"):
+            window_means(pd.concat([df, outside]), time_col="epoch", windows=self.WINDOWS)
+
+    def test_rows_differing_only_in_missing_keys_are_duplicates(self):
+        from cil_regionalization.stats import window_means
+
+        df = _frame([
+            {"kumquat": None, "quince": np.nan, "epoch": 2050, "value": 1.0},
+            {"kumquat": None, "quince": np.nan, "epoch": 2050, "value": 2.0},
+        ])
+        with pytest.raises(ValueError, match="1 rows duplicated"):
+            window_means(df, time_col="epoch", windows=[(2050, 2050)])
+
+    def test_nullable_values_keep_their_dtype(self):
+        from cil_regionalization.stats import window_means
+
+        df = self._yearly(2)
+        df["value"] = df["value"].astype("Float64")
+        out = window_means(df, time_col="epoch", windows=self.WINDOWS)
+        assert out["value"].dtype == "Float64"
+        pd.testing.assert_frame_equal(out, self._by_columns(df, self.WINDOWS),
+                                      check_exact=True)
+
+
 class TestPooledStatisticsGuards:
     def test_presummarized_input_refused(self):
         from cil_regionalization.stats import pooled_statistics

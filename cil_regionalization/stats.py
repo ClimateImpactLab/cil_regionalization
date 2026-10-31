@@ -469,7 +469,9 @@ def window_means(
     ``time_col`` is replaced by ``window_col``, labelled like "2040-2059",
     or by the year alone for a one-year window. Data that already has
     ``window_col`` is refused: its time dimension is gone, so to change
-    windows rerun from the unreduced data.
+    windows rerun from the unreduced data. Rows repeated on every column
+    but ``value_col`` are refused too, in any year, including years no
+    window covers.
     """
     windows = [tuple(w) for w in windows]
     _reject_presummarized(data, value_col)
@@ -495,26 +497,50 @@ def window_means(
 
     group = [c for c in data.columns if c not in (time_col, value_col)]
     full_key = group + [time_col]
-    if data.duplicated(subset=full_key).any():
+    # The group codes are worked out once and serve the duplicate check
+    # (extended by the time column, over every row) and each window.
+    groups = _identity_groups(data, group) if group else None
+    if (_has_duplicates(data, groups, [time_col]) if group
+            else data.duplicated(subset=full_key).any()):
         n = int(data.duplicated(subset=full_key).sum())
         raise ValueError(
             f"data has {n} rows duplicated on {full_key}; duplicates would "
             f"distort the window mean"
         )
 
+    if group:
+        gid, _ = _grouping_ids(groups)
+        del groups
+        keys = data[group].take(_first_rows(gid)).reset_index(drop=True)
+        values = data[value_col]
     pieces: list[pd.DataFrame] = []
     for (lo, hi), label in zip(windows, labels):
-        in_window = data.loc[data[time_col].between(lo, hi)]
-        if len(in_window) == 0:
+        mask = data[time_col].between(lo, hi).to_numpy()
+        if not mask.any():
             raise ValueError(
                 f"window ({lo}, {hi}) on {time_col!r} selects no rows "
                 f"(data spans {data[time_col].min()} to {data[time_col].max()})"
             )
-        piece = (
-            in_window.groupby(group, sort=False, observed=True)[value_col]
-            .mean()
-            .reset_index()
-        )
+        if group:
+            mask = mask & (gid >= 0)
+        if not group or not mask.any():
+            # no group columns (groupby raises), or every row in the window
+            # misses a key: the groupby over the columns, as it always ran
+            piece = (
+                data.loc[data[time_col].between(lo, hi)]
+                .groupby(group, sort=False, observed=True)[value_col]
+                .mean()
+                .reset_index()
+            )
+        else:
+            means = values[mask].groupby(gid[mask], sort=False).mean()
+            # the key frame a groupby over the columns returns (it infers
+            # key dtypes), from one row per group in this window's order
+            piece = (keys.take(means.index.to_numpy())
+                     .assign(**{value_col: 0.0})
+                     .groupby(group, sort=False, observed=True)[value_col]
+                     .first().reset_index())
+            piece[value_col] = means.reset_index(drop=True)
         piece[window_col] = label
         pieces.append(piece)
     out = pd.concat(pieces, ignore_index=True)
