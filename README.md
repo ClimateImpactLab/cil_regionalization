@@ -235,6 +235,12 @@ the weighting rasters, and the normalization direction. `cilreg
 run <config.toml>` writes the weights parquet plus a manifest that
 records where everything came from, with checksums. `cilreg
 validate <config.toml>` checks a config without computing anything.
+From Python, `cilreg.generate_weights(config)` does the same as `run`;
+it takes a `Config` or a TOML path and returns the result. Polygons
+held in memory go through a GeoParquet file first
+(`gdf.to_parquet(path)`), so the manifest can record the file's hash.
+A run whose weights fail the sum-to-one check writes nothing and
+raises `SumToOneError`, whichever way it was started.
 Worked configurations, including the GADM target preparation and the
 full generation runs, live under `examples/`.
 
@@ -275,7 +281,7 @@ confirm a regenerated set started from the same input.
 
 ## More detail
 
-`fetch_weights`, `apply_weights`, `summarize_samples`,
+`fetch_weights`, `generate_weights`, `apply_weights`, `summarize_samples`,
 `window_means`, `pooled_statistics`, `read_gradient_leaf`,
 `aggregate_gradient`, `delta_method`, `WeightsArtifact`, and
 `load_config` are the supported API, re-exported at the package root.

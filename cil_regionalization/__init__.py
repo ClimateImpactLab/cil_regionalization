@@ -12,9 +12,10 @@ pooling.
 
 plus `WeightsArtifact` (the loaded weights; `WeightsArtifact.from_table`
 builds one from a weight table produced elsewhere), the schema types
-`OutputSchema`, `SourceUnits` and `GRID_CELLS` for constructing an
-artifact by hand, and, for weight generation, `Config` / `load_config`
-with the `cilreg` CLI. Everything not exported here is internal and may
+`OutputSchema`, `SourceUnits` and `GRID_CELLS` for constructing one by
+hand, and, for weight generation, `generate_weights` with
+`Config` / `load_config` (and `SumToOneError`, `WeightsResult`), as well
+as the `cilreg` CLI. Everything not exported here is internal and may
 change without notice.
 
 Package import does two small env-repairs so CLI, notebooks, and library
@@ -60,8 +61,10 @@ except ImportError:
     )
 
 from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.backends.base import WeightsResult
 from cil_regionalization.config import Config, SourceUnitPolicies, load_config
 from cil_regionalization.fetch import clear_cache, fetch_weights, list_cached
+from cil_regionalization.generate import SumToOneError, generate_weights
 from cil_regionalization.gradients import (
     aggregate_gradient,
     delta_method,
@@ -84,13 +87,16 @@ __all__ = [
     "OutputSchema",
     "SourceUnitPolicies",
     "SourceUnits",
+    "SumToOneError",
     "UnweightedModelWeightsWarning",
     "WeightsArtifact",
+    "WeightsResult",
     "aggregate_gradient",
     "apply_weights",
     "clear_cache",
     "delta_method",
     "fetch_weights",
+    "generate_weights",
     "list_cached",
     "load_config",
     "mixture_quantile",

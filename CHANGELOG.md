@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+**Behaviour change in `cilreg run`.** Results unchanged.
+
+- New: `generate_weights(config)` makes weights from Python. It takes
+  a `Config` or a TOML path, writes the weights and manifest to
+  `output.dir` and returns the `WeightsResult`. `cilreg run` now goes
+  through the same code, so both give the same files.
+- Changed: a run whose weights fail the sum-to-one check now writes
+  nothing. `generate_weights` raises `SumToOneError`, which carries the
+  full report, and `cilreg run` prints the report and exits 1. Before,
+  the files were written and the exit code was 1, which left a weights
+  file on disk that had failed its own check.
+- `WeightsResult` and `SumToOneError` are exported from the package
+  root.
+
 ## v0.4.3
 
 **Results unchanged.** Values equal v0.4.2, and `pooled_statistics`

@@ -33,13 +33,14 @@ import argparse
 import sys
 from pathlib import Path
 
-from cil_regionalization.backends.base import WeightsResult
 from cil_regionalization.config import Config, load_config
-from cil_regionalization.grid import GridSpec
-from cil_regionalization.io import write_result
+from cil_regionalization.generate import (
+    SumToOneError,
+    check_inputs_exist,
+    compute_and_write,
+)
 from cil_regionalization.legacy_export import write_legacy_csv
 from cil_regionalization.regions import RegionSet
-from cil_regionalization.weights import from_config_list
 
 
 _TEST_MODE_REGION_CAP = 3
@@ -259,7 +260,7 @@ def _cmd_cache(args: argparse.Namespace) -> int:
 
 def _cmd_validate(config_path: str) -> int:
     cfg = load_config(config_path)
-    problems = _check_inputs_exist(cfg)
+    problems = check_inputs_exist(cfg)
     if problems:
         for p in problems:
             print(f"validate: {p}", file=sys.stderr)
@@ -283,19 +284,15 @@ def _cmd_run(
     legacy_csv: bool = False,
 ) -> int:
     cfg = load_config(config_path)
-    problems = _check_inputs_exist(cfg)
+    problems = check_inputs_exist(cfg)
     if problems:
         for p in problems:
             print(f"run: {p}", file=sys.stderr)
         return 1
 
     regions = RegionSet.from_config(cfg.regions)
-    grid = GridSpec.from_config(cfg.grid) if cfg.grid is not None else None
-    weight_specs = from_config_list(cfg.weights)
 
     if cfg.backend.kind == "bigquery":
-        from cil_regionalization.backends.bigquery import BigQueryBackend
-
         if test_mode:
             keep = cfg.regions.keep or {}
             primary = regions.id_fields[0]
@@ -311,22 +308,20 @@ def _cmd_run(
                 f"{len(keep[primary])} ids",
                 file=sys.stderr,
             )
-        backend = BigQueryBackend()
-    else:
-        from cil_regionalization.backends.local import LocalBackend
+    elif test_mode and regions.is_local and regions.gdf is not None:
+        regions.gdf = regions.gdf.head(_TEST_MODE_REGION_CAP).reset_index(
+            drop=True
+        )
+        print(
+            f"run: test-mode active; capped regions to {_TEST_MODE_REGION_CAP}",
+            file=sys.stderr,
+        )
 
-        if test_mode and regions.is_local and regions.gdf is not None:
-            regions.gdf = regions.gdf.head(_TEST_MODE_REGION_CAP).reset_index(
-                drop=True
-            )
-            print(
-                f"run: test-mode active; capped regions to {_TEST_MODE_REGION_CAP}",
-                file=sys.stderr,
-            )
-        backend = LocalBackend()
-
-    result: WeightsResult = backend.compute(regions, grid, weight_specs, cfg)
-    paths = write_result(result, cfg.output.dir, cfg.output.format)
+    try:
+        result, paths = compute_and_write(cfg, regions)
+    except SumToOneError as e:
+        print(f"run: nothing written; {e}", file=sys.stderr)
+        return 1
 
     if legacy_csv:
         out_dir = cfg.output.dir
@@ -339,13 +334,10 @@ def _cmd_run(
     print(
         f"run: backend={cfg.backend.kind}  rows={len(result.frame)}  "
         f"regions={result.manifest.row_counts.get('regions', 0)}  "
-        f"sum_to_one={'ok' if result.sum_report.ok else 'FAIL'}"
+        "sum_to_one=ok"
     )
     for kind, path in paths.items():
         print(f"  wrote {kind}: {path}")
-    if not result.sum_report.ok:
-        print(result.sum_report.summary(), file=sys.stderr)
-        return 1
     return 0
 
 
@@ -421,28 +413,6 @@ def _regions_find_local(
         + (" (limit reached)" if len(matches) > limit else "")
     )
     return 0
-
-
-def _check_inputs_exist(cfg: Config) -> list[str]:
-    """Cheap precheck: regions.path and each weight raster must exist."""
-    problems: list[str] = []
-    if cfg.regions.path is not None and not Path(cfg.regions.path).exists():
-        problems.append(f"regions.path does not exist: {cfg.regions.path}")
-    if (
-        cfg.source is not None
-        and not cfg.source.path.startswith("gs://")
-        and not Path(cfg.source.path).exists()
-    ):
-        problems.append(f"source.path does not exist: {cfg.source.path}")
-    if cfg.backend.kind == "local":
-        for w in cfg.weights:
-            if w.name == "area":
-                continue
-            if w.raster is not None and not Path(w.raster).exists():
-                problems.append(
-                    f"weights.{w.name}.raster does not exist: {w.raster}"
-                )
-    return problems
 
 
 if __name__ == "__main__":  # pragma: no cover
