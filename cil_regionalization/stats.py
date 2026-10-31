@@ -344,7 +344,8 @@ def _statistic_pieces(
                   for q in quantiles]
         for label, compute in stats:
             piece = keys.copy()
-            piece[value_col] = compute().reindex(range(n_groups)).to_numpy()
+            # .array, not .to_numpy(): a nullable value dtype stays nullable
+            piece[value_col] = compute().reindex(range(n_groups)).array
             piece[_STATISTIC_COLUMN] = label
             pieces.append(piece)
         return pieces

@@ -642,6 +642,24 @@ class TestIdentityGroups:
         pd.testing.assert_frame_equal(mean[self.IDENTITY], keys)
         np.testing.assert_array_equal(mean["value"].to_numpy(), expected)
 
+    def test_nullable_values_keep_their_dtype_unweighted(self):
+        """The unweighted statistics come back in the value column's own
+        dtype, as a groupby over the columns returns them: a nullable
+        Float64 column with missing entries stays Float64."""
+        from cil_regionalization.stats import pooled_statistics
+
+        df = self._members(4).drop_duplicates(subset=self.IDENTITY + self.SAMPLE)
+        df = df.drop(columns="w")
+        df["value"] = df["value"].astype("Float64")
+        df.loc[df.index[::23], "value"] = pd.NA
+        out = pooled_statistics(df, sample_dims=self.SAMPLE, quantiles=[0.5])
+        assert out["value"].dtype == "Float64"
+        grouped = df.groupby(self.IDENTITY, sort=False, observed=True)["value"]
+        for label, expected in (("mean", grouped.mean()), ("q50", grouped.quantile(0.5))):
+            got = out.loc[out["statistic"] == label, "value"].reset_index(drop=True)
+            pd.testing.assert_series_equal(got, expected.reset_index(drop=True),
+                                           check_exact=True, check_names=False)
+
 
 class TestWeightedStatistics:
     """The weighted path reproduces the historical extraction tool's
