@@ -438,9 +438,9 @@ class LocalBackend(WeightsBackend):
                 final, w.name, id_fields=list(schema.normalization_group)
             )
         manifest.inputs.update(_input_checksums(regions, weights))
-        for label, path in (("regions", regions.source_uri), ("source", src_cfg.path)):
-            if path is not None and not str(path).startswith("gs://") and Path(path).exists():
-                manifest.inputs[f"geometry:{label}"] = hash_file(path)
+        path = src_cfg.path
+        if not str(path).startswith("gs://") and Path(path).exists():
+            manifest.inputs["geometry:source"] = hash_file(path)
         manifest.extra["zero_overlap_count"] = len(zero_overlap)
         manifest.extra["zero_overlap_source_units"] = [list(t) for t in zero_overlap]
         manifest.extra["empty_region_count"] = len(empty_regions)
@@ -1112,11 +1112,9 @@ def _input_checksums(
 ) -> dict[str, str]:
     """Hash the regions file and each weight raster for the manifest."""
     inputs: dict[str, str] = {}
-    if regions.is_local and regions.gdf is not None:
-        # We don't have the original path on the RegionSet, so skip the
-        # regions-source hash here; cli.run will pass it via manifest.extra
-        # when the file path is known.
-        pass
+    path = regions.source_uri
+    if path is not None and not str(path).startswith("gs://") and Path(path).exists():
+        inputs["geometry:regions"] = hash_file(path)
     for w in weights:
         if w.is_area:
             continue

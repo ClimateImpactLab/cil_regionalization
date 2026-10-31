@@ -15,6 +15,11 @@
   file on disk that had failed its own check.
 - `WeightsResult` and `SumToOneError` are exported from the package
   root.
+- Fix: manifests from grid runs now record the SHA256 of the regions
+  file under `inputs["geometry:regions"]`. Polygon runs already did;
+  grid runs never had it, although a comment said they would. The
+  weights are unchanged. Weight files made before this have no
+  regions checksum.
 
 ## v0.4.3
 

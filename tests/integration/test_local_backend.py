@@ -137,6 +137,17 @@ class TestExactFractionEnd2End:
         assert "weight:pop" in result.manifest.inputs
         assert len(result.manifest.inputs["weight:pop"]) == 64
 
+    def test_manifest_records_regions_hash(
+        self, three_region_geoparquet, synthetic_raster, tmp_path
+    ):
+        from cil_regionalization.manifest import hash_file
+
+        cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path)
+        result = _run(cfg)
+        assert result.manifest.inputs["geometry:regions"] == hash_file(
+            three_region_geoparquet
+        )
+
     def test_geodesic_area_positive_everywhere(
         self, three_region_geoparquet, synthetic_raster, tmp_path
     ):
