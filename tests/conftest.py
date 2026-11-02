@@ -14,6 +14,7 @@ self contained.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -200,6 +201,14 @@ def synthetic_fraction_raster(tmp_path: Path) -> Path:
     return p
 
 
+def _git_repo_missing() -> bool:
+    """True when git is not installed or this is not a git checkout (an
+    sdist, a zip), so the examples data check cannot run."""
+    return shutil.which("git") is None or not (
+        Path(__file__).resolve().parents[1] / ".git"
+    ).exists()
+
+
 def _extra_missing(module_name: str) -> bool:
     """True when the optional module is genuinely absent. Robust to test
     pollution: a test may plant a stub in sys.modules, and find_spec
@@ -229,6 +238,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         gaps.append(
             "the [netcdf] extra is not installed: the NetCDF leaf and "
             "pipeline tests were skipped"
+        )
+    if _git_repo_missing():
+        gaps.append(
+            "git or the git checkout is not available: the check that "
+            "example data is tracked was skipped"
         )
     for gap in gaps:
         terminalreporter.write_line(

@@ -1,0 +1,13 @@
+# Files under examples/<name>/data/ that are left out of git on purpose.
+#
+# tests/unit/test_examples_data_tracked.py fails when a file sits under
+# an examples/<name>/data/ directory and git does not track it, whether
+# .gitignore hides it or not. A file that a notebook or script reads
+# and a clone does not have breaks the example, so the default is to
+# commit it. If one is too large, or not ours to redistribute, list it
+# here instead, one path or glob per line, with the reason after a #:
+#
+#   examples/labor/data/montecarlo/*.nc4  # 40 GB, rebuilt by prepare_data.py
+#
+# A line with no reason, or a path outside examples/<name>/data/, fails
+# the test too.
