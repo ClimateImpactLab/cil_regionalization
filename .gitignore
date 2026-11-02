@@ -275,6 +275,7 @@ service-account.json
 !examples/energy/data/**/*.parquet
 !examples/climate/data/**/*.parquet
 !examples/climate/data/**/*.csv
+!examples/*/data/**/*.csv
 
 # notebook execution artifacts
 .ipynb_checkpoints/
