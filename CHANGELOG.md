@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.0
 
 **Behaviour change in `cilreg run`.** Results unchanged.
 
