@@ -298,3 +298,6 @@ scratch/
 
 # gridded intermediates, never repository content
 *.npz
+
+# data committed with the examples
+!examples/*/data/**/*.parquet
