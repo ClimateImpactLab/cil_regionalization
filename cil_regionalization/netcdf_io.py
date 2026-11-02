@@ -20,10 +20,13 @@ other passthrough dimension.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
+import numpy as np
 import pandas as pd
 
+if TYPE_CHECKING:
+    from cil_regionalization.grid import GridSpec
 
 def _import_xarray():
     try:
@@ -134,3 +137,151 @@ def read_netcdf_leaf(
             )
         frame = frame.rename(columns={region_dim: region_col})
     return frame
+
+
+def read_netcdf_grid(
+    path: str | Path,
+    variables: Sequence[str],
+    *,
+    lat: str = "lat",
+    lon: str = "lon",
+    grid: "str | GridSpec | None" = None,
+) -> tuple[pd.DataFrame, str]:
+    """Read a NetCDF on a regular lat-lon grid into a cell table.
+
+    Returns ``(cells, grid)``. ``cells`` has one row per cell and
+    slice, with ``cell_ix`` and ``cell_iy`` on the grid, one column per
+    variable, and any other dimension (time, say) as a column, as
+    `read_netcdf_leaf` does. ``grid`` is the identity string, for
+    example ``grid-0.25deg-center-[-180,180)``; pass it to
+    `apply_weights` as ``data_version``.
+
+    ``lat`` and ``lon`` name the file's 1-D coordinate variables, each
+    the coordinate of a dimension of the same name; every variable must
+    have both. Coordinate names are never guessed.
+
+    The grid is ``grid`` if given, as the identity string or a
+    `GridSpec`, and otherwise derived from the coordinates
+    (`infer_grid_version`). With ``grid``, longitudes are wrapped into
+    its convention, so a [0,360) file can be put on a [-180,180) grid.
+    Either way each coordinate is mapped to its cell index and back to a
+    centroid, and the read raises if any value is not a cell centre on
+    that grid. No data is moved or reordered: indices come from each
+    row's own coordinates, so the order of the axes does not matter.
+    Nothing is regridded or snapped.
+
+    A subset whose longitudes all lie in [0,180], such as a cut of
+    Europe, Asia or Africa, always needs ``grid``. The same coordinates
+    are valid on both longitude conventions, so nothing in the file can
+    say which one your weights were built on. The error for this case
+    is not a bug; it prints the two calls that would work. A file with a
+    coordinate beyond 180 or below 0 is not affected.
+
+    Limit: cells must be square. The grid identity holds one
+    resolution, so a file whose latitude and longitude steps differ
+    raises instead of being read. The identity's spelling is fixed by
+    the weight files already on Zenodo. Allowing two steps would change
+    `GridSpec`, `GridConfig`, the manifest, `validate` and the BigQuery
+    backend, and would still not read Gaussian grids or grids with
+    latitude points on the poles, whose latitude step does not divide
+    180 degrees.
+
+    Cells masked (NaN) in every slice are left out, as
+    `DailyGrid.to_cells` does, so `apply_weights` reports a weighted
+    cell that has no data instead of averaging around it. A cell masked
+    in some slices and not others raises. Two coordinates that land on
+    the same cell (a longitude of both -180 and 180) raise.
+    """
+    xr = _import_xarray()
+    from cil_regionalization.grid import (
+        AmbiguousLongitudeConvention,
+        GridSpec,
+        cell_indices,
+        coordinate_tolerance,
+        infer_grid_version,
+    )
+
+    variables = list(variables)
+    with xr.open_dataset(path) as ds:
+        missing = [v for v in variables if v not in ds.data_vars]
+        if missing:
+            raise ValueError(
+                f"NetCDF {path} has no variables {missing} "
+                f"(available: {sorted(ds.data_vars)})"
+            )
+        for name in (lat, lon):
+            if name not in ds.variables or ds[name].dims != (name,):
+                raise ValueError(
+                    f"NetCDF {path}: {name!r} must be a 1-D coordinate of the "
+                    f"dimension {name!r}; the file has dimensions "
+                    f"{sorted(ds.dims)} and variables {sorted(ds.variables)}"
+                )
+        for v in variables:
+            if not {lat, lon} <= set(ds[v].dims):
+                raise ValueError(
+                    f"NetCDF {path}: variable {v!r} has dimensions "
+                    f"{ds[v].dims}; it needs both {lat!r} and {lon!r}"
+                )
+        lat_vals = ds[lat].values
+        lon_vals = ds[lon].values
+        if isinstance(grid, GridSpec):
+            if grid.mode != "generate":
+                raise ValueError(
+                    f"grid must be a generated grid; got mode {grid.mode!r}"
+                )
+            grid = grid.source_version
+        if grid is None:
+            try:
+                grid = infer_grid_version(lat_vals, lon_vals)
+            except AmbiguousLongitudeConvention as e:
+                extra = "".join(
+                    f", {k}={v!r}" for k, v in (("lat", lat), ("lon", lon))
+                    if v != k
+                )
+                calls = "\n".join(
+                    f"    read_netcdf_grid({str(path)!r}, {variables!r}{extra}, "
+                    f"grid={c!r})"
+                    for c in e.candidates
+                )
+                raise ValueError(
+                    f"NetCDF {path}: longitudes run from {e.lo} to {e.hi}, "
+                    f"which fits both conventions, and the file does not say "
+                    f"which. Pass one of:\n{calls}\n"
+                    f"Take the one your weights were built on: apply_weights "
+                    f"compares it with the weights' source_version."
+                ) from None
+        spec = GridSpec.from_source_version(grid)
+        tol = max(coordinate_tolerance(lat_vals, spec.resolution),
+                  coordinate_tolerance(lon_vals, spec.resolution))
+        iy = cell_indices(spec, lat_vals, "lat", tol=tol)
+        ix = cell_indices(spec, lon_vals, "lon", tol=tol)
+        for axis, idx, vals in (("lat", iy, lat_vals), ("lon", ix, lon_vals)):
+            if len(np.unique(idx)) != len(idx):
+                raise ValueError(
+                    f"NetCDF {path}: several {axis} values fall in one cell of "
+                    f"{grid}; for example {vals[:3].tolist()} .. "
+                    f"{vals[-3:].tolist()}"
+                )
+
+        sub = ds[variables]
+        masked = sub.to_array("_variable").isnull().any("_variable")
+        slices = [d for d in masked.dims if d not in (lat, lon)]
+        if slices:
+            ragged = masked.any(slices) & ~masked.all(slices)
+            if bool(ragged.any()):
+                where = ragged.stack(c=(lat, lon)).to_series()
+                first = where[where].index[:3].tolist()
+                raise ValueError(
+                    f"NetCDF {path}: {int(ragged.sum())} cells are masked in "
+                    f"some slices and not others; first (lat, lon): {first}"
+                )
+        cells = (
+            sub.assign_coords(cell_ix=(lon, ix), cell_iy=(lat, iy))
+            .to_dataframe()
+            .reset_index()
+            .drop(columns=[lat, lon])
+        )
+    cells = cells[~cells[variables].isna().any(axis=1)]
+    front = ["cell_ix", "cell_iy"]
+    cells = cells[front + [c for c in cells.columns if c not in front]]
+    return cells.reset_index(drop=True), grid

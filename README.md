@@ -171,6 +171,32 @@ dimension named `gcm` without weights warns once; filter
 (`examples/rates`) the weights barely move the median and pull the
 95th percentile down by about a fifth.
 
+## Your own NetCDF
+
+A file on a regular lat-lon grid, with 1-D `lat` and `lon`
+coordinates, becomes a cell table in one call:
+
+```python
+cells, grid = cilreg.read_netcdf_grid("tas.nc", ["tas"])
+out = cilreg.apply_weights(weights, cells, kind="intensive",
+                           weight="pop", value_col="tas",
+                           data_version=grid)
+```
+
+The grid identity comes from the coordinates (resolution, cell centres
+or edges, longitude convention), and every coordinate is mapped to its
+cell index and back to a centroid; a value that is not a cell centre
+raises. A file with a longitude beyond 180 or below 0 needs nothing
+more. A subset in the east hemisphere, with every longitude in 0 to
+180, always needs `grid=`: the same coordinates are valid on both
+conventions, so the file cannot say which one your weights use. The
+error prints the two calls that work, for example `grid="grid-0.25deg-
+center-[-180,180)"` or the `[0,360)` one, which also wraps a 0 to 360
+file onto the other. `grid` takes the string or a `GridSpec`. Nothing is regridded: coordinates that sit on no grid are
+an error, and so are cells that are not square. Cells masked in every
+slice are left out, so `apply_weights` reports a weighted cell that has
+no data; a cell masked in only some slices raises.
+
 ## Worked example
 
 `examples/aggregation/` aggregates one batch of Monte Carlo mortality
@@ -281,7 +307,7 @@ confirm a regenerated set started from the same input.
 
 ## More detail
 
-`fetch_weights`, `generate_weights`, `apply_weights`, `summarize_samples`,
+`fetch_weights`, `generate_weights`, `apply_weights`, `read_netcdf_grid`, `summarize_samples`,
 `window_means`, `pooled_statistics`, `read_gradient_leaf`,
 `aggregate_gradient`, `delta_method`, `WeightsArtifact`, and
 `load_config` are the supported API, re-exported at the package root.

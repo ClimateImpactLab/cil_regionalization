@@ -279,3 +279,188 @@ def infer_uniform_resolution(coords: Iterable[float], tol: float = 1e-9) -> floa
             f"max deviation = {worst}"
         )
     return res
+
+
+class AmbiguousLongitudeConvention(ValueError):
+    """Every longitude is in [0,180], which fits both conventions.
+
+    ``candidates`` are the two grid identities the coordinates fit,
+    [-180,180) first. A file of this kind cannot say which one the
+    caller's weights were built on.
+    """
+
+    def __init__(self, lo: float, hi: float, candidates: list[str]):
+        self.candidates = candidates
+        self.lo = lo
+        self.hi = hi
+        super().__init__(
+            f"longitudes run from {lo} to {hi}, which fits both "
+            f"{candidates[0]!r} and {candidates[1]!r}"
+        )
+
+
+def _spacing(coords: np.ndarray) -> float:
+    """Gap between neighbouring representable values at the largest coordinate."""
+    top = coords[np.argmax(np.abs(coords))]
+    return float(np.spacing(np.abs(top)))
+
+
+def _shortest_decimal(x: float, tol: float) -> float:
+    """The shortest decimal within ``tol`` of ``x``.
+
+    A float32 file stores 0.1 as 0.10000000149 and its steps wobble by
+    the coordinate spacing, so the step is snapped to the fewest digits
+    that stay inside the tolerance: 0.100006 becomes 0.1, 0.25 stays.
+    """
+    for digits in range(0, 10):
+        r = round(x, digits)
+        if abs(r - x) <= tol:
+            return r
+    return x
+
+
+def coordinate_tolerance(coords: np.ndarray, resolution: float) -> float:
+    """How far a stored coordinate may sit from its cell centre.
+
+    1e-6 of a cell, or twice the spacing of the coordinate's own dtype
+    if that is larger: a float32 longitude near 180 cannot be closer to
+    a 0.1 degree centre than about 1e-5. Raises when the dtype is so
+    coarse that the tolerance passes one percent of a cell, since a
+    check that loose no longer separates neighbouring grids.
+    """
+    tol = max(1e-6 * resolution, 2.0 * _spacing(coords))
+    if tol > 0.01 * resolution:
+        raise ValueError(
+            f"coordinates are stored too coarsely to place on a "
+            f"{resolution} degree grid: dtype {coords.dtype} resolves "
+            f"{tol:.3g} degrees there, over one percent of a cell"
+        )
+    return tol
+
+
+def infer_grid_version(lat, lon) -> str:
+    """The grid identity a file's 1-D latitudes and longitudes sit on.
+
+    The resolution is the constant step between neighbours (either
+    direction), snapped so a float32 file
+    gives 0.1, not 0.10000000149 (the shortest decimal within the
+    coordinates' own precision). Centre or edge comes from where the
+    coordinates fall against the -90 and longitude origins, and the two
+    axes must agree. The longitude convention is [0,360) when any value
+    exceeds 180 and [-180,180) when any is negative. A file with
+    longitudes only in [0,180] fits both, so this raises
+    `AmbiguousLongitudeConvention`, which carries both identities, and
+    the caller must pick one.
+
+    Latitude and longitude steps must be equal. The identity string
+    holds one resolution, so unequal steps raise.
+
+    Raises when the steps are not uniform, there are fewer than two
+    values on an axis, or the coordinates fit no grid. It does not
+    check the result against the coordinates; `cell_indices` does.
+    """
+    lat = np.asarray(lat)
+    lon = np.asarray(lon)
+    steps = []
+    for name, c in (("lat", lat), ("lon", lon)):
+        if c.ndim != 1 or c.size < 2:
+            raise ValueError(
+                f"cannot derive a grid from {c.size} {name} values; pass the "
+                f"grid identity explicitly"
+            )
+        if not np.all(np.isfinite(c)):
+            raise ValueError(f"{name} has values that are not finite")
+        steps.append(np.abs(np.diff(c.astype("float64"))))
+    res_by_axis = []
+    for name, c, d in (("lat", lat, steps[0]), ("lon", lon, steps[1])):
+        tol = max(1e-9, 4.0 * _spacing(c))
+        res = _shortest_decimal(float(np.median(d)), tol)
+        worst = float(np.max(np.abs(d - res)))
+        if res <= 0 or worst > tol:
+            raise ValueError(
+                f"{name} is not evenly spaced: every step should be {res}, "
+                f"largest deviation {worst:.3g}"
+            )
+        res_by_axis.append(res)
+    if res_by_axis[0] != res_by_axis[1]:
+        raise ValueError(
+            f"lat steps are {res_by_axis[0]} and lon steps are "
+            f"{res_by_axis[1]}; only square cells are supported"
+        )
+    res = res_by_axis[0]
+
+    lo, hi = float(lon.min()), float(lon.max())
+    if lo < 0 and hi > 180:
+        raise ValueError(
+            f"longitudes run from {lo} to {hi}, which fits neither [-180,180) "
+            f"nor [0,360)"
+        )
+    ambiguous = lo >= 0 and hi <= 180
+    conv = "[0,360)" if hi > 180 else "[-180,180)"
+
+    tol = max(coordinate_tolerance(lat, res),
+              coordinate_tolerance(lon, res)) / res
+    offsets = set()
+    for name, c, origin in (("lat", lat, _LAT_ORIGIN),
+                            ("lon", lon, _lon_origin(conv))):
+        phase = ((c.astype("float64") - origin) / res) % 1.0
+        if np.all(np.abs(phase - 0.5) <= tol):
+            offsets.add("center")
+        elif np.all((phase <= tol) | (phase >= 1.0 - tol)):
+            offsets.add("edge")
+        else:
+            raise ValueError(
+                f"{name} values sit on no {res} degree grid starting at "
+                f"{origin}: they are neither all cell centres nor all cell "
+                f"edges"
+            )
+    if len(offsets) != 1:
+        raise ValueError(
+            f"lat and lon disagree: one sits on cell centres and the other "
+            f"on cell edges of a {res} degree grid"
+        )
+    offset = offsets.pop()
+    if ambiguous:
+        # both origins are a whole number of steps apart, so centre or
+        # edge reads the same under either
+        raise AmbiguousLongitudeConvention(lo, hi, [
+            f"grid-{res}deg-{offset}-[-180,180)",
+            f"grid-{res}deg-{offset}-[0,360)",
+        ])
+    return f"grid-{res}deg-{offset}-{conv}"
+
+
+def cell_indices(spec: GridSpec, values, axis: str, *, tol: float | None = None):
+    """Integer cell index along one axis for 1-D cell-centre coordinates.
+
+    ``axis`` is "lon" or "lat". Longitudes are wrapped into the grid's
+    convention first. Each index is mapped back to its centroid, and
+    every value must match that centroid within ``tol`` (default 1e-6
+    of a cell) and fall inside the grid; a miss raises with the first
+    offending values. That round trip is what catches coordinates built
+    on another origin, or given as cell edges where the grid has
+    centres.
+    """
+    given = np.asarray(values, dtype="float64")
+    if axis == "lon":
+        given = np.mod(given - spec.lon_origin, 360.0) + spec.lon_origin
+        idx, _ = spec.index_of(given, np.zeros_like(given))
+        centre, _ = spec.centroid(idx, np.zeros_like(idx))
+        n = spec.n_ix
+    elif axis == "lat":
+        _, idx = spec.index_of(np.full_like(given, spec.lon_origin), given)
+        _, centre = spec.centroid(np.zeros_like(idx), idx)
+        n = spec.n_iy
+    else:
+        raise ValueError(f"axis must be 'lon' or 'lat'; got {axis!r}")
+    if tol is None:
+        tol = 1e-6 * spec.resolution
+    with np.errstate(invalid="ignore"):
+        bad = (~np.isfinite(given) | (idx < 0) | (idx >= n)
+               | (np.abs(given - centre) > tol))
+    if bad.any():
+        raise ValueError(
+            f"{int(bad.sum())} {axis} values are not cell centres on "
+            f"{spec.source_version}; first: {given[bad][:5].tolist()}"
+        )
+    return idx

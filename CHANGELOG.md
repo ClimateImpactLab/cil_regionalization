@@ -21,6 +21,17 @@
   weights are unchanged. Weight files made before this have no
   regions checksum.
 
+**Results unchanged.**
+
+- New: `read_netcdf_grid(path, variables)` reads a NetCDF on a regular
+  lat-lon grid into the cell table `apply_weights` takes and returns
+  the grid identity with it. The identity is derived from the
+  coordinates, or named with `grid=` (a string or a `GridSpec`), and
+  every coordinate is checked to be a cell centre on it. A subset with every longitude in 0 to 180
+  fits both longitude conventions, so it always needs `grid=`; the
+  error prints the two calls. Cells must be square. Needs the
+  `[netcdf]` extra.
+
 ## v0.4.3
 
 **Results unchanged.** Values equal v0.4.2, and `pooled_statistics`

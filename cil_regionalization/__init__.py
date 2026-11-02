@@ -3,6 +3,7 @@
 What a consumer of published weights touches, in call order:
 
     fetch_weights       download a published artifact, verify, cache, load
+    read_netcdf_grid    a lat-lon NetCDF to the cell table apply_weights takes
     apply_weights       aggregate source-level data to the artifact's targets
     summarize_samples   window means and pooled statistics over MC draws
 
@@ -71,7 +72,7 @@ from cil_regionalization.gradients import (
     read_gradient_leaf,
     window_gradient,
 )
-from cil_regionalization.netcdf_io import read_netcdf_leaf
+from cil_regionalization.netcdf_io import read_netcdf_grid, read_netcdf_leaf
 from cil_regionalization.schema import GRID_CELLS, OutputSchema, SourceUnits
 from cil_regionalization.stats import (
     UnweightedModelWeightsWarning,
@@ -102,6 +103,7 @@ __all__ = [
     "mixture_quantile",
     "pooled_statistics",
     "read_gradient_leaf",
+    "read_netcdf_grid",
     "read_netcdf_leaf",
     "summarize_samples",
     "window_gradient",
