@@ -1,0 +1,78 @@
+{
+ "backend": "local",
+ "config_hash": "d410c8fde15e6d40fd2402b262c1afcdca41dc5909e954e390b47b7535500e97",
+ "coverage": "exact_fraction",
+ "extra": {
+  "min_segment_area": {
+   "max_discarded_share": 4.396633937879854e-09,
+   "segments_dropped": 102,
+   "threshold_m2": 1.0,
+   "units_fully_dropped": []
+  }
+ },
+ "fallback_counts": {
+  "area": {
+   "native": 42726
+  },
+  "pop": {
+   "area_fallback": 42,
+   "native": 42684
+  }
+ },
+ "grid_mode": "generate",
+ "grid_resolution": 0.25,
+ "id_fields": [
+  "ISO",
+  "ID_1",
+  "ID_2"
+ ],
+ "inputs": {
+  "weight:pop": "825600dd31691a1f7cbace62b59a6a431490400f9a865c5138e94c589787dd54"
+ },
+ "lon_convention": "[-180,180)",
+ "normalization": "per_destination",
+ "outputs": {
+  "weights.parquet": "217758694981777533ddb22d10e05339d66d7da8516d870259b51babc702005c"
+ },
+ "package_versions": {
+  "cil_regionalization": "0.1.0",
+  "exactextract": "0.3.0",
+  "geopandas": "1.1.4",
+  "numpy": "2.4.6",
+  "pandas": "3.0.5",
+  "pyarrow": "25.0.1",
+  "pydantic": "2.13.4",
+  "pyproj": "3.7.2",
+  "rasterio": "1.4.4",
+  "shapely": "2.1.2"
+ },
+ "partial_coverage": null,
+ "project_description": "0.25 degree grid to GADM 2.0 ADM2 population weights for intensive climate aggregation; grid identity grid-0.25deg-center-[-180,180)",
+ "project_name": "grid025_gadm20_adm2_per_destination",
+ "python_version": "3.11.12",
+ "regions_version": "gadm-2.0-impactmap-copy-2025",
+ "row_counts": {
+  "regions": 28,
+  "segments": 715,
+  "total": 715
+ },
+ "source_coverage": {},
+ "source_key_columns": [
+  "cell_ix",
+  "cell_iy"
+ ],
+ "source_mode": "grid",
+ "source_version": "grid-0.25deg-center-[-180,180)",
+ "timing_seconds": {
+  "compute_total": 452.26693230494857
+ },
+ "weight_names": [
+  "pop",
+  "area"
+ ],
+ "crop": {
+  "query": "ISO == 'PER' and ID_1 in [25, 17, 20, 8]",
+  "source_artifact": "grid025_gadm20_adm2_per_destination",
+  "source_sha256": "298d81bd58cac382ac661a9dcf501c061c49fc9a1d90bb620c1e12c93efb14f7"
+ }
+}

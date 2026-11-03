@@ -1,0 +1,76 @@
+{
+ "backend": "local",
+ "config_hash": "2a674c42acbbabb7d9b28148a15b40d91a1d26f00589243428910e0c6da0b17c",
+ "coverage": "exact_fraction",
+ "extra": {
+  "min_segment_area": {
+   "max_discarded_share": 2.1695210657746758e-10,
+   "segments_dropped": 155,
+   "threshold_m2": 1.0,
+   "units_fully_dropped": []
+  }
+ },
+ "fallback_counts": {
+  "area": {
+   "native": 24378
+  },
+  "pop": {
+   "area_fallback": 37,
+   "native": 24341
+  }
+ },
+ "grid_mode": "generate",
+ "grid_resolution": 0.25,
+ "id_fields": [
+  "hierid"
+ ],
+ "inputs": {
+  "weight:pop": "825600dd31691a1f7cbace62b59a6a431490400f9a865c5138e94c589787dd54"
+ },
+ "lon_convention": "[-180,180)",
+ "normalization": "per_destination",
+ "outputs": {
+  "weights.parquet": "ace9fda739aad9d9e6a01daf08ac8687acf194e17e90b7c6a16e49b22ec3ef8c"
+ },
+ "package_versions": {
+  "cil_regionalization": "0.2.0",
+  "exactextract": "0.3.0",
+  "geopandas": "1.2.0",
+  "numpy": "2.4.6",
+  "pandas": "3.0.6",
+  "pyarrow": "26.0.0",
+  "pydantic": "2.14.1",
+  "pyproj": "3.7.2",
+  "rasterio": "1.4.4",
+  "shapely": "2.2.0"
+ },
+ "partial_coverage": null,
+ "project_description": "0.25 degree grid to world-combo-201710 impact region population weights for intensive climate aggregation, all impact regions; grid identity grid-0.25deg-center-[-180,180)",
+ "project_name": "grid025_ir_per_destination",
+ "python_version": "3.11.12",
+ "regions_version": "world-combo-201710",
+ "row_counts": {
+  "regions": 47,
+  "segments": 820,
+  "total": 820
+ },
+ "source_coverage": {},
+ "source_key_columns": [
+  "cell_ix",
+  "cell_iy"
+ ],
+ "source_mode": "grid",
+ "source_version": "grid-0.25deg-center-[-180,180)",
+ "timing_seconds": {
+  "compute_total": 653.6333771441132
+ },
+ "weight_names": [
+  "pop",
+  "area"
+ ],
+ "crop": {
+  "query": "hierid starts with one of ['PER.25.', 'PER.17.', 'PER.20.', 'PER.8.']",
+  "source_artifact": "grid025_ir_per_destination",
+  "source_sha256": "301d2d52c96d426c08785f5fc183ac9181e0179c504928c38d8fc0f712f781f1"
+ }
+}
