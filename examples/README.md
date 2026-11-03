@@ -8,3 +8,11 @@
 - `gadm41/` does the same for GADM 4.1.
 - `montecarlo/` contains an example configuration with explanations, a scheduler template, and the configurations used for the published mortality aggregations under `runs/`. These configurations depend on the cluster setup.
 - `synthetic/` regenerates the synthetic data files used in the tests and stored in the repository.
+
+Six of the seven notebooks run with no network and nothing cached: the
+two in `climate/` and the ones in `energy/`, `energy_percentiles/`,
+`labor/` and `rates/` read everything from their `data/` directories.
+The `aggregation/` notebook needs the network, because it shows
+`fetch_weights` downloading the GADM weights from Zenodo; later runs
+read them from the cache. Its `run_example.py --offline` uses the
+committed weight slices instead.
