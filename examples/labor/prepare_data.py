@@ -48,13 +48,6 @@ STEM = "uninteracted_main_model"
 WAGE_PAIR_GCM = "CCSM4"
 
 
-def _mounted(path: Path) -> Path:
-    if path.exists():
-        return path
-    alt = Path(str(path).replace("/project/cil", "/Volumes/cil"))
-    return alt if alt.exists() else path
-
-
 def slice_weights() -> list[str]:
     """The India slice of the published ADM1 weights: every row of
     every source region that touches an Indian state."""
@@ -106,7 +99,7 @@ def slice_leaf(src: Path, dst: Path, keep: list[str]) -> None:
 
 
 def build_leaves(keep: list[str]) -> None:
-    tree = _mounted(TREE)
+    tree = TREE
     gcms = sorted(p.name for p in (tree / "batch0" / "rcp85").iterdir() if p.is_dir())
     for batch in BATCHES:
         for gcm in gcms:
@@ -125,7 +118,7 @@ def build_factor(keep: list[str]) -> None:
     """The wage factor per region and year, recovered as wage value
     over physical value and checked against a draw the recovery did
     not use."""
-    tree = _mounted(TREE)
+    tree = TREE
     gcms = sorted(p.name for p in (tree / "batch0" / "rcp85").iterdir() if p.is_dir())
     stack = []
     for gcm in gcms[::6]:
@@ -164,7 +157,7 @@ def build_factor(keep: list[str]) -> None:
 
 
 def build_population(keep: list[str]) -> None:
-    pop = pd.read_csv(_mounted(POPULATION), comment="#")
+    pop = pd.read_csv(POPULATION, comment="#")
     pop = pop[pop["region"].isin(keep)]
     missing = set(keep) - set(pop["region"])
     assert not missing, f"regions absent from the SSP series: {sorted(missing)}"
@@ -189,7 +182,7 @@ def build_display_layer(keep: list[str]) -> None:
         .drop_duplicates("hierid")
         .query("ISO == 'IND'")[["hierid", "ISO", "ID_1"]]
     )
-    shapes = gpd.read_file(_mounted(IR_SHAPES))
+    shapes = gpd.read_file(IR_SHAPES)
     shapes = shapes[shapes["hierid"].isin(set(best["hierid"]))]
     shapes = shapes[["hierid", "geometry"]].merge(best, on="hierid")
     states = shapes.dissolve(by=["ISO", "ID_1"], as_index=False)[

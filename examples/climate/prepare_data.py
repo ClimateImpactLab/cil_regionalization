@@ -73,24 +73,17 @@ IR_SHAPES = Path("/project/cil/gcp/regions/world-combo-201710/agglomerated-world
 ISOS = list(data.COUNTRIES)
 
 
-def _mounted(path: Path) -> Path:
-    if path.exists():
-        return path
-    alt = Path(str(path).replace("/project/cil", "/Volumes/cil"))
-    return alt if alt.exists() else path
-
-
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def source_path(var: str) -> Path:
     name = f"{var}_day_BCSD_rcp85_r1i1p1_{data.MODEL}_{data.YEAR}.nc"
-    return _mounted(SOURCE) / var / "r1i1p1" / "v1.0" / name
+    return SOURCE / var / "r1i1p1" / "v1.0" / name
 
 
 def crop_weights() -> pd.DataFrame:
-    src = _mounted(WEIGHTS_SOURCE)
+    src = WEIGHTS_SOURCE
     full = pd.read_parquet(src / "weights.parquet")
     rows = full[full["ISO"].isin(ISOS)].reset_index(drop=True)
     for w in ("popwt", "areawt"):
@@ -222,7 +215,7 @@ def generate_ir_weights() -> pd.DataFrame:
 
 def crop_ir_table(path: Path) -> pd.DataFrame:
     """Cut the segment weights down to the two countries and check it loads with from_table."""
-    full = pd.read_csv(_mounted(path), dtype={"hierid": "string"})
+    full = pd.read_csv(path, dtype={"hierid": "string"})
     rows = full[full["hierid"].str[:3].isin(ISOS)].reset_index(drop=True)
     rows.to_parquet(data.IR_TABLE, index=False)
     # from_table checks sums, duplicates and that every centroid sits on
@@ -301,7 +294,7 @@ def crop_climate(rows: pd.DataFrame, iso: str) -> None:
 
 def build_display_layer(targets: Path) -> None:
     """The two countries' province outlines, simplified, for the maps."""
-    shapes = gpd.read_parquet(_mounted(targets))
+    shapes = gpd.read_parquet(targets)
     shapes = shapes[shapes["ISO"].isin(ISOS)][["ISO", "ID_1", "NAME_1", "geometry"]]
     units = set(map(tuple, pd.read_parquet(
         data.WEIGHTS / "weights.parquet", columns=KEYS
@@ -322,7 +315,7 @@ def build_ir_display_layer(shapes_path: Path) -> None:
     The shapefile has no .prj file. Its coordinates are longitude and
     latitude, so we label them that way.
     """
-    shapes = gpd.read_file(_mounted(shapes_path))
+    shapes = gpd.read_file(shapes_path)
     if shapes.crs is None:
         shapes = shapes.set_crs("EPSG:4326")
     shapes = shapes[shapes["hierid"].str[:3].isin(ISOS)][["hierid", "geometry"]]
@@ -410,7 +403,7 @@ def _compare(full, cropped, cells, c_cells, ids, country, label) -> None:
 
 def check_against_full(ir_table: Path) -> None:
     """Redo the work on the full global data and check the crops give the same numbers."""
-    full_weights = cilreg.WeightsArtifact.load(_mounted(WEIGHTS_SOURCE))
+    full_weights = cilreg.WeightsArtifact.load(WEIGHTS_SOURCE)
     gmax = read_bcsd_daily(str(source_path("tasmax")), "tasmax",
                            require_full_year=True)
     gmin = read_bcsd_daily(str(source_path("tasmin")), "tasmin",
@@ -425,7 +418,7 @@ def check_against_full(ir_table: Path) -> None:
     by_iso = lambda f: f["ISO"]
     by_hierid = lambda f: f["hierid"].str[:3]
     full_weights = _restrict(full_weights, cells, by_iso)
-    full_ir = _ir_weights(_collapse_wrapped_segments(_mounted(ir_table)))
+    full_ir = _ir_weights(_collapse_wrapped_segments(ir_table))
     full_ir = _restrict(full_ir, cells, by_hierid)
 
     c_cells = _cropped_cells()

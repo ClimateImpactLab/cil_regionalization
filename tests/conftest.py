@@ -241,8 +241,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         )
     if _git_repo_missing():
         gaps.append(
-            "git or the git checkout is not available: the check that "
-            "example data is tracked was skipped"
+            "git or the git checkout is not available: the checks that "
+            "example data is tracked and that no tracked file names "
+            "the Mac mount were skipped"
         )
     for gap in gaps:
         terminalreporter.write_line(

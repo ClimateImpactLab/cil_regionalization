@@ -26,13 +26,10 @@ from pathlib import Path
 import pandas as pd
 
 def _cil(path: str) -> Path:
-    """Resolve a /project/cil path, falling back to the laptop mount."""
+    """A /project/cil path, refused if it is not there."""
     p = Path(path)
     if p.exists():
         return p
-    alt = Path(path.replace("/project/cil", "/Volumes/cil"))
-    if alt.exists():
-        return alt
     raise FileNotFoundError(path)
 
 

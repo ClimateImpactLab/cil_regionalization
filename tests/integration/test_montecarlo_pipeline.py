@@ -409,7 +409,7 @@ class TestNoSiteFactsInCode:
         source = Path(module.__file__).read_text()
         for forbidden in (
             "/project/",
-            "/Volumes/",
+            "/" "Volumes/",  # split so test_no_mount_paths.py does not match it
             "/shares/",
             "/home/",
             "conda",

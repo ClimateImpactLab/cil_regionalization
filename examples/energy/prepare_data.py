@@ -50,13 +50,6 @@ RCP, IAM, SSP = "rcp85", "high", "SSP3"
 PAIR_GCM = "CCSM4"
 
 
-def _mounted(path: Path) -> Path:
-    if path.exists():
-        return path
-    alt = Path(str(path).replace("/project/cil", "/Volumes/cil"))
-    return alt if alt.exists() else path
-
-
 def slice_weights() -> list[str]:
     from cil_regionalization.fetch import default_cache_dir, load_registry
 
@@ -90,7 +83,7 @@ def slice_weights() -> list[str]:
 
 
 def read_slice(gcm: str, suffix: str, keep_idx, want_value=False):
-    p = _mounted(TREE) / RCP / gcm / IAM / SSP / f"{STEM}{suffix}.nc4"
+    p = TREE / RCP / gcm / IAM / SSP / f"{STEM}{suffix}.nc4"
     with netCDF4.Dataset(p) as ds:
         years = ds.variables["year"][:]
         yi = int(np.where(years == YEAR)[0][0])
@@ -103,7 +96,7 @@ def read_slice(gcm: str, suffix: str, keep_idx, want_value=False):
 
 
 def region_index(keep: list[str]):
-    p = _mounted(TREE) / RCP / PAIR_GCM / IAM / SSP / f"{STEM}.nc4"
+    p = TREE / RCP / PAIR_GCM / IAM / SSP / f"{STEM}.nc4"
     with netCDF4.Dataset(p) as ds:
         regs = [str(r) for r in ds.variables["regions"][:]]
     pos = {r: i for i, r in enumerate(regs)}
@@ -111,7 +104,7 @@ def region_index(keep: list[str]):
 
 
 def build_population_and_factor(keep: list[str]) -> None:
-    pop = pd.read_csv(_mounted(POPULATION), comment="#")
+    pop = pd.read_csv(POPULATION, comment="#")
     pop = pop[pop["region"].isin(keep)]
     missing = set(keep) - set(pop["region"])
     assert not missing, f"regions absent from the SSP series: {sorted(missing)}"
@@ -148,7 +141,7 @@ def build_population_and_factor(keep: list[str]) -> None:
 
 def build_gradients(keep: list[str]) -> None:
     idx = region_index(keep)
-    tree = _mounted(TREE)
+    tree = TREE
     gcms = sorted(p.name for p in (tree / RCP).iterdir()
                   if p.is_dir() and (p / IAM).exists())
     print(f"gcms: {len(gcms)}")
@@ -221,7 +214,7 @@ def build_gradients(keep: list[str]) -> None:
 
 
 def build_gammas() -> None:
-    lines = _mounted(CSVV).read_text().splitlines()
+    lines = CSVV.read_text().splitlines()
     gi = [i for i, l in enumerate(lines) if l.strip() == "gamma"][0]
     gammas = np.array([float(x) for x in lines[gi + 1].split(",")])
     assert gammas.shape == (80,)
@@ -236,7 +229,7 @@ def build_display_layer(keep: list[str]) -> None:
         .drop_duplicates("hierid")
         .query("ISO == 'USA'")[["hierid", "ISO", "ID_1"]]
     )
-    shapes = gpd.read_file(_mounted(IR_SHAPES))
+    shapes = gpd.read_file(IR_SHAPES)
     shapes = shapes[shapes["hierid"].isin(set(best["hierid"]))]
     shapes = shapes[["hierid", "geometry"]].merge(best, on="hierid")
     states = shapes.dissolve(by=["ISO", "ID_1"], as_index=False)[
