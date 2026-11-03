@@ -39,6 +39,7 @@ import cil_regionalization as cilreg
 TREE = Path("/project/cil/gcp/outputs/labor/impacts-woodwork/montecarlo/uninteracted_main_model_27_37_39")
 POPULATION = Path("/project/cil/gcp/social/baselines/population/merged/population-merged.SSP3.csv")
 IR_SHAPES = Path("/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp")
+SMME = Path("/project/cil/gcp/climate/BCSD/SMME/SMME-weights/rcp85_SMME_weights.tsv")
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 TARGETS = HERE.parents[1] / "data" / "targets" / "gadm20" / "adm1.parquet"
@@ -195,12 +196,19 @@ def build_display_layer(keep: list[str]) -> None:
     print(f"display layer: {len(states)} states")
 
 
+def write_smme() -> None:
+    table = pd.read_csv(_mounted(SMME), sep="\t", usecols=["model", "weight"])
+    table.to_csv(DATA / "smme_weights_rcp85.csv", index=False)
+    print(f"smme weights: {len(table)} models")
+
+
 def main() -> int:
     keep = slice_weights()
     build_population(keep)
     build_display_layer(keep)
     build_factor(keep)
     build_leaves(keep)
+    write_smme()
     return 0
 
 

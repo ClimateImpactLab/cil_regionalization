@@ -27,6 +27,7 @@ import pandas as pd
 import xarray as xr
 
 TREE = Path("/project/cil/gcp/outputs/mortality_new-socioeconomics/impacts-darwin/montecarlo")
+SMME = Path("/project/cil/gcp/climate/BCSD/SMME/SMME-weights/rcp85_SMME_weights.tsv")
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 BATCHES = ["batch0", "batch1", "batch2"]
@@ -63,8 +64,15 @@ def implied_population(gcm: str, filename: str, keep: list[str]):
     return np.where(np.abs(rate) > 1e-9, lev / rate, np.nan), years
 
 
+def write_smme() -> None:
+    table = pd.read_csv(SMME, sep="\t", usecols=["model", "weight"])
+    table.to_csv(DATA / "smme_weights_rcp85.csv", index=False)
+    print(f"smme weights: {len(table)} models")
+
+
 def main() -> int:
     keep = region_set()
+    write_smme()
     gcms = sorted(p.name for p in (TREE / "batch0" / "rcp85").iterdir() if p.is_dir())
     for batch in BATCHES:
         for gcm in gcms:

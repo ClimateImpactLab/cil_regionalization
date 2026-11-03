@@ -41,6 +41,7 @@ TREE = Path("/project/cil/battuta-shares-S3-archive/gcp/outputs/energy_pixel_int
 CSVV = Path("/project/cil/home_dirs/egrenier/repos/energy-code-release-2020/projection_inputs/csvv/TINV_clim/FD_FGLS_inter_OTHERIND_other_energy_TINV_clim.csvv")
 POPULATION = Path("/project/cil/gcp/social/baselines/population/merged/population-merged.SSP3.csv")
 IR_SHAPES = Path("/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp")
+SMME = Path("/project/cil/gcp/climate/BCSD/SMME/SMME-weights/rcp85_SMME_weights.tsv")
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 TARGETS = HERE.parents[1] / "data" / "targets" / "gadm20" / "adm1.parquet"
@@ -242,6 +243,12 @@ def build_display_layer(keep: list[str]) -> None:
     print(f"display layer: {len(states)} states")
 
 
+def write_smme() -> None:
+    table = pd.read_csv(_mounted(SMME), sep="\t", usecols=["model", "weight"])
+    table.to_csv(DATA / "smme_weights_rcp85.csv", index=False)
+    print(f"smme weights: {len(table)} models")
+
+
 def main() -> int:
     DATA.mkdir(exist_ok=True)
     keep = slice_weights()
@@ -249,6 +256,7 @@ def main() -> int:
     build_display_layer(keep)
     build_gammas()
     build_gradients(keep)
+    write_smme()
     return 0
 
 
