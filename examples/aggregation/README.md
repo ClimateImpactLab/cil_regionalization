@@ -10,13 +10,14 @@ being regenerated. The numbers are a demonstration, not results.
 
 Start with the notebook, `aggregation_colombia.ipynb`. It fetches the
 weights, aggregates and maps one draw, shows percent of GDP with the
-`ratio` kind, pools statistics across the 33 models, maps a pooled
-quantile next to the single draw, plots the distribution of draws
-for every department, and runs the same aggregation against the GADM
-4.1 weights. All output is saved in the notebook, so you can
-read it without running anything. To run it, install from a clone
-with `uv sync --extra examples`, which adds `jupyter` and `matplotlib`
-to the library at the versions in `uv.lock`.
+`ratio` kind, pools statistics across the 33 models with the SMME
+weights, maps a pooled quantile next to the single draw, plots the
+distribution of draws for every department, and runs the same
+aggregation against the GADM 4.1 weights. All output is saved in the
+notebook, so you can read it without running anything. To run it,
+install from a clone with `uv sync --extra examples`, which adds
+`jupyter` and `matplotlib` to the library at the versions in
+`uv.lock`.
 
 The script `run_example.py` runs the physical rates (the intensive
 kind, which the notebook only describes) plus the damages at both

@@ -27,7 +27,10 @@ Two variables for the same country, different in kind:
 ADM1 shows both kinds. ADM2 shows the allocation again at finer
 resolution: in Colombia an impact region is a grouping of
 municipalities, and one region's total spreads across as many as 90 of
-them. Statistics pool the 33 climate models, each aggregated first.
+them. Statistics pool the 33 climate models, each aggregated first,
+with the SMME weights Climate Impact Lab projections use, read from
+data/smme_weights_rcp85.csv (the model and weight columns of
+rcp85_SMME_weights.tsv in Zenodo record 22003542).
 """
 from __future__ import annotations
 
@@ -204,7 +207,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # 4. Statistics over the Monte Carlo sample. Spatial aggregation
     # happened first, above; the window mean and pooled statistics come
-    # last. The 33 climate models are the draws.
+    # last. The 33 climate models are the draws, each with its SMME
+    # weight.
+    smme = pd.read_csv(DATA / "smme_weights_rcp85.csv")
+    smme_weight = dict(zip(
+        smme["model"].str.replace("*", "", regex=False).str.lower(), smme["weight"]))
+    damages["weight"] = (damages["gcm"].str.replace("surrogate_", "", regex=False)
+                         .str.lower().map(smme_weight))
+    assert damages["weight"].notna().all()
     stats = summarize_samples(
         damages,
         sample_dims=["gcm"],
@@ -212,9 +222,10 @@ def main(argv: list[str] | None = None) -> int:
         window=(2080, 2099),
         value_col="total_damages",
         quantiles=[0.05, 0.5, 0.95],
+        weight_col="weight",
     )
     print("Statistics over the 33 climate models (window mean 2080-2099,")
-    print("then pooled):")
+    print("then pooled with the SMME weights):")
     stats = stats.merge(names, on=["ISO", "ID_1"])
     one = stats[stats["NAME_1"] == "Antioquia"]
     print(one[["NAME_1", "statistic", "total_damages"]].to_string(index=False))
