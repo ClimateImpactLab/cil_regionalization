@@ -15,4 +15,8 @@ two in `climate/` and the ones in `energy/`, `energy_percentiles/`,
 The `aggregation/` notebook needs the network, because it shows
 `fetch_weights` downloading the GADM weights from Zenodo; later runs
 read them from the cache. Its `run_example.py --offline` uses the
-committed weight slices instead.
+committed weight slices instead. This was run, not assumed: on 3
+November 2026 all seven notebooks ran in a clone with outside network
+blocked and `CIL_REGIONALIZATION_CACHE` pointing at an empty
+directory. Six finished and left the cache empty; the aggregation
+notebook stopped at its first `fetch_weights` call.
