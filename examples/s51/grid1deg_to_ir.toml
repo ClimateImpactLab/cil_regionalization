@@ -1,0 +1,50 @@
+# Weights from the 1 degree grid to impact regions, population and
+# area, on the world-combo-201710 geometry. One run over all 24,378
+# regions.
+
+normalization = "per_destination"
+
+[project]
+name = "grid1deg_to_ir"
+description = "1 degree grid to world-combo-201710 impact region pop and area weights; grid identity grid-1.0deg-center-[-180,180)"
+
+[regions]
+# world-combo-201710; the file keeps its old name
+path = "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
+id_fields = ["hierid"]
+version = "world-combo-201710"
+on_invalid_geometry = "repair"
+
+[grid]
+mode = "generate"
+resolution = 1.0
+offset = "center"
+lon_convention = "[-180,180)"
+
+[[weights]]
+name = "pop"
+# GPW v4 rev 10, 2015, 30 arc second, UN WPP adjusted
+raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "local"
+# a pixel counts where its centre falls
+coverage = "pixel_centroid"
+
+[backend.local]
+dask = "local"
+n_workers = 8
+threads_per_worker = 2
+# keeps segments smaller than one square metre
+min_segment_area_m2 = 0.0
+
+[output]
+dir = "data/weights/grid1deg_to_ir"
+format = "parquet"
+
+[validation]
+sum_tolerance = 1e-6

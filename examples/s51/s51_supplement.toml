@@ -1,0 +1,70 @@
+# Weights from the 1 degree grid to impact regions, population and
+# area, on the world-combo-new geometry. This part covers 17 of the
+# 24,378 regions; s51_canonical.toml covers the other 24,361 and
+# merge.py combines them.
+
+normalization = "per_destination"
+
+[project]
+name = "s51_supplement"
+description = "s51 grid to world-combo-new impact region pop and area weights, supplement part; grid identity grid-1.0deg-center-[-180,180)"
+
+[regions]
+# world-combo-new
+path = "/project/cil/gcp/regions/world-combo-new/agglomerated-world-new.shp"
+id_fields = ["hierid"]
+version = "world-combo-new"
+on_invalid_geometry = "repair"
+
+[regions.keep]
+hierid = [
+    "AUS.11.Ra49c03261687d573",
+    "AUS.4.Re2f858286bfa0891",
+    "CAN.2.33.R753f24f3d6444a80",
+    "CAN.3.48.R05e54cd9ccb1c0cc",
+    "CAN.5",
+    "CAN.9.Re3b801d78a09c2bd",
+    "DEU.2.10.Re83c19217082ae1b",
+    "ITA.8.39",
+    "JPN.18.R711ac9447fc4912b",
+    "JPN.3.Rff98b23940d24ae2",
+    "JPN.38.R1ce69814c2d6f1f6",
+    "NOR.Re57b2dc0327882b4",
+    "PHL.60.R4a4e9510fd68f00c",
+    "PLW.R39d442da843ec63e",
+    "PRT.7",
+    "SVN.R108fc4e5ea6e332d",
+    "SWE.18",
+]
+
+[grid]
+mode = "generate"
+resolution = 1.0
+offset = "center"
+lon_convention = "[-180,180)"
+
+[[weights]]
+name = "pop"
+# GPW v4 rev 10, 2015, 30 arc second, UN WPP adjusted
+raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
+fallback = "area"
+
+[[weights]]
+name = "area"
+
+[backend]
+kind = "local"
+# a pixel counts where its centre falls
+coverage = "pixel_centroid"
+
+[backend.local]
+dask = "off"
+# keeps segments smaller than one square metre
+min_segment_area_m2 = 0.0
+
+[output]
+dir = "data/weights/s51_supplement"
+format = "parquet"
+
+[validation]
+sum_tolerance = 1e-6

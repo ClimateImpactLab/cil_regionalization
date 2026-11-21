@@ -1,0 +1,38 @@
+{
+  "combined_unique_regions": 24378,
+  "expected_total_regions": 24378,
+  "merged_at_utc": null,
+  "row_counts": {
+    "canonical": 84575,
+    "supplement": 266,
+    "total": 84841
+  },
+  "sources": {
+    "canonical": {
+      "config_hash": "6aa46369ff95017248c702e8a3219c24fb18c6fb345f3c20a2887c740a1f4a3c",
+      "extra": {
+        "bq_compute_location": null,
+        "bq_dry_run_bytes": null,
+        "null_geometry_count": 0,
+        "null_geometry_regions": []
+      },
+      "inputs": {
+        "geometry:regions": "0cfcdf1f7ec7f8c0761cc290cf679a8d5d51ae8af4001b0e23eabaf1fd2a351d",
+        "weight:pop": "825600dd31691a1f7cbace62b59a6a431490400f9a865c5138e94c589787dd54"
+      }
+    },
+    "supplement": {
+      "config_hash": "043493cfc5da697543eafea3ff90317b1fb14d5c90b53a521a1679910a9d8be5",
+      "extra": {
+        "bq_compute_location": null,
+        "bq_dry_run_bytes": null,
+        "repaired_geometry_count": 0,
+        "repaired_geometry_regions": []
+      },
+      "inputs": {
+        "geometry:regions": "0cfcdf1f7ec7f8c0761cc290cf679a8d5d51ae8af4001b0e23eabaf1fd2a351d",
+        "weight:pop": "825600dd31691a1f7cbace62b59a6a431490400f9a865c5138e94c589787dd54"
+      }
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "backend": "local",
+  "config_hash": "6aa46369ff95017248c702e8a3219c24fb18c6fb345f3c20a2887c740a1f4a3c",
+  "coverage": "pixel_centroid",
+  "extra": {
+    "min_segment_area": {
+      "max_discarded_share": 0.0,
+      "segments_dropped": 0,
+      "threshold_m2": 0.0,
+      "units_fully_dropped": []
+    }
+  },
+  "fallback_counts": {
+    "area": {
+      "native": 24361
+    },
+    "pop": {
+      "area_fallback": 104,
+      "native": 24257
+    }
+  },
+  "grid_mode": "generate",
+  "grid_resolution": 1.0,
+  "id_fields": [
+    "hierid"
+  ],
+  "inputs": {
+    "geometry:regions": "0cfcdf1f7ec7f8c0761cc290cf679a8d5d51ae8af4001b0e23eabaf1fd2a351d",
+    "weight:pop": "825600dd31691a1f7cbace62b59a6a431490400f9a865c5138e94c589787dd54"
+  },
+  "lon_convention": "[-180,180)",
+  "normalization": "per_destination",
+  "outputs": {
+    "weights.parquet": "8cb45ee8ade46121827748bc6e12d686306249046520dd3f0866645161a3cffa"
+  },
+  "package_versions": {
+    "cil_regionalization": "0.1.0",
+    "exactextract": "0.3.0",
+    "geopandas": "1.1.4",
+    "numpy": "2.4.6",
+    "pandas": "3.0.5",
+    "pyarrow": "25.0.1",
+    "pydantic": "2.13.4",
+    "pyproj": "3.7.2",
+    "rasterio": "1.4.4",
+    "shapely": "2.1.2"
+  },
+  "partial_coverage": null,
+  "project_description": "s51 grid to world-combo-new impact region pop and area weights, canonical part; grid identity grid-1.0deg-center-[-180,180)",
+  "project_name": "s51_canonical",
+  "python_version": "3.11.12",
+  "regions_version": "world-combo-new",
+  "row_counts": {
+    "nearest_cell": 0,
+    "regions": 24361,
+    "segments": 84575,
+    "total": 84575
+  },
+  "source_coverage": {},
+  "source_key_columns": [
+    "cell_ix",
+    "cell_iy"
+  ],
+  "source_mode": "grid",
+  "source_version": "grid-1.0deg-center-[-180,180)",
+  "timing_seconds": {
+    "compute_total": 150.59100231155753
+  },
+  "weight_names": [
+    "pop",
+    "area"
+  ]
+}
