@@ -227,3 +227,39 @@ class TestSchemaShape:
                 schema=_schema(),
                 expected_total=4,
             )
+
+
+@pytest.mark.parametrize(
+    "canonical_backend,supplement_backend",
+    [("local", "local"), ("bigquery", "local"), ("local", "bigquery"),
+     ("bigquery", "bigquery")],
+)
+def test_source_labels_follow_each_manifest_backend(canonical_backend, supplement_backend):
+    canonical = _canonical_frame()
+    supplement = _supplement_frame()
+    canonical_manifest = {**_manifest(), "backend": canonical_backend}
+    supplement_manifest = {**_manifest(), "backend": supplement_backend}
+    result = merge_weights(
+        canonical, canonical_manifest, supplement, supplement_manifest,
+        schema=_schema(), expected_total=4,
+    )
+    assert set(result.frame.loc[result.frame.hierid.isin(canonical.hierid), "source"]) == {
+        canonical_backend
+    }
+    assert set(result.frame.loc[result.frame.hierid.isin(supplement.hierid), "source"]) == {
+        f"{supplement_backend}_shapefile_supplement"
+    }
+    assert result.merged_manifest["sources"]["canonical"]["backend"] == canonical_backend
+    assert result.merged_manifest["sources"]["supplement"]["backend"] == supplement_backend
+    assert "source" not in canonical.columns
+    assert "source" not in supplement.columns
+
+
+def test_legacy_manifests_keep_bigquery_provenance():
+    result = merge_weights(
+        _canonical_frame(), _manifest(), _supplement_frame(), _manifest(),
+        schema=_schema(), expected_total=4,
+    )
+    assert set(result.frame.source) == {SOURCE_BIGQUERY, SOURCE_SHAPEFILE_SUPPLEMENT}
+    assert result.merged_manifest["sources"]["canonical"]["backend"] == "bigquery"
+    assert result.merged_manifest["sources"]["supplement"]["backend"] == "bigquery"

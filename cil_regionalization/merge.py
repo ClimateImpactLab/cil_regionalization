@@ -1,6 +1,6 @@
 """Two-source weights merge utility.
 
-The s51 deliverable is split across two runs: the canonical BigQuery run
+The s51 deliverable is split across two runs: the canonical run
 (24,361 valid hierids from the IR table) and the shapefile-source
 supplement run (the 17 NULL-in-IR hierids from the source shapefile).
 Both produce the same `OutputSchema`. This module combines them with
@@ -10,8 +10,8 @@ hard invariants:
   source),
 - combined unique hierid count == ``expected_total`` (24,378),
 - the merged frame still satisfies sum-to-1 per region per weight,
-- a ``source`` column is added (values: ``"bigquery"`` /
-  ``"bigquery_shapefile_supplement"``),
+- a ``source`` column is added using each manifest's backend (the
+  supplement label appends ``"_shapefile_supplement"``),
 - the merged manifest records both source manifests' config hashes,
   input identifiers, and per-source row counts so the merge is
   reproducible.
@@ -41,7 +41,7 @@ class MergeResult:
     frame: pd.DataFrame
     schema: OutputSchema
     merged_manifest: dict
-    n_canonical: int  # rows from the BQ source
+    n_canonical: int  # rows from the canonical source
     n_supplement: int  # rows from the shapefile-source supplement
     n_regions: int  # unique hierids in the combined frame
 
@@ -56,8 +56,10 @@ def merge_weights(
     expected_total: int,
     tolerance: float = 1e-6,
 ) -> MergeResult:
-    """Combine the canonical BQ run with the shapefile-source supplement.
+    """Combine the canonical run with the shapefile-source supplement.
 
+    Source labels follow each input manifest's ``backend``. Manifests
+    without that field retain the historical BigQuery labels.
     Hard invariants enforced; any failure raises with a precise message.
     """
     id_fields = list(schema.id_fields)
@@ -81,9 +83,10 @@ def merge_weights(
         )
 
     canon = canonical_frame.copy()
-    canon["source"] = SOURCE_BIGQUERY
+    canon["source"] = canonical_manifest.get("backend", SOURCE_BIGQUERY)
     supp = supplement_frame.copy()
-    supp["source"] = SOURCE_SHAPEFILE_SUPPLEMENT
+    supplement_backend = supplement_manifest.get("backend", SOURCE_BIGQUERY)
+    supp["source"] = f"{supplement_backend}_shapefile_supplement"
 
     expected_cols = list(schema.columns) + ["source"]
     for piece, name in ((canon, "canonical"), (supp, "supplement")):
@@ -153,6 +156,7 @@ def _build_merged_manifest(
         },
         "sources": {
             "canonical": {
+                "backend": canonical.get("backend", SOURCE_BIGQUERY),
                 "config_hash": canonical.get("config_hash"),
                 "inputs": canonical.get("inputs", {}),
                 "extra": {
@@ -171,6 +175,7 @@ def _build_merged_manifest(
                 },
             },
             "supplement": {
+                "backend": supplement.get("backend", SOURCE_BIGQUERY),
                 "config_hash": supplement.get("config_hash"),
                 "inputs": supplement.get("inputs", {}),
                 "extra": {
