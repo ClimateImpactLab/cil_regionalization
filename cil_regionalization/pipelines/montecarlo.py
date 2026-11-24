@@ -220,6 +220,10 @@ class StatsConfig(_Strict):
     windows: list[tuple[float, float]] = Field(min_length=1)
     quantiles: list[float] = Field(default_factory=list)
     include_mean: bool = True
+    # Adds an n_members column to the statistics file: the members each
+    # statistic was computed from. Off by default, so the file keeps its
+    # columns unless a recipe asks.
+    include_n_members: bool = False
     model_weights: Optional[str] = None
     model_weight_level: Optional[str] = None
 
@@ -553,6 +557,7 @@ def run_pipeline(
         quantiles=cfg.stats.quantiles,
         include_mean=cfg.stats.include_mean,
         weight_col=weight_col,
+        include_n_members=cfg.stats.include_n_members,
     )
     # Passthrough leaves dictionary-encode their region and window
     # columns for the pooled frame (see _process_leaf); the statistics

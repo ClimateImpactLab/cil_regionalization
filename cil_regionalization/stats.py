@@ -55,6 +55,7 @@ def _warn_if_unweighted_gcm(sample_dims: list[str], weight_col: str | None) -> N
 # dimension, or per-unit quantile columns in either the short (q05) or
 # the legacy long (monetized_deaths_vsl_epa_scaled_q05) spelling.
 _STATISTIC_COLUMN = "statistic"
+_N_MEMBERS_COLUMN = "n_members"
 _QUANTILE_NAME_RE = re.compile(r"(^|_)(q\d{1,3}|mean)$")
 
 
@@ -68,6 +69,7 @@ def summarize_samples(
     quantiles: Sequence[float] = (),
     include_mean: bool = True,
     weight_col: str | None = None,
+    include_n_members: bool = False,
 ) -> pd.DataFrame:
     """Window mean per sample member, then statistics over the pooled sample.
 
@@ -92,11 +94,19 @@ def summarize_samples(
     Returns a long frame: identity columns, 'statistic', ``value_col``.
     Labels are 'mean' and 'qNN' in percent ('q05', 'q95', 'q2.5').
 
+    ``include_n_members`` adds an integer 'n_members' column after
+    ``value_col``: the members of the identity group that entered the
+    statistic, so those with a window mean that is not NaN and, when
+    weighted, a weight above zero. ``data`` must not already have a
+    column of that name.
+
     Raises if ``data`` already has a 'statistic' column or
     quantile-named columns. Statistics of per-unit quantiles are wrong;
     see the module docstring.
     """
     _reject_presummarized(data, value_col)
+    if include_n_members:
+        _reject_n_members_column(data)
 
     sample_dims = list(sample_dims)
     if not sample_dims:
@@ -177,10 +187,11 @@ def summarize_samples(
     )
 
     pieces = _statistic_pieces(
-        window_mean, identity, value_col, quantiles, include_mean, weight_col
+        window_mean, identity, value_col, quantiles, include_mean, weight_col,
+        count_members=include_n_members,
     )
     out = pd.concat(pieces, ignore_index=True)
-    out = out[identity + [_STATISTIC_COLUMN, value_col]]
+    out = out[_output_columns(identity, value_col, include_n_members)]
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
     return out.reset_index(drop=True)
@@ -317,11 +328,13 @@ def _statistic_pieces(
     include_mean: bool,
     weight_col: str | None,
     groups: _Groups | None = None,
+    count_members: bool = False,
 ) -> list[pd.DataFrame]:
     """One frame per statistic over each identity group's members.
     Unweighted statistics come from pandas, weighted ones from the
     historical step distribution. Pass ``groups`` if the caller already
-    has them."""
+    has them. ``count_members`` adds to every frame the number of
+    members each group's statistics were computed from."""
     if groups is None:
         groups = _identity_groups(members, identity)
     gid, n_groups = _grouping_ids(groups)
@@ -342,11 +355,17 @@ def _statistic_pieces(
         stats = [("mean", lambda: grouped.mean())] if include_mean else []
         stats += [(_quantile_label(q), lambda q=q: grouped.quantile(q))
                   for q in quantiles]
+        if count_members:
+            # count() leaves out NaN, as mean() and quantile() do
+            counts = (grouped.count().reindex(range(n_groups), fill_value=0)
+                      .to_numpy(dtype=np.int64))
         for label, compute in stats:
             piece = keys.copy()
             # .array, not .to_numpy(): a nullable value dtype stays nullable
             piece[value_col] = compute().reindex(range(n_groups)).array
             piece[_STATISTIC_COLUMN] = label
+            if count_members:
+                piece[_N_MEMBERS_COLUMN] = counts
             pieces.append(piece)
         return pieces
 
@@ -354,6 +373,7 @@ def _statistic_pieces(
         _quantile_label(q) for q in quantiles
     ]
     rows: dict[str, list[tuple]] = {label: [] for label in labels}
+    member_counts: list[int] = []
     order, starts, ends = _group_order(gid, n_groups)
     all_values = members[value_col].to_numpy(dtype=float)[order]
     all_weights = members[weight_col].to_numpy(dtype=float)[order]
@@ -369,6 +389,8 @@ def _statistic_pieces(
                 f"weights sum to zero for identity group {dict(zip(identity, key_tuple))}; "
                 f"no member carries any weight"
             )
+        if count_members:
+            member_counts.append(int(np.count_nonzero(weights)))
         if include_mean:
             rows["mean"].append((*key_tuple, float(np.average(values, weights=weights))))
         for q in quantiles:
@@ -379,8 +401,19 @@ def _statistic_pieces(
     for label in labels:
         piece = pd.DataFrame(rows[label], columns=identity + [value_col])
         piece[_STATISTIC_COLUMN] = label
+        if count_members:
+            piece[_N_MEMBERS_COLUMN] = np.asarray(member_counts, dtype=np.int64)
         pieces.append(piece)
     return pieces
+
+
+def _output_columns(
+    identity: list[str], value_col: str, include_n_members: bool
+) -> list[str]:
+    columns = identity + [_STATISTIC_COLUMN, value_col]
+    if include_n_members:
+        columns.append(_N_MEMBERS_COLUMN)
+    return columns
 
 
 def _weighted_quantile(values: np.ndarray, weights: np.ndarray, q: float) -> float:
@@ -427,6 +460,14 @@ def _quantile_label(q: float) -> str:
     if percent == int(percent):
         return f"q{int(percent):02d}"
     return f"q{percent:g}"
+
+
+def _reject_n_members_column(data: pd.DataFrame) -> None:
+    if _N_MEMBERS_COLUMN in data.columns:
+        raise ValueError(
+            f"data already has a {_N_MEMBERS_COLUMN!r} column; "
+            f"include_n_members would write a second one. Rename or drop it."
+        )
 
 
 def _reject_presummarized(data: pd.DataFrame, value_col: str) -> None:
@@ -568,15 +609,19 @@ def pooled_statistics(
     quantiles: Sequence[float] = (),
     include_mean: bool = True,
     weight_col: str | None = None,
+    include_n_members: bool = False,
 ) -> pd.DataFrame:
     """Statistics over the pooled sample, for data reduced by `window_means`.
 
     The second half of `summarize_samples`. The window column is an
-    ordinary identity column here. ``weight_col`` behaves the same,
-    including its different quantile definition, and the same input is
-    refused. Returns identity columns, 'statistic', ``value_col``.
+    ordinary identity column here. ``weight_col`` and
+    ``include_n_members`` behave the same, including the weighted
+    quantile definition, and the same input is refused. Returns identity
+    columns, 'statistic', ``value_col``, then 'n_members' if asked for.
     """
     _reject_presummarized(data, value_col)
+    if include_n_members:
+        _reject_n_members_column(data)
 
     sample_dims = list(sample_dims)
     if not sample_dims:
@@ -623,11 +668,12 @@ def pooled_statistics(
         identity = ["_all"]
 
     pieces = _statistic_pieces(
-        work, identity, value_col, quantiles, include_mean, weight_col, groups
+        work, identity, value_col, quantiles, include_mean, weight_col, groups,
+        count_members=include_n_members,
     )
     del groups
     out = pd.concat(pieces, ignore_index=True)
-    out = out[identity + [_STATISTIC_COLUMN, value_col]]
+    out = out[_output_columns(identity, value_col, include_n_members)]
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
     return out.reset_index(drop=True)

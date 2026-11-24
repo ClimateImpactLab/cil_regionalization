@@ -183,6 +183,22 @@ class TestEndToEnd:
         assert manifest["n_leaves"] == 6
         assert manifest["artifact_source_version"] == SOURCE_VERSION
 
+    def test_include_n_members_adds_the_count(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        raw = _pipeline_cfg(
+            weights_dir, tree, tmp_path / "out", levels=_LEVELS
+        ).model_dump()
+        raw["stats"]["include_n_members"] = True
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+
+        assert set(result.stats.columns) == {
+            "target_id", "statistic", "value", "window", "n_members",
+        }
+        # 2 kumquat x 3 zeppelin leaves, one member each.
+        written = pd.read_parquet(result.paths["statistics"])
+        assert (written["n_members"] == 6).all()
+
     def test_parallel_run_matches_serial(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)

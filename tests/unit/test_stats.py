@@ -539,6 +539,132 @@ class TestPooledStatisticsGuards:
         assert set(out["statistic"]) == {"mean", "q50"}
 
 
+class TestMemberCount:
+    """`include_n_members` reports how many members each statistic was
+    computed from. It is off by default, so outputs keep their columns."""
+
+    def _members(self) -> pd.DataFrame:
+        return _frame(
+            [
+                {"target": "T1", "zeppelin": "d1", "value": 1.0},
+                {"target": "T1", "zeppelin": "d2", "value": 3.0},
+                {"target": "T1", "zeppelin": "d3", "value": float("nan")},
+                {"target": "T2", "zeppelin": "d1", "value": 2.0},
+                {"target": "T2", "zeppelin": "d2", "value": 4.0},
+                {"target": "T2", "zeppelin": "d3", "value": 6.0},
+            ]
+        )
+
+    def test_off_by_default(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        out = pooled_statistics(self._members(), sample_dims=["zeppelin"])
+        assert list(out.columns) == ["target", "statistic", "value"]
+
+    def test_nan_member_is_not_counted(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        out = pooled_statistics(
+            self._members(),
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
+            include_n_members=True,
+        )
+        assert list(out.columns) == ["target", "statistic", "value", "n_members"]
+        assert out["n_members"].dtype == np.int64
+        counts = out.set_index(["target", "statistic"])["n_members"].to_dict()
+        assert counts == {
+            ("T1", "mean"): 2,
+            ("T1", "q50"): 2,
+            ("T2", "mean"): 3,
+            ("T2", "q50"): 3,
+        }
+
+    def test_zero_weight_member_is_not_counted(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        # T1 keeps d1 only: d2 has no weight and d3 has no value.
+        # T2 keeps d1 and d2: d3 has no weight.
+        df = self._members().assign(tonnage=[1.0, 0.0, 1.0, 1.0, 2.0, 0.0])
+        out = pooled_statistics(
+            df,
+            sample_dims=["zeppelin"],
+            weight_col="tonnage",
+            include_n_members=True,
+        )
+        assert list(out.columns) == ["target", "statistic", "value", "n_members"]
+        assert out.set_index("target")["n_members"].to_dict() == {"T1": 1, "T2": 2}
+
+    def test_summarize_samples_agrees_with_staged_path(self):
+        from cil_regionalization.stats import pooled_statistics, window_means
+
+        # T1's d3 is NaN in every year, so it has no window mean. T2's d3
+        # is NaN in one year only and still counts.
+        nan = float("nan")
+        values = {
+            ("T1", "d1"): (1.0, 2.0),
+            ("T1", "d2"): (3.0, 4.0),
+            ("T1", "d3"): (nan, nan),
+            ("T2", "d1"): (2.0, 3.0),
+            ("T2", "d2"): (4.0, 5.0),
+            ("T2", "d3"): (6.0, nan),
+        }
+        df = _frame(
+            [
+                {"target": tgt, "zeppelin": zep, "epoch": epoch, "value": v}
+                for (tgt, zep), pair in values.items()
+                for epoch, v in zip((2050, 2051), pair)
+            ]
+        )
+        single = summarize_samples(
+            df,
+            sample_dims=["zeppelin"],
+            time_col="epoch",
+            window=(2050, 2051),
+            quantiles=[0.5],
+            include_n_members=True,
+        )
+        staged = pooled_statistics(
+            window_means(df, time_col="epoch", windows=[(2050, 2051)]),
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
+            include_n_members=True,
+        )
+        assert list(single.columns) == ["target", "statistic", "value", "n_members"]
+        key = ["target", "statistic"]
+        assert single.set_index(key)["n_members"].to_dict() == {
+            ("T1", "mean"): 2,
+            ("T1", "q50"): 2,
+            ("T2", "mean"): 3,
+            ("T2", "q50"): 3,
+        }
+        cols = key + ["value", "n_members"]
+        pd.testing.assert_frame_equal(
+            staged.sort_values(key).reset_index(drop=True)[cols],
+            single.sort_values(key).reset_index(drop=True)[cols],
+            check_exact=False,
+            rtol=1e-12,
+        )
+
+    def test_existing_n_members_column_refused(self):
+        from cil_regionalization.stats import pooled_statistics
+
+        df = self._members().assign(n_members=4)
+        with pytest.raises(ValueError, match="n_members"):
+            pooled_statistics(df, sample_dims=["zeppelin"], include_n_members=True)
+        with pytest.raises(ValueError, match="n_members"):
+            summarize_samples(
+                df.assign(epoch=2050),
+                sample_dims=["zeppelin"],
+                time_col="epoch",
+                window=(2050, 2050),
+                include_n_members=True,
+            )
+        # Without the keyword it is an identity column, as before.
+        out = pooled_statistics(df, sample_dims=["zeppelin"])
+        assert list(out.columns) == ["target", "n_members", "statistic", "value"]
+
+
 class TestIdentityGroups:
     """The duplicate check and the grouping run on one set of codes
     instead of `DataFrame.duplicated` and a groupby over the columns;
