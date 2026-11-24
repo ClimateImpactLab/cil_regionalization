@@ -10,8 +10,8 @@ hard invariants:
   source),
 - combined unique hierid count == ``expected_total`` (24,378),
 - the merged frame still satisfies sum-to-1 per region per weight,
-- a ``source`` column is added (values: ``"bigquery"`` /
-  ``"bigquery_shapefile_supplement"``),
+- a ``source`` column says which part a row came from (values:
+  ``"canonical"`` / ``"supplement"``),
 - the merged manifest records both source manifests' config hashes,
   input identifiers, and per-source row counts so the merge is
   reproducible.
@@ -32,8 +32,8 @@ from cil_regionalization.schema import OutputSchema
 from cil_regionalization.validate import check_sum_to_one
 
 
-SOURCE_BIGQUERY = "bigquery"
-SOURCE_SHAPEFILE_SUPPLEMENT = "bigquery_shapefile_supplement"
+SOURCE_CANONICAL = "canonical"
+SOURCE_SUPPLEMENT = "supplement"
 
 
 @dataclass(frozen=True)
@@ -81,9 +81,9 @@ def merge_weights(
         )
 
     canon = canonical_frame.copy()
-    canon["source"] = SOURCE_BIGQUERY
+    canon["source"] = SOURCE_CANONICAL
     supp = supplement_frame.copy()
-    supp["source"] = SOURCE_SHAPEFILE_SUPPLEMENT
+    supp["source"] = SOURCE_SUPPLEMENT
 
     expected_cols = list(schema.columns) + ["source"]
     for piece, name in ((canon, "canonical"), (supp, "supplement")):

@@ -5,8 +5,8 @@ import pandas as pd
 import pytest
 
 from cil_regionalization.merge import (
-    SOURCE_BIGQUERY,
-    SOURCE_SHAPEFILE_SUPPLEMENT,
+    SOURCE_CANONICAL,
+    SOURCE_SUPPLEMENT,
     merge_weights,
 )
 from cil_regionalization.schema import OutputSchema
@@ -78,8 +78,8 @@ class TestHappyPath:
         assert "source" in result.frame.columns
         canon_src = result.frame.loc[result.frame["hierid"] == "ABW", "source"]
         supp_src = result.frame.loc[result.frame["hierid"] == "CAN.5", "source"]
-        assert (canon_src == SOURCE_BIGQUERY).all()
-        assert (supp_src == SOURCE_SHAPEFILE_SUPPLEMENT).all()
+        assert (canon_src == SOURCE_CANONICAL).all()
+        assert (supp_src == SOURCE_SUPPLEMENT).all()
 
     def test_combined_sums_to_one(self):
         result = merge_weights(
@@ -198,9 +198,24 @@ class TestSourceColumn:
             expected_total=4,
         )
         assert set(result.frame["source"]) == {
-            SOURCE_BIGQUERY,
-            SOURCE_SHAPEFILE_SUPPLEMENT,
+            SOURCE_CANONICAL,
+            SOURCE_SUPPLEMENT,
         }
+
+    @pytest.mark.parametrize("backend", ["local", "bigquery"])
+    def test_source_names_the_part_not_the_backend(self, backend):
+        result = merge_weights(
+            canonical_frame=_canonical_frame(),
+            canonical_manifest={**_manifest(), "backend": backend},
+            supplement_frame=_supplement_frame(),
+            supplement_manifest={**_manifest(), "backend": backend},
+            schema=_schema(),
+            expected_total=4,
+        )
+        by_id = result.frame.groupby("hierid")["source"].unique()
+        assert list(by_id["ABW"]) == ["canonical"]
+        assert list(by_id["CAN.5"]) == ["supplement"]
+        assert set(result.frame["source"]) == {"canonical", "supplement"}
 
 
 class TestSchemaShape:
