@@ -209,6 +209,45 @@ class TestZeroOverlapPolicy:
         assert result.manifest.extra["zero_overlap_source_units"] == [["u5"]]
 
 
+class TestUnknownIds:
+    def _cfg(self, targets_path, source_path, **regions) -> Config:
+        d = _cfg(
+            targets_path, source_path, target_id_fields=["target_id"]
+        ).model_dump()
+        d["regions"].update(regions)
+        return Config.model_validate(d)
+
+    def test_unknown_keep_id_raises_by_default(self, targets_level1, source_units):
+        cfg = self._cfg(
+            targets_level1, source_units, keep={"target_id": ["T1", "NOT_REAL"]}
+        )
+        with pytest.raises(ValueError, match=r"regions\.keep column 'target_id'.*NOT_REAL"):
+            _run(cfg)
+
+    def test_unknown_drop_id_raises_by_default(self, targets_level1, source_units):
+        cfg = self._cfg(
+            targets_level1, source_units, drop={"target_id": ["NOT_REAL"]}
+        )
+        with pytest.raises(ValueError, match=r"regions\.drop column 'target_id'.*NOT_REAL"):
+            _run(cfg)
+
+    def test_skip_completes_and_records(self, targets_level1, source_units):
+        cfg = self._cfg(
+            targets_level1,
+            source_units,
+            keep={"target_id": ["T1", "NOT_REAL"]},
+            drop={"target_id": ["ALSO_NOT_REAL"]},
+            on_unknown_id="skip",
+        )
+        result = _run(cfg)
+        assert set(result.frame["target_id"]) == {"T1"}
+        extra = result.manifest.extra
+        assert extra["unknown_id_count"] == 1
+        assert extra["unknown_id_regions"] == ["NOT_REAL"]
+        assert extra["unknown_drop_id_count"] == 1
+        assert extra["unknown_drop_id_regions"] == ["ALSO_NOT_REAL"]
+
+
 class TestAllWeightKinds:
     def _weights(self, fraction_raster: Path) -> list[dict]:
         return [

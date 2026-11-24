@@ -134,6 +134,8 @@ class LocalBackend(WeightsBackend):
                 "LocalBackend requires a RegionSet loaded from a file; "
                 "got a BigQuery-only RegionSet"
             )
+        if cfg.regions.on_unknown_id == "error":
+            _raise_on_unknown_ids(regions)
         if cfg.source is not None:
             return self._compute_polygons(regions, weights, cfg)
         if grid is None:
@@ -258,6 +260,7 @@ class LocalBackend(WeightsBackend):
             manifest.extra["repaired_geometry_regions"] = list(
                 regions.repaired_ids
             )
+        manifest.extra.update(_unknown_id_record(regions))
         manifest.timing_seconds["compute_total"] = time.perf_counter() - t0
 
         return WeightsResult(
@@ -450,6 +453,7 @@ class LocalBackend(WeightsBackend):
         manifest.extra["zero_overlap_source_units"] = [list(t) for t in zero_overlap]
         manifest.extra["empty_region_count"] = len(empty_regions)
         manifest.extra["empty_regions"] = [list(t) for t in empty_regions]
+        manifest.extra.update(_unknown_id_record(regions))
         if regions.repaired_ids:
             manifest.extra["repaired_geometry_regions"] = regions.repaired_ids
         if source_set.repaired_ids:
@@ -1109,6 +1113,37 @@ def _join_pieces(
     return final.sort_values(
         id_fields + list(source_key_columns)
     ).reset_index(drop=True)
+
+
+def _raise_on_unknown_ids(regions: RegionSet) -> None:
+    problems = [
+        f"regions.{name} column {col!r} lists {len(ids)} values that match "
+        f"no row: {ids[:25]}" + ("..." if len(ids) > 25 else "")
+        for name, by_column in (
+            ("keep", regions.unknown_keep_ids),
+            ("drop", regions.unknown_drop_ids),
+        )
+        for col, ids in by_column.items()
+    ]
+    if problems:
+        raise ValueError(
+            f"unknown ids for {regions.source_uri} (on_unknown_id='error'):\n"
+            + "\n".join(problems)
+        )
+
+
+def _unknown_id_record(regions: RegionSet) -> dict[str, Any]:
+    """Manifest entries for keep and drop values absent from the regions
+    file, flattened across filter columns. The keep pair has the key names
+    and shape the BigQuery backend writes."""
+    keep = sorted({v for ids in regions.unknown_keep_ids.values() for v in ids})
+    drop = sorted({v for ids in regions.unknown_drop_ids.values() for v in ids})
+    return {
+        "unknown_id_count": len(keep),
+        "unknown_id_regions": keep,
+        "unknown_drop_id_count": len(drop),
+        "unknown_drop_id_regions": drop,
+    }
 
 
 def _input_checksums(

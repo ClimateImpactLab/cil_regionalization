@@ -66,6 +66,33 @@ class TestFilters:
         with pytest.raises(ValueError, match="no_such_col"):
             RegionSet.from_config(cfg)
 
+    def test_unknown_keep_and_drop_values_reported(
+        self, three_region_geoparquet: Path
+    ):
+        cfg = RegionsConfig(
+            path=str(three_region_geoparquet),
+            id_fields=["region_id"],
+            keep={"label": ["alpha", "gamma", "no_such_label"]},
+            drop={"region_id": ["C", "Z"]},
+        )
+        rs = RegionSet.from_config(cfg)
+        assert [d["region_id"] for d, _ in rs.iter_regions()] == ["A"]
+        assert rs.unknown_keep_ids == {"label": ["no_such_label"]}
+        assert rs.unknown_drop_ids == {"region_id": ["Z"]}
+
+    def test_matching_values_report_nothing(self, three_region_geoparquet: Path):
+        # B is in the file, so dropping it is not unknown even though
+        # keep already removed it.
+        cfg = RegionsConfig(
+            path=str(three_region_geoparquet),
+            id_fields=["region_id"],
+            keep={"region_id": ["A", "C"]},
+            drop={"region_id": ["B"]},
+        )
+        rs = RegionSet.from_config(cfg)
+        assert rs.unknown_keep_ids == {}
+        assert rs.unknown_drop_ids == {}
+
 
 def _invalid_gdf(tmp_path: Path) -> Path:
     """Bow-tie polygon: self-intersecting → invalid."""

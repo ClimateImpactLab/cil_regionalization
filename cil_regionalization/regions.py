@@ -57,6 +57,11 @@ class RegionSet:
     # so a future reader of the parquet knows which regions' shapes were
     # mutated relative to the source.
     repaired_ids: list[dict[str, Any]] = field(default_factory=list)
+    # Values listed in `regions.keep` and `regions.drop` that match no row
+    # of the file as read, by filter column. The local backend applies
+    # `on_unknown_id` to them and records them in the manifest.
+    unknown_keep_ids: dict[str, list[str]] = field(default_factory=dict)
+    unknown_drop_ids: dict[str, list[str]] = field(default_factory=dict)
     # Resolved on-disk-or-remote URI of the source. For local paths this is
     # the absolute path; for `gs://` paths it stays a URI.
     source_uri: str | None = None
@@ -73,7 +78,7 @@ class RegionSet:
         source_uri = cfg.path  # type: ignore[assignment]
         gdf = _read_regions(source_uri)
         _check_id_fields(gdf, cfg.id_fields)
-        gdf = _apply_filters(gdf, cfg.keep, cfg.drop)
+        gdf, unknown_keep, unknown_drop = _apply_filters(gdf, cfg.keep, cfg.drop)
         # Shapefiles without a .prj file lack a CRS; the canonical IR
         # shapefile is one such case. Set EPSG:4326 explicitly so
         # downstream geodesic / spatial ops have a definite frame.
@@ -89,6 +94,8 @@ class RegionSet:
             table=None,
             gdf=gdf,
             repaired_ids=repaired,
+            unknown_keep_ids=unknown_keep,
+            unknown_drop_ids=unknown_drop,
             source_uri=str(source_uri),
         )
 
@@ -175,18 +182,37 @@ def _apply_filters(
     gdf: gpd.GeoDataFrame,
     keep: dict[str, list[Any]] | None,
     drop: dict[str, list[Any]] | None,
-) -> gpd.GeoDataFrame:
+) -> tuple[gpd.GeoDataFrame, dict[str, list[str]], dict[str, list[str]]]:
+    """Apply keep, then drop. Returns ``(gdf, unknown_keep, unknown_drop)``:
+    per filter column, the listed values that match no row of ``gdf`` as
+    passed in. Columns with no such value are left out."""
+    full = gdf
+    unknown_keep: dict[str, list[str]] = {}
+    unknown_drop: dict[str, list[str]] = {}
     if keep:
         for col, allowed in keep.items():
             if col not in gdf.columns:
                 raise ValueError(f"regions.keep references unknown column '{col}'")
+            if absent := _absent_values(full[col], allowed):
+                unknown_keep[col] = absent
             gdf = gdf.loc[gdf[col].isin(allowed)]
     if drop:
         for col, excluded in drop.items():
             if col not in gdf.columns:
                 raise ValueError(f"regions.drop references unknown column '{col}'")
+            if absent := _absent_values(full[col], excluded):
+                unknown_drop[col] = absent
             gdf = gdf.loc[~gdf[col].isin(excluded)]
-    return gdf
+    return gdf, unknown_keep, unknown_drop
+
+
+def _absent_values(column, listed: list[Any]) -> list[str]:
+    present = set(column[column.isin(listed)].tolist())
+    # A null in the list is left out: it matches null rows under isin but
+    # never compares equal to them here.
+    return sorted(
+        {str(v) for v in listed if v is not None and v == v and v not in present}
+    )
 
 
 def _handle_invalid_geometries(

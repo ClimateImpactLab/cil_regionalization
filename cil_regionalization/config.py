@@ -91,6 +91,10 @@ class RegionsConfig(_Strict):
     # the clustered world-combo IR where small territories are merged
     # into larger agglomerations. Without this check those requests
     # silently went missing from the output.
+    # The local backend applies the same policy to every column named in
+    # `regions.keep` and `regions.drop`, against the regions file, and
+    # records drop values under unknown_drop_id_regions. BigQuery checks
+    # keep on the primary id only.
     on_unknown_id: Literal["error", "skip"] = "error"
 
     @model_validator(mode="after")

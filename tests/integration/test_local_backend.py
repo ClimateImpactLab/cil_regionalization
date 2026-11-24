@@ -661,6 +661,71 @@ class TestRepairedGeometryManifest:
         assert "repaired_geometry_regions" not in result.manifest.extra
 
 
+class TestUnknownIds:
+    def _cfg(self, regions_path, raster_path, out_dir, **regions) -> Config:
+        d = _cfg(regions_path, raster_path, out_dir).model_dump()
+        d["regions"].update(regions)
+        return Config.model_validate(d)
+
+    def test_unknown_keep_id_raises_by_default(
+        self, three_region_geoparquet, synthetic_raster, tmp_path
+    ):
+        cfg = self._cfg(
+            three_region_geoparquet,
+            synthetic_raster,
+            tmp_path / "out",
+            keep={"region_id": ["A", "NOT_REAL"]},
+        )
+        with pytest.raises(ValueError, match=r"regions\.keep column 'region_id'.*NOT_REAL"):
+            _run(cfg)
+
+    def test_unknown_drop_id_raises_by_default(
+        self, three_region_geoparquet, synthetic_raster, tmp_path
+    ):
+        cfg = self._cfg(
+            three_region_geoparquet,
+            synthetic_raster,
+            tmp_path / "out",
+            drop={"region_id": ["NOT_REAL"]},
+        )
+        with pytest.raises(ValueError, match=r"regions\.drop column 'region_id'.*NOT_REAL"):
+            _run(cfg)
+
+    def test_skip_completes_and_records(
+        self, three_region_geoparquet, synthetic_raster, tmp_path
+    ):
+        cfg = self._cfg(
+            three_region_geoparquet,
+            synthetic_raster,
+            tmp_path / "out",
+            keep={"region_id": ["A", "B", "NOT_REAL"]},
+            drop={"region_id": ["B", "ALSO_NOT_REAL"]},
+            on_unknown_id="skip",
+        )
+        result = _run(cfg)
+        assert set(result.frame["region_id"]) == {"A"}
+        extra = result.manifest.extra
+        assert extra["unknown_id_count"] == 1
+        assert extra["unknown_id_regions"] == ["NOT_REAL"]
+        assert extra["unknown_drop_id_count"] == 1
+        assert extra["unknown_drop_id_regions"] == ["ALSO_NOT_REAL"]
+
+    def test_known_ids_record_zero(
+        self, three_region_geoparquet, synthetic_raster, tmp_path
+    ):
+        cfg = self._cfg(
+            three_region_geoparquet,
+            synthetic_raster,
+            tmp_path / "out",
+            keep={"region_id": ["A", "B"]},
+        )
+        extra = _run(cfg).manifest.extra
+        assert extra["unknown_id_count"] == 0
+        assert extra["unknown_id_regions"] == []
+        assert extra["unknown_drop_id_count"] == 0
+        assert extra["unknown_drop_id_regions"] == []
+
+
 class TestIoRoundTrip:
     def test_writes_parquet_and_manifest(
         self, three_region_geoparquet, synthetic_raster, tmp_path
