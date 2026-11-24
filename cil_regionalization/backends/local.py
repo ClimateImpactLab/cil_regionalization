@@ -253,6 +253,11 @@ class LocalBackend(WeightsBackend):
             )
         manifest.inputs.update(_input_checksums(regions, weights))
         manifest.extra["min_segment_area"] = drop_stats
+        if regions.repaired_ids:
+            manifest.extra["repaired_geometry_count"] = len(regions.repaired_ids)
+            manifest.extra["repaired_geometry_regions"] = list(
+                regions.repaired_ids
+            )
         manifest.timing_seconds["compute_total"] = time.perf_counter() - t0
 
         return WeightsResult(

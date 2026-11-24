@@ -632,6 +632,35 @@ class TestNearestCellSynthesis:
         assert result.sum_report.ok
 
 
+class TestRepairedGeometryManifest:
+    def test_repaired_region_recorded(self, synthetic_raster, tmp_path):
+        import geopandas as gpd
+        from shapely.geometry import Polygon, box
+
+        # A bow-tie is self-intersecting, so the default policy repairs it.
+        bowtie = Polygon([(0, 0), (1, 1), (1, 0), (0, 1), (0, 0)])
+        gdf = gpd.GeoDataFrame(
+            {"region_id": ["bad", "good"], "geometry": [bowtie, box(2, 2, 3, 3)]},
+            crs="EPSG:4326",
+        )
+        regions_path = tmp_path / "invalid.parquet"
+        gdf.to_parquet(regions_path)
+
+        result = _run(_cfg(regions_path, synthetic_raster, tmp_path / "out"))
+        extra = result.manifest.extra
+        assert extra["repaired_geometry_count"] == 1
+        assert extra["repaired_geometry_regions"] == [{"region_id": "bad"}]
+
+    def test_nothing_recorded_without_repairs(
+        self, three_region_geoparquet, synthetic_raster, tmp_path
+    ):
+        result = _run(
+            _cfg(three_region_geoparquet, synthetic_raster, tmp_path / "out")
+        )
+        assert "repaired_geometry_count" not in result.manifest.extra
+        assert "repaired_geometry_regions" not in result.manifest.extra
+
+
 class TestIoRoundTrip:
     def test_writes_parquet_and_manifest(
         self, three_region_geoparquet, synthetic_raster, tmp_path
