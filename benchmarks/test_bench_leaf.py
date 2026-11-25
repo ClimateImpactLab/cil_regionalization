@@ -7,6 +7,7 @@ has.
 """
 from __future__ import annotations
 
+import logging
 import math
 import multiprocessing as mp
 import os
@@ -19,7 +20,9 @@ from benchmarks.synthetic import (
     ID_FIELDS,
     LABELS,
     WINDOWS,
+    YEARS,
     apply,
+    apply_result,
     artifact,
     best,
     report,
@@ -43,7 +46,8 @@ POOL_LEAVES = int(os.environ.get("BENCH_LEAVES", "48"))
 def test_label_placement_gives_the_same_leaf():
     art, leaf = artifact(), source_leaf()
 
-    apply_s, applied = best(lambda: apply(art, leaf))
+    apply_s, result = best(lambda: apply_result(art, leaf))
+    applied = result.frame
     labelled = applied.assign(**LABELS)
     before_s, before = best(lambda: window_means(labelled, **_KW))
     after_s, after = best(
@@ -57,8 +61,14 @@ def test_label_placement_gives_the_same_leaf():
     pd.testing.assert_frame_equal(after, before, check_exact=True)
     pd.testing.assert_frame_equal(first, before, check_exact=True)
 
+    # The library reports the regions it skipped, not the targets that
+    # were left with nothing, so those are counted here.
+    n_targets = len(art.frame[ID_FIELDS].drop_duplicates())
+    n_absent = n_targets - len(applied) // len(YEARS)
     report(f"leaf: {len(leaf):,} rows read, {len(applied):,} after "
            f"apply_weights, {len(before):,} reduced")
+    report(f"  skipped: {len(result.coverage.zero_weight):,} regions with no crop "
+           f"area, so {n_absent:,} of {n_targets:,} targets are not in the output")
     report(f"  apply_weights, bare leaf:               {apply_s:.3f} s")
     report(f"  apply_weights, labels on the leaf:      {first_s:.3f} s")
     report(f"  window_means, labels before reducing:   {before_s:.3f} s")
@@ -69,6 +79,10 @@ def _task(args: tuple[int, int]) -> list[tuple[int, int, float]]:
     """Reduce ``n_leaves`` leaves starting at ``first_seed``. The weights
     are built inside the task, as the runners load them."""
     first_seed, n_leaves = args
+    # `apply_weights` warns about the skipped regions on every call, and
+    # a spawned worker has no handler to capture it: one line a leaf on
+    # stderr. The single-leaf test above prints the count once.
+    logging.getLogger("cil_regionalization.validate").setLevel(logging.ERROR)
     art = artifact(POOL_SCALE)
     out = []
     for seed in range(first_seed, first_seed + n_leaves):
