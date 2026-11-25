@@ -171,6 +171,20 @@ dimension named `gcm` without weights warns once; filter
 (`examples/rates`) the weights barely move the median and pull the
 95th percentile down by about a fifth.
 
+Two experimental options replace those definitions; both default to
+`"legacy"`, the behaviour above. `quantile_method="inverted_cdf"` is
+the standard inverse of the empirical distribution (Hyndman and Fan
+type 1), the smallest member value whose cumulative weight share
+reaches q. It is the same with or without weights, never returns
+`-inf`, and never returns the value of a member whose weight is zero,
+which the legacy step can. `summation="exact"` takes the window means
+and the pooled mean from exactly rounded sums, so the order of the
+rows, and in a pipeline run the order the workers finish in, cannot
+change them. Under either of the two a statistic that comes out
+infinite raises instead of being returned; NaN does not. `summarize_samples` and `pooled_statistics` take both,
+`window_means` takes `summation`, and a pipeline config sets them
+under `[stats]`; the manifest records what a file was made with.
+
 ## Your own NetCDF
 
 A file on a regular lat-lon grid, with 1-D `lat` and `lon`

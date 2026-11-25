@@ -19,7 +19,8 @@ Composes the library core and adds no mathematics. The sequence:
     4. Concatenate the reduced leaves and run `stats.pooled_statistics`
        once, with the window label as an ordinary identity dimension;
        write the combined statistics plus a pipeline manifest recording
-       every leaf and its accounting.
+       every leaf and its accounting. The rows are sorted (`_ordered`),
+       whatever order the leaves were pooled in.
 
 Passthrough: leaving the ``[weights]`` section out entirely runs the
 same tree walk, subtraction, window reduction, and pooled statistics
@@ -84,6 +85,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
 
+import numpy as np
 import pandas as pd
 from pydantic import Field, model_validator
 
@@ -95,7 +97,12 @@ else:  # pragma: no cover
 from cil_regionalization.apply import WeightsArtifact, apply_weights
 from cil_regionalization.config import SourceUnitPolicies, _Strict
 from cil_regionalization.manifest import collect_package_versions
-from cil_regionalization.stats import _window_label, pooled_statistics, window_means
+from cil_regionalization.stats import (
+    _quantile_label,
+    _window_label,
+    pooled_statistics,
+    window_means,
+)
 
 
 VariableKind = Literal["extensive", "intensive", "ratio"]
@@ -224,6 +231,14 @@ class StatsConfig(_Strict):
     # statistic was computed from. Off by default, so the file keeps its
     # columns unless a recipe asks.
     include_n_members: bool = False
+    # Experimental, and "legacy" is what every release so far has done.
+    # "inverted_cdf" is the standard inverse of the empirical
+    # distribution, the same with or without model weights; "exact"
+    # takes the means from exactly rounded sums, so the order the
+    # workers hand their leaves back in cannot change them. The
+    # manifest records both. See `stats.summarize_samples`.
+    quantile_method: Literal["legacy", "inverted_cdf"] = "legacy"
+    summation: Literal["legacy", "exact"] = "legacy"
     model_weights: Optional[str] = None
     model_weight_level: Optional[str] = None
 
@@ -558,6 +573,8 @@ def run_pipeline(
         include_mean=cfg.stats.include_mean,
         weight_col=weight_col,
         include_n_members=cfg.stats.include_n_members,
+        quantile_method=cfg.stats.quantile_method,
+        summation=cfg.stats.summation,
     )
     # Passthrough leaves dictionary-encode their region and window
     # columns for the pooled frame (see _process_leaf); the statistics
@@ -566,6 +583,7 @@ def run_pipeline(
     for col in stats.columns:
         if isinstance(stats[col].dtype, pd.CategoricalDtype):
             stats[col] = stats[col].astype(str)
+    stats = _ordered(stats, cfg)
     _log_memory("after pooled statistics")
 
     out_root = Path(cfg.output.dir)
@@ -574,7 +592,9 @@ def run_pipeline(
     reduced_path = None
     if cfg.output.write_reduced:
         reduced_path = out_root / f"{cfg.output.stem}.reduced.parquet"
-        combined.to_parquet(reduced_path, index=False)
+        # sorted for the file only, after the statistics: what was
+        # pooled, and in what order, is as it was
+        _ordered(combined, cfg).to_parquet(reduced_path, index=False)
     _log_memory("after writes")
     manifest = {
         "leaves": outcomes,
@@ -595,6 +615,8 @@ def run_pipeline(
         "sample_dims": cfg.stats.sample_dims,
         "windows": [_window_label(lo, hi) for lo, hi in cfg.stats.windows],
         "quantiles": cfg.stats.quantiles,
+        "quantile_method": cfg.stats.quantile_method,
+        "summation": cfg.stats.summation,
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
@@ -612,6 +634,53 @@ def run_pipeline(
             "manifest": str(plan.manifest_path),
         },
     )
+
+
+def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame:
+    """``frame`` in the order it is written in. Rows go by the
+    statistic as requested, then each tree level by its declared
+    values, then the window as configured, then the target's id fields
+    ascending. Together those name a row, so the order is total and
+    does not depend on the order the leaves were pooled in."""
+    declared = {
+        "statistic": (["mean"] if cfg.stats.include_mean else [])
+        + [_quantile_label(q) for q in cfg.stats.quantiles],
+        **{level: list(cfg.tree.expect[level]) for level in cfg.tree.levels},
+        "window": [_window_label(lo, hi) for lo, hi in cfg.stats.windows],
+    }
+    keys = pd.DataFrame(index=frame.index)
+    for column, values in declared.items():
+        if column not in frame.columns:
+            continue
+        position = {value: i for i, value in enumerate(values)}
+        col = frame[column]
+        if isinstance(col.dtype, pd.CategoricalDtype):
+            # one lookup per category, not per row
+            of_category = np.array(
+                [position.get(c, -1) for c in col.cat.categories], dtype=np.int64
+            )
+            codes = col.cat.codes.to_numpy()
+            keys[column] = np.where(codes >= 0, of_category[codes], -1)
+        else:
+            keys[column] = col.map(position).fillna(-1).astype(np.int64)
+        if (keys[column] < 0).any():
+            unknown = sorted(set(col[keys[column] < 0].astype(str)))
+            raise ValueError(
+                f"column {column!r} holds values the config does not "
+                f"declare: {unknown[:5]}"
+            )
+    for column in frame.columns:
+        if column in declared or column in (
+            cfg.data.value_col, "n_members", "model_weight"
+        ):
+            continue
+        col = frame[column]
+        if isinstance(col.dtype, pd.CategoricalDtype):
+            # ascending by value, whatever order the categories are in
+            col = col.cat.set_categories(sorted(col.cat.categories), ordered=True)
+        keys[column] = col
+    order = keys.sort_values(list(keys.columns), kind="stable").index
+    return frame.loc[order].reset_index(drop=True)
 
 
 def _load_model_weight_map(weights_path: str) -> dict[str, float]:
@@ -821,6 +890,7 @@ def _process_leaf(task: tuple) -> dict:
             time_col=stats_cfg.time_col,
             windows=stats_cfg.windows,
             value_col=data_cfg.value_col,
+            summation=stats_cfg.summation,
         )
         if artifact is None:
             # Dictionary-encode the two high-cardinality repeated string

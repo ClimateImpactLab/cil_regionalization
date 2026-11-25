@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 from pathlib import Path
 
 import geopandas as gpd
@@ -215,6 +216,212 @@ class TestEndToEnd:
             serial.stats.sort_values(key).reset_index(drop=True),
             parallel.stats.sort_values(key).reset_index(drop=True),
         )
+
+
+class TestStatisticMethods:
+    """The experimental `stats.quantile_method` and `stats.summation`."""
+
+    def _cfg(self, weights_dir, tree, out, n_workers=1, **stats):
+        raw = _pipeline_cfg(
+            weights_dir, tree, out, levels=_LEVELS, n_workers=n_workers
+        ).model_dump()
+        raw["stats"].update(stats)
+        raw["output"]["write_reduced"] = True
+        return MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_the_default_is_legacy_and_the_manifest_says_so(
+        self, weights_dir, tmp_path
+    ):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        result = run_pipeline(self._cfg(weights_dir, tree, tmp_path / "out"))
+        manifest = json.loads(Path(result.paths["manifest"]).read_text())
+        assert manifest["quantile_method"] == "legacy"
+        assert manifest["summation"] == "legacy"
+
+    def test_the_options_reach_both_stages_and_the_manifest(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Under "inverted_cdf" q05 and q95 are the smallest and the
+        largest of the six members, where the default interpolates. A
+        two-year window sums the same either way, so that the leaves
+        were reduced with "exact" is read off the calls."""
+        from cil_regionalization.pipelines import montecarlo
+
+        real, asked = montecarlo.window_means, []
+
+        def window_means(*args, **kwargs):
+            asked.append(kwargs.get("summation"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(montecarlo, "window_means", window_means)
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        out = tmp_path / "out"
+        result = run_pipeline(self._cfg(
+            weights_dir, tree, out,
+            quantile_method="inverted_cdf", summation="exact",
+        ))
+        assert asked == ["exact"] * 6
+        monkeypatch.undo()
+        manifest = json.loads(Path(result.paths["manifest"]).read_text())
+        assert manifest["quantile_method"] == "inverted_cdf"
+        assert manifest["summation"] == "exact"
+
+        members = pd.read_parquet(out / "statistics.reduced.parquet")
+        got = result.stats.set_index(["target_id", "window", "statistic"])["value"]
+        for (target, window), group in members.groupby(["target_id", "window"]):
+            values = group["value"].tolist()
+            assert len(values) == 6
+            assert got[target, window, "q05"] == min(values)
+            assert got[target, window, "q95"] == max(values)
+            assert got[target, window, "mean"] == math.fsum(values) / 6
+
+        legacy = run_pipeline(self._cfg(weights_dir, tree, tmp_path / "out_l"))
+        both = result.stats.merge(
+            legacy.stats, on=["target_id", "window", "statistic"],
+            suffixes=("", "_legacy"),
+        )
+        quantiles = both[both["statistic"] != "mean"]
+        assert (quantiles["value"] != quantiles["value_legacy"]).all()
+
+    def test_serial_and_parallel_runs_agree_to_the_bit(
+        self, weights_dir, tmp_path
+    ):
+        """Compared without sorting. This can pass by luck without the
+        options. The tests that fail without them are in
+        tests/unit/test_stats_methods.py and in TestRowOrder."""
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        options = dict(quantile_method="inverted_cdf", summation="exact")
+        serial = run_pipeline(
+            self._cfg(weights_dir, tree, tmp_path / "out_s", **options)
+        )
+        parallel = run_pipeline(
+            self._cfg(weights_dir, tree, tmp_path / "out_p", n_workers=2, **options)
+        )
+        pd.testing.assert_frame_equal(
+            serial.stats, parallel.stats, check_exact=True
+        )
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(serial.paths["statistics"]),
+            pd.read_parquet(parallel.paths["statistics"]),
+            check_exact=True,
+        )
+
+    @pytest.mark.parametrize(
+        "option, value",
+        [("quantile_method", "interpolated"), ("summation", "kahan")],
+    )
+    def test_unknown_names_are_refused_by_the_config(
+        self, weights_dir, tmp_path, option, value
+    ):
+        """Cannot go red by reverting, because without the two fields
+        the config refuses the keys themselves. It failed with the
+        fields typed as plain strings, which let any name through."""
+        with pytest.raises(ValueError, match=option):
+            self._cfg(weights_dir, tmp_path / "t", tmp_path / "o", **{option: value})
+
+
+class TestRowOrder:
+    """The statistics rows are sorted before they are written, under
+    every setting."""
+
+    # declared out of alphabetical and chronological order on purpose
+    _ORDER_LEVELS = {"kumquat": ["k1", "k0"], "zeppelin": ["z2", "z0", "z1"]}
+    _WINDOWS = [[2080, 2081], [2050, 2051]]
+    _QUANTILES = [0.95, 0.05]
+
+    def _cfg(self, weights_dir, tree, out, **stats):
+        raw = _pipeline_cfg(
+            weights_dir, tree, out, levels=self._ORDER_LEVELS
+        ).model_dump()
+        # zeppelin is not pooled, so it stays a column of the statistics
+        raw["stats"].update(
+            sample_dims=["kumquat"], windows=self._WINDOWS,
+            quantiles=self._QUANTILES, **stats,
+        )
+        return MonteCarloPipelineConfig.model_validate(raw)
+
+    @pytest.mark.parametrize(
+        "options",
+        [{}, {"quantile_method": "inverted_cdf", "summation": "exact"}],
+    )
+    def test_rows_follow_the_config_not_the_arrival(
+        self, weights_dir, tmp_path, monkeypatch, options
+    ):
+        """Both files come in the order of `_ordered`. The pool here
+        runs in this process and hands the leaves back last first."""
+        import types
+
+        from cil_regionalization.pipelines import montecarlo
+
+        class LastFirstPool:
+            def __init__(self, processes, initializer, initargs, maxtasksperchild):
+                initializer(*initargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def imap_unordered(self, func, tasks, chunksize=1):
+                return [func(task) for task in reversed(list(tasks))]
+
+        monkeypatch.setattr(
+            montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool)
+        )
+        tree = tmp_path / "tree"
+        _build_tree(tree, self._ORDER_LEVELS)
+        raw = self._cfg(
+            weights_dir, tree, tmp_path / "out", include_n_members=True, **options
+        ).model_dump()
+        raw["run"] = {"n_workers": 2}
+        raw["output"]["write_reduced"] = True
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+
+        windows, targets = ["2080-2081", "2050-2051"], ["T1", "T2"]
+        expected = list(itertools.product(
+            ["mean", "q95", "q05"], ["z2", "z0", "z1"], windows, targets
+        ))
+        columns = ["statistic", "zeppelin", "window", "target_id"]
+        for frame in (result.stats, pd.read_parquet(result.paths["statistics"])):
+            assert list(frame[columns].itertuples(index=False, name=None)) == expected
+            assert list(frame.index) == list(range(len(expected)))
+
+        reduced = pd.read_parquet(tmp_path / "out" / "statistics.reduced.parquet")
+        expected = list(itertools.product(
+            ["k1", "k0"], ["z2", "z0", "z1"], windows, targets
+        ))
+        columns = ["kumquat", "zeppelin", "window", "target_id"]
+        assert list(reduced[columns].itertuples(index=False, name=None)) == expected
+
+    def test_a_value_the_config_does_not_declare_is_an_error(
+        self, weights_dir, tmp_path
+    ):
+        from cil_regionalization.pipelines.montecarlo import _ordered
+
+        tree = tmp_path / "tree"
+        _build_tree(tree, self._ORDER_LEVELS)
+        cfg = self._cfg(weights_dir, tree, tmp_path / "out")
+        stats = run_pipeline(cfg).stats
+        pd.testing.assert_frame_equal(
+            _ordered(stats.sample(frac=1.0, random_state=1), cfg), stats
+        )
+        # dictionary-encoded columns, as a passthrough run pools them
+        encoded = stats.sample(frac=1.0, random_state=2).astype(
+            {"window": "category", "zeppelin": "category", "target_id": "category"}
+        )
+        pd.testing.assert_frame_equal(
+            _ordered(encoded, cfg).astype(
+                {"window": str, "zeppelin": str, "target_id": str}
+            ),
+            stats,
+        )
+        stats.loc[0, "window"] = "1999"
+        with pytest.raises(ValueError, match="does not declare"):
+            _ordered(stats, cfg)
 
 
 class TestConfigurableTree:

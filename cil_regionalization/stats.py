@@ -17,9 +17,18 @@ instead, which is how the SMME weights enter.
 
 NaN values drop out of the window mean, and a member whose whole window
 is NaN drops out of the statistics.
+
+Two experimental options change how the numbers are computed, and both
+default to "legacy". ``quantile_method="inverted_cdf"`` is the standard
+inverse of the empirical distribution (Hyndman and Fan type 1), one
+definition with or without weights. ``summation="exact"`` takes the
+means from exactly rounded sums, so the order of the rows cannot
+change them. Under either, an infinite statistic is an error.
 """
 from __future__ import annotations
 
+import functools
+import math
 import re
 import warnings
 from typing import NamedTuple, Sequence
@@ -56,6 +65,22 @@ def _warn_if_unweighted_gcm(sample_dims: list[str], weight_col: str | None) -> N
 # the legacy long (monetized_deaths_vsl_epa_scaled_q05) spelling.
 _STATISTIC_COLUMN = "statistic"
 _N_MEMBERS_COLUMN = "n_members"
+
+# Experimental; "legacy" is the behaviour of every release so far.
+QUANTILE_METHODS = ("legacy", "inverted_cdf")
+SUMMATIONS = ("legacy", "exact")
+
+
+def _check_methods(quantile_method: str, summation: str) -> None:
+    if quantile_method not in QUANTILE_METHODS:
+        raise ValueError(
+            f"quantile_method must be one of {list(QUANTILE_METHODS)}; "
+            f"got {quantile_method!r}"
+        )
+    if summation not in SUMMATIONS:
+        raise ValueError(
+            f"summation must be one of {list(SUMMATIONS)}; got {summation!r}"
+        )
 _QUANTILE_NAME_RE = re.compile(r"(^|_)(q\d{1,3}|mean)$")
 
 
@@ -70,6 +95,8 @@ def summarize_samples(
     include_mean: bool = True,
     weight_col: str | None = None,
     include_n_members: bool = False,
+    quantile_method: str = "legacy",
+    summation: str = "legacy",
 ) -> pd.DataFrame:
     """Window mean per sample member, then statistics over the pooled sample.
 
@@ -100,10 +127,18 @@ def summarize_samples(
     weighted, a weight above zero. ``data`` must not already have a
     column of that name.
 
+    ``quantile_method`` and ``summation`` are experimental and default
+    to "legacy", the behaviour described above. "inverted_cdf" returns,
+    weighted or not, the smallest member value whose cumulative weight
+    share reaches q, so never ``-inf``. "exact" takes the means from
+    exactly rounded sums, whatever the order of the rows. Under either,
+    an infinite statistic raises.
+
     Raises if ``data`` already has a 'statistic' column or
     quantile-named columns. Statistics of per-unit quantiles are wrong;
     see the module docstring.
     """
+    _check_methods(quantile_method, summation)
     _reject_presummarized(data, value_col)
     if include_n_members:
         _reject_n_members_column(data)
@@ -185,15 +220,31 @@ def summarize_samples(
         .agg(**agg)
         .reset_index()
     )
+    if summation == "exact":
+        # the same members in the same order, their means summed exactly
+        members = _identity_groups(work, identity + sample_dims)
+        gid, n_members = _grouping_ids(members)
+        if n_members != len(window_mean):
+            raise RuntimeError(
+                f"exact window means: {n_members} members against "
+                f"{len(window_mean)} from the groupby"
+            )
+        values = work[value_col]
+        exact = _exact_group_means(
+            _float_values(values)[gid >= 0], gid[gid >= 0], n_members
+        )
+        window_mean[value_col] = _as_mean_of(exact, values.dtype)
 
     pieces = _statistic_pieces(
         window_mean, identity, value_col, quantiles, include_mean, weight_col,
         count_members=include_n_members,
+        quantile_method=quantile_method, summation=summation,
     )
     out = pd.concat(pieces, ignore_index=True)
     out = out[_output_columns(identity, value_col, include_n_members)]
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
+    _refuse_infinite_statistics(out, value_col, quantile_method, summation)
     return out.reset_index(drop=True)
 
 
@@ -329,12 +380,15 @@ def _statistic_pieces(
     weight_col: str | None,
     groups: _Groups | None = None,
     count_members: bool = False,
+    quantile_method: str = "legacy",
+    summation: str = "legacy",
 ) -> list[pd.DataFrame]:
     """One frame per statistic over each identity group's members.
-    Unweighted statistics come from pandas, weighted ones from the
-    historical step distribution. Pass ``groups`` if the caller already
-    has them. ``count_members`` adds to every frame the number of
-    members each group's statistics were computed from."""
+    On the legacy settings unweighted statistics come from pandas and
+    weighted ones from the historical step distribution. Pass
+    ``groups`` if the caller already has them. ``count_members`` adds
+    to every frame the number of members each group's statistics were
+    computed from."""
     if groups is None:
         groups = _identity_groups(members, identity)
     gid, n_groups = _grouping_ids(groups)
@@ -352,9 +406,31 @@ def _statistic_pieces(
                 .groupby(identity, sort=False, observed=True)[value_col]
                 .first().reset_index())
         pieces: list[pd.DataFrame] = []
-        stats = [("mean", lambda: grouped.mean())] if include_mean else []
-        stats += [(_quantile_label(q), lambda q=q: grouped.quantile(q))
-                  for q in quantiles]
+        if quantile_method != "legacy" or summation != "legacy":
+            floats = _float_values(values)
+
+            def by_group(result: np.ndarray) -> pd.Series:
+                out = pd.Series(result, index=range(n_groups))
+                # a nullable value dtype stays nullable, as on the
+                # legacy path
+                if isinstance(values.dtype, pd.api.extensions.ExtensionDtype):
+                    out = out.astype("Float64")
+                return out
+
+        if not include_mean:
+            stats = []
+        elif summation == "exact":
+            stats = [("mean", lambda: by_group(
+                _exact_group_means(floats, gid, n_groups)))]
+        else:
+            stats = [("mean", lambda: grouped.mean())]
+        if quantile_method == "inverted_cdf":
+            table = _equal_weight_quantiles(floats, gid, n_groups, quantiles)
+            stats += [(_quantile_label(q), lambda i=i: by_group(table[i]))
+                      for i, q in enumerate(quantiles)]
+        else:
+            stats += [(_quantile_label(q), lambda q=q: grouped.quantile(q))
+                      for q in quantiles]
         if count_members:
             # count() leaves out NaN, as mean() and quantile() do
             counts = (grouped.count().reindex(range(n_groups), fill_value=0)
@@ -392,11 +468,28 @@ def _statistic_pieces(
         if count_members:
             member_counts.append(int(np.count_nonzero(weights)))
         if include_mean:
-            rows["mean"].append((*key_tuple, float(np.average(values, weights=weights))))
-        for q in quantiles:
-            rows[_quantile_label(q)].append(
-                (*key_tuple, _weighted_quantile(values, weights, q))
+            if summation == "exact":
+                # each product is rounded once, whatever the order, and
+                # both sums are exactly rounded
+                with np.errstate(over="ignore"):
+                    products = values * weights
+                mean = _fsum(products.tolist()) / _fsum(weights.tolist())
+            else:
+                mean = float(np.average(values, weights=weights))
+            rows["mean"].append((*key_tuple, mean))
+        if quantile_method == "inverted_cdf":
+            # a member with weight zero is not in the sample
+            positive = weights > 0
+            picked = _inverted_cdf_quantiles(
+                values[positive], weights[positive], quantiles
             )
+            for q, value in zip(quantiles, picked):
+                rows[_quantile_label(q)].append((*key_tuple, value))
+        else:
+            for q in quantiles:
+                rows[_quantile_label(q)].append(
+                    (*key_tuple, _weighted_quantile(values, weights, q))
+                )
     pieces = []
     for label in labels:
         piece = pd.DataFrame(rows[label], columns=identity + [value_col])
@@ -430,6 +523,158 @@ def _weighted_quantile(values: np.ndarray, weights: np.ndarray, q: float) -> flo
     if index < 0:
         return float("-inf")
     return float(values[index])
+
+
+@functools.lru_cache(maxsize=8)
+def _equal_shares(n: int) -> np.ndarray:
+    """Cumulative share of each of ``n`` equally weighted members."""
+    return np.arange(1, n + 1) / n
+
+
+def _inverted_cdf_quantiles(
+    values: np.ndarray, weights: np.ndarray, quantiles: Sequence[float]
+) -> list[float]:
+    """For each q, the smallest value whose cumulative weight share
+    reaches q (Hyndman and Fan type 1). ``values`` has no NaN and every
+    weight is positive. Equal values are taken in order of weight, so
+    the running sum does not depend on the order of the rows."""
+    n = len(values)
+    if (weights == weights[0]).all():
+        ordered = np.sort(values)
+        share = _equal_shares(n)
+    else:
+        order = np.lexsort((weights, values))
+        ordered = values[order]
+        share = np.cumsum(weights[order])
+        share = share / share[-1]
+    # adding 0.0 turns -0.0 into 0.0: which of two equal zeros comes
+    # first depends on the row order
+    return [
+        float(ordered[min(int(np.searchsorted(share, q)), n - 1)]) + 0.0
+        for q in quantiles
+    ]
+
+
+def _equal_weight_quantiles(
+    values: np.ndarray, gid: np.ndarray, n_groups: int,
+    quantiles: Sequence[float],
+) -> np.ndarray:
+    """`_inverted_cdf_quantiles` with equal weights for every group at
+    once. Returns one row per quantile and one column per group. NaN
+    values are left out, and a group with no value gets NaN."""
+    out = np.full((len(quantiles), n_groups), np.nan)
+    keep = ~np.isnan(values)
+    if not keep.all():
+        values, gid = values[keep], gid[keep]
+    if len(values) == 0 or not len(quantiles):
+        return out
+    values = values[np.lexsort((values, gid))]
+    counts = np.bincount(gid, minlength=n_groups)
+    starts = np.cumsum(counts) - counts
+    for n in np.unique(counts[counts > 0]).tolist():
+        same = np.flatnonzero(counts == n)
+        share = _equal_shares(n)
+        for i, q in enumerate(quantiles):
+            index = min(int(np.searchsorted(share, q)), n - 1)
+            out[i, same] = values[starts[same] + index]
+    return out + 0.0
+
+
+def _fsum(values: list[float]) -> float:
+    """The exactly rounded sum. An infinity sums to itself and is left
+    to `_refuse_infinite_statistics`. Infinities of both signs have no
+    such sum and raise here, and so do finite values whose sum passes
+    the largest float."""
+    try:
+        return math.fsum(values)
+    except OverflowError:
+        raise ValueError(
+            "summation='exact': a sum overflows the largest float"
+        ) from None
+    except ValueError:
+        raise ValueError(
+            "summation='exact': a sum holds infinities of both signs, so "
+            "it has no value; something upstream of the statistics broke"
+        ) from None
+
+
+def _refuse_infinite_statistics(
+    out: pd.DataFrame, value_col: str, quantile_method: str, summation: str
+) -> None:
+    """Raise if a statistic is infinite under either experimental
+    setting. NaN is left alone because a group with no value has no
+    statistic. The legacy settings are not checked."""
+    if quantile_method == "legacy" and summation == "legacy":
+        return
+    infinite = np.isinf(_float_values(out[value_col]))
+    if not infinite.any():
+        return
+    counts = out.loc[infinite, _STATISTIC_COLUMN].value_counts(sort=False)
+    first = out.loc[infinite].iloc[0].drop(value_col).to_dict()
+    raise ValueError(
+        f"{int(infinite.sum())} statistics are infinite "
+        f"({', '.join(f'{label}: {n}' for label, n in counts.items())}; "
+        f"first: {first}). With quantile_method={quantile_method!r} and "
+        f"summation={summation!r} an infinite statistic is refused; the "
+        f"legacy settings return it."
+    )
+
+
+# rows turned into Python floats at a time by `_exact_group_means`
+_FSUM_CHUNK = 1_000_000
+
+
+def _exact_group_means(
+    values: np.ndarray, gid: np.ndarray, n_groups: int
+) -> np.ndarray:
+    """Mean of each group's values that are not NaN, from an exactly
+    rounded sum, so the order of the rows does not matter. ``gid`` has
+    no negative ids. A group with no value gets NaN."""
+    out = np.full(n_groups, np.nan)
+    keep = ~np.isnan(values)
+    if not keep.all():
+        values, gid = values[keep], gid[keep]
+    if len(values) == 0:
+        return out
+    if (gid[1:] < gid[:-1]).any():
+        order = np.argsort(gid, kind="stable")
+        values, gid = values[order], gid[order]
+    counts = np.bincount(gid, minlength=n_groups)
+    present = np.flatnonzero(counts)
+    sizes = counts[present]
+    if sizes.min() == sizes.max():
+        # every group the same size, the usual leaf: whole rows of a
+        # table become lists in one call
+        size = int(sizes[0])
+        table = values.reshape(-1, size)
+        step = max(1, _FSUM_CHUNK // size)
+        sums: list[float] = []
+        for start in range(0, len(table), step):
+            sums.extend(_fsum(row) for row in table[start:start + step].tolist())
+    else:
+        ends = np.cumsum(sizes)
+        sums = [
+            _fsum(values[a:b].tolist())
+            for a, b in zip((ends - sizes).tolist(), ends.tolist())
+        ]
+    out[present] = np.asarray(sums) / sizes
+    return out
+
+
+def _float_values(values: pd.Series) -> np.ndarray:
+    """A value column as float64, missing values as NaN."""
+    return values.to_numpy(dtype=np.float64, na_value=np.nan)
+
+
+def _as_mean_of(means: np.ndarray, dtype):
+    """Exact means in the dtype pandas gives the mean of a column of
+    ``dtype``. A float column keeps its width, a nullable one stays
+    nullable and anything else is float64."""
+    if isinstance(dtype, pd.api.extensions.ExtensionDtype):
+        return pd.array(means, dtype="Float64")
+    if dtype.kind == "f":
+        return means.astype(dtype, copy=False)
+    return means
 
 
 def _check_weight_column(
@@ -501,6 +746,7 @@ def window_means(
     windows: Sequence[tuple[float, float]],
     value_col: str = "value",
     window_col: str = "window",
+    summation: str = "legacy",
 ) -> pd.DataFrame:
     """Mean over each time window, per combination of the other columns.
 
@@ -514,7 +760,13 @@ def window_means(
     windows rerun from the unreduced data. Rows repeated on every column
     but ``value_col`` are refused too, in any year, including years no
     window covers.
+
+    ``summation="exact"`` (experimental) takes each mean from an exactly
+    rounded sum, where the default "legacy" is the pandas mean. An
+    infinite value gives an infinite mean either way, and it is the
+    statistics that refuse it.
     """
+    _check_methods("legacy", summation)
     windows = [tuple(w) for w in windows]
     _reject_presummarized(data, value_col)
     if window_col in data.columns:
@@ -551,10 +803,11 @@ def window_means(
         )
 
     if group:
-        gid, _ = _grouping_ids(groups)
+        gid, n_groups = _grouping_ids(groups)
         del groups
         keys = data[group].take(_first_rows(gid)).reset_index(drop=True)
         values = data[value_col]
+        floats = _float_values(values) if summation == "exact" else None
     pieces: list[pd.DataFrame] = []
     for (lo, hi), label in zip(windows, labels):
         mask = data[time_col].between(lo, hi).to_numpy()
@@ -575,7 +828,16 @@ def window_means(
                 .reset_index()
             )
         else:
-            means = values[mask].groupby(gid[mask], sort=False).mean()
+            if summation == "exact":
+                # the groups of this window in order of first appearance,
+                # as the groupby below hands them over
+                ids = pd.unique(gid[mask])
+                exact = _exact_group_means(floats[mask], gid[mask], n_groups)
+                means = pd.Series(
+                    _as_mean_of(exact[ids], values.dtype), index=ids
+                )
+            else:
+                means = values[mask].groupby(gid[mask], sort=False).mean()
             # the key frame a groupby over the columns returns (it infers
             # key dtypes), from one row per group in this window's order
             piece = (keys.take(means.index.to_numpy())
@@ -610,15 +872,18 @@ def pooled_statistics(
     include_mean: bool = True,
     weight_col: str | None = None,
     include_n_members: bool = False,
+    quantile_method: str = "legacy",
+    summation: str = "legacy",
 ) -> pd.DataFrame:
     """Statistics over the pooled sample, for data reduced by `window_means`.
 
     The second half of `summarize_samples`. The window column is an
-    ordinary identity column here. ``weight_col`` and
-    ``include_n_members`` behave the same, including the weighted
-    quantile definition, and the same input is refused. Returns identity
-    columns, 'statistic', ``value_col``, then 'n_members' if asked for.
+    ordinary identity column here. ``weight_col``,
+    ``include_n_members``, ``quantile_method`` and ``summation`` behave
+    the same, and the same input is refused. Returns identity columns,
+    'statistic', ``value_col``, then 'n_members' if asked for.
     """
+    _check_methods(quantile_method, summation)
     _reject_presummarized(data, value_col)
     if include_n_members:
         _reject_n_members_column(data)
@@ -670,12 +935,14 @@ def pooled_statistics(
     pieces = _statistic_pieces(
         work, identity, value_col, quantiles, include_mean, weight_col, groups,
         count_members=include_n_members,
+        quantile_method=quantile_method, summation=summation,
     )
     del groups
     out = pd.concat(pieces, ignore_index=True)
     out = out[_output_columns(identity, value_col, include_n_members)]
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
+    _refuse_infinite_statistics(out, value_col, quantile_method, summation)
     return out.reset_index(drop=True)
 
 

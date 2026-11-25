@@ -48,6 +48,11 @@ time_col = "year"
 windows = [[2040, 2059], [2080, 2099]]
 quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
 include_mean = true
+# Experimental, both "legacy" by default. "inverted_cdf" is the standard
+# inverse of the empirical distribution; "exact" takes the means from
+# exactly rounded sums. The manifest records them.
+# quantile_method = "inverted_cdf"
+# summation = "exact"
 
 [output]
 dir = "pipeline_out"

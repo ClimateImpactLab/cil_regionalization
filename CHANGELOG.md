@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+**The rows of a pipeline statistics file, and of the reduced file,
+come in a new order. No value changed.** Two experimental options
+change how the statistics are computed; both default to `"legacy"`,
+which is what every release so far has done.
+
+- Changed: the pipeline sorts the statistics rows before writing them:
+  by statistic in the order requested (the mean, then the quantiles as
+  listed), then by each tree level that is not pooled, in the order
+  `tree.expect` declares its values, then by window in the order of
+  `stats.windows`, then by the remaining id columns ascending. The
+  reduced file of `output.write_reduced` is sorted the same way, over
+  all its tree levels. Before, the rows of both followed the order the
+  leaves were pooled in, which with several workers is the order the
+  workers finish in, so two runs of one config could list the same
+  rows differently. A run with one worker usually listed them this way
+  already. The frame `run_pipeline` returns is sorted the same.
+- New, experimental: `quantile_method` on `summarize_samples` and
+  `pooled_statistics`, and `stats.quantile_method` in a pipeline
+  config. `"inverted_cdf"` is the standard inverse of the empirical
+  distribution (Hyndman and Fan type 1): the smallest member value
+  whose cumulative weight share reaches q. It is one definition with
+  or without weights, and every quantile is the value of a member with
+  positive weight.
+  `"legacy"` is two definitions. Without weights it interpolates. With
+  weights it returns the member just before the one that reaches q,
+  one member below the standard inverse, as the historical extraction
+  tool did. Three things follow from that. A quantile is `-inf` when
+  the first member already reaches q. The value of a member with
+  weight zero can come back as a quantile, although the mean leaves
+  that member out: with one such model among 33, about 3% of the cells
+  of each quantile on synthetic samples. And at 0.5 with equal weights
+  it switches to the midpoint of the two middle members.
+- New, experimental: `summation` on the same two functions and on
+  `window_means`, and `stats.summation` in a pipeline config.
+  `"exact"` takes the window means and the pooled mean from exactly
+  rounded sums (`math.fsum`), so the order of the rows cannot change
+  them. Under `"legacy"` the order can change the means, and in a pipeline run with several
+  workers it does, because the leaves are pooled in the order the
+  workers finish. Two runs of one config over a synthetic tree (240
+  leaves, 8 workers, model weights) disagreed in the last bits of
+  about a third of the means, 119 to 133 of 388, by at most 8.9e-16 on
+  values of order 1. Without model weights 2 of 388 differed. No
+  quantile differed.
+- Under either new setting a statistic that comes out infinite raises
+  instead of being returned or written: in impact data an infinity
+  means something upstream broke. It is the statistic that is checked,
+  so an infinity in a year no window covers does not fail a run, and
+  one that a quantile selects does. NaN is left alone; a group with no
+  value has no statistic. Under `"exact"` a sum over infinities of
+  both signs, or one that overflows, raises too. The legacy settings
+  return whatever comes out, `-inf` included, as before.
+- The pipeline manifest records `quantile_method` and `summation`.
+
 ## v0.5.0
 
 **Behaviour change in `cilreg run`.** Results unchanged.
