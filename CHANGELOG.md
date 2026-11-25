@@ -6,6 +6,9 @@
 come in a new order. No value changed.** Two experimental options
 change how the statistics are computed; both default to `"legacy"`,
 which is what every release so far has done.
+`window_means` and `summarize_samples` compute in float64 and return
+float64 whatever the dtype of the value column. That changes their
+result for a float32 or a nullable column, under `"legacy"` too.
 
 - Changed: the pipeline sorts the statistics rows before writing them:
   by statistic in the order requested (the mean, then the quantiles as
@@ -53,6 +56,56 @@ which is what every release so far has done.
   value has no statistic. Under `"exact"` a sum over infinities of
   both signs, or one that overflows, raises too. The legacy settings
   return whatever comes out, `-inf` included, as before.
+- Changed: `window_means` and `summarize_samples` take the window mean
+  in float64 and return the value column as float64, under every
+  setting and whatever the column's dtype. A float64 column gives what
+  it gave, to the last bit. Two things change for other columns, under
+  `"legacy"` as well as under the new settings:
+  - A nullable `Float64` column used to come back nullable. It now
+    comes back as float64 with NaN where it had no value: the mask is
+    gone. A caller that tested the result for `pd.NA` has to test for
+    NaN.
+  - A float32 column is widened before the mean, so its results differ
+    from the old ones from the seventh or eighth digit (by up to 9e-7
+    of the value on synthetic samples). `"legacy"` therefore no longer
+    reproduces the old values of a float32 column bit for bit. That is
+    a wart in a setting that exists to reproduce old results. The
+    other choice was to keep seven digits, and under `"exact"` to round
+    an exactly rounded sum back to float32.
+
+  Before, the dtype and the precision followed the column, the pandas
+  version and, on the newest pandas, the data. `window_means` returned
+  a float32 column as float32 through pandas 3.0 (seen on 2.3.3 and
+  3.0.3). On pandas 3.1.1 under `"legacy"` it returned float64 for a
+  column with no missing value and float32 for one with a missing
+  value, in the cases tried, and float32 under `"exact"`.
+  `summarize_samples` took its window means in float32 where
+  `window_means` returned float32, and under `"exact"` on every
+  version.
+
+  This reaches callers of the library, not the pipeline's published
+  files. A pipeline run that applies weights or subtracts a second
+  file (`tree.subtract_filename`) already hands `window_means`
+  float64. Only a passthrough run with no subtraction hands over the
+  leaf's own dtype, and no production config is one: of the 110
+  pipeline configs in the impactmap-data-gen repository 42 are
+  passthrough runs (the impact-region products of agriculture, labor
+  and mortality), and all 110 subtract a histclim file.
+
+  One published product changes on a rerun: energy as a share of GDP
+  at ADM0, `energy/adm0/energy_valued_pctgdp_rcp45.parquet` and
+  `energy_valued_pctgdp_rcp85.parquet`. The script that makes it,
+  `energy/run_energy_regionalization.py` in impactmap-data-gen, calls
+  `window_means` itself on its denominator: GDP stored as float32,
+  summed by country and year, still float32. In the pinned cluster
+  environment (pandas 3.0.3) the window mean of those sums came back
+  float32; it is now taken in float64. Of the 1,012 denominators (253
+  countries, four windows) 703 move, by 1.5e-8 of their value at the
+  median and 9.1e-8 at most, and the shares move by as much. The
+  one-year window does not move. This is float32 rounding in a mean
+  of twenty numbers, not the repair of a large error: the sums by
+  country are compensated, were within 9.4e-8 of the exact sums, and
+  are float32 before and after.
 - The pipeline manifest records `quantile_method` and `summation`.
 
 ## v0.5.0

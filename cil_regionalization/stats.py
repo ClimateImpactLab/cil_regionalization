@@ -134,6 +134,10 @@ def summarize_samples(
     exactly rounded sums, whatever the order of the rows. Under either,
     an infinite statistic raises.
 
+    The statistics are float64 whatever the dtype of ``value_col``. A
+    column of another dtype is widened before the window mean, and a
+    nullable one comes back with NaN where it had no value.
+
     Raises if ``data`` already has a 'statistic' column or
     quantile-named columns. Statistics of per-unit quantiles are wrong;
     see the module docstring.
@@ -194,6 +198,9 @@ def summarize_samples(
     # A constant helper key lets the same groupby code serve inputs whose
     # every non-value column is a sample or time dimension.
     work = in_window
+    if work[value_col].dtype != np.float64:
+        # widened before the mean, as in `window_means`
+        work = work.assign(**{value_col: _float_values(work[value_col])})
     if not identity:
         work = work.assign(_all="all")
         identity = ["_all"]
@@ -229,11 +236,9 @@ def summarize_samples(
                 f"exact window means: {n_members} members against "
                 f"{len(window_mean)} from the groupby"
             )
-        values = work[value_col]
-        exact = _exact_group_means(
-            _float_values(values)[gid >= 0], gid[gid >= 0], n_members
+        window_mean[value_col] = _exact_group_means(
+            work[value_col].to_numpy()[gid >= 0], gid[gid >= 0], n_members
         )
-        window_mean[value_col] = _as_mean_of(exact, values.dtype)
 
     pieces = _statistic_pieces(
         window_mean, identity, value_col, quantiles, include_mean, weight_col,
@@ -666,17 +671,6 @@ def _float_values(values: pd.Series) -> np.ndarray:
     return values.to_numpy(dtype=np.float64, na_value=np.nan)
 
 
-def _as_mean_of(means: np.ndarray, dtype):
-    """Exact means in the dtype pandas gives the mean of a column of
-    ``dtype``. A float column keeps its width, a nullable one stays
-    nullable and anything else is float64."""
-    if isinstance(dtype, pd.api.extensions.ExtensionDtype):
-        return pd.array(means, dtype="Float64")
-    if dtype.kind == "f":
-        return means.astype(dtype, copy=False)
-    return means
-
-
 def _check_weight_column(
     data: pd.DataFrame, weight_col: str, sample_dims: list[str], reserved: list[str]
 ) -> None:
@@ -765,6 +759,11 @@ def window_means(
     rounded sum, where the default "legacy" is the pandas mean. An
     infinite value gives an infinite mean either way, and it is the
     statistics that refuse it.
+
+    The mean is float64 whatever the dtype of ``value_col``. A float32
+    column is widened before the mean and not after, because a float32
+    mean stored as float64 still holds seven digits. A nullable column
+    comes back with NaN where it had no value.
     """
     _check_methods("legacy", summation)
     windows = [tuple(w) for w in windows]
@@ -807,7 +806,11 @@ def window_means(
         del groups
         keys = data[group].take(_first_rows(gid)).reset_index(drop=True)
         values = data[value_col]
-        floats = _float_values(values) if summation == "exact" else None
+        if values.dtype != np.float64:
+            # widened before the mean, not after: a float32 mean widened
+            # afterwards is a float64 that holds seven digits
+            values = pd.Series(_float_values(values), index=values.index)
+        floats = values.to_numpy() if summation == "exact" else None
     pieces: list[pd.DataFrame] = []
     for (lo, hi), label in zip(windows, labels):
         mask = data[time_col].between(lo, hi).to_numpy()
@@ -833,9 +836,7 @@ def window_means(
                 # as the groupby below hands them over
                 ids = pd.unique(gid[mask])
                 exact = _exact_group_means(floats[mask], gid[mask], n_groups)
-                means = pd.Series(
-                    _as_mean_of(exact[ids], values.dtype), index=ids
-                )
+                means = pd.Series(exact[ids], index=ids)
             else:
                 means = values[mask].groupby(gid[mask], sort=False).mean()
             # the key frame a groupby over the columns returns (it infers
@@ -848,6 +849,11 @@ def window_means(
         piece[window_col] = label
         pieces.append(piece)
     out = pd.concat(pieces, ignore_index=True)
+    if out[value_col].dtype != np.float64:
+        # the groupby over the columns above keeps the column's dtype,
+        # and how pandas types a column assigned over another has
+        # changed between its versions
+        out[value_col] = _float_values(out[value_col])
     return out[group + [window_col, value_col]]
 
 

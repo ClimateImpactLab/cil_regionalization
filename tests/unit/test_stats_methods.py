@@ -378,13 +378,97 @@ class TestExactSummation:
             first, _sorted(window_means(frame, **kwargs)), check_exact=True
         )
 
-    @pytest.mark.parametrize("dtype", ["float32", "Float64"])
-    def test_window_means_keep_the_value_dtype(self, dtype):
+    @pytest.mark.parametrize("summation", ["legacy", "exact"])
+    @pytest.mark.parametrize("dtype", ["float32", "Float64", "float64"])
+    def test_window_means_are_float64_whatever_the_value_dtype(
+        self, dtype, summation
+    ):
+        """The dtype used to follow the column and the pandas version.
+        The float64 cases cannot go red by reverting, since a float64
+        column always came back float64. They failed under a mutation
+        that narrows the result to float32."""
         frame = _timed()
         frame["value"] = frame["value"].astype(dtype)
-        kwargs = dict(time_col="year", windows=[(2040, 2059)])
-        got = window_means(frame, summation="exact", **kwargs)
-        assert got["value"].dtype == window_means(frame, **kwargs)["value"].dtype
+        got = window_means(
+            frame, time_col="year", windows=[(2040, 2059)], summation=summation
+        )
+        assert got["value"].dtype == np.dtype("float64")
+
+    @pytest.mark.parametrize("summation", ["legacy", "exact"])
+    @pytest.mark.parametrize("dtype", ["float32", "Float64"])
+    def test_a_narrow_or_nullable_column_is_widened_before_the_mean(
+        self, dtype, summation
+    ):
+        """The mean of a float32 column is the float64 mean of the same
+        numbers, to the last bit, and a nullable column gives NaN where
+        a member has no value."""
+        frame = _timed()
+        frame.loc[(frame["target"] == "t1") & (frame["draw"] == "d2"), "value"] = np.nan
+        frame.loc[(frame["target"] == "t3") & (frame["year"] < 2047), "value"] = np.nan
+        narrow = frame.assign(value=frame["value"].astype(dtype))
+        wide = narrow.assign(value=narrow["value"].astype("float64"))
+        kwargs = dict(time_col="year", windows=[(2040, 2059), (2045, 2050)],
+                      summation=summation)
+        got = window_means(narrow, **kwargs)
+        pd.testing.assert_frame_equal(got, window_means(wide, **kwargs),
+                                      check_exact=True)
+        assert got["value"].isna().sum() == 2
+        if summation == "exact":
+            part = wide[(wide["target"] == "t0") & (wide["draw"] == "d0")]
+            row = got[(got["target"] == "t0") & (got["draw"] == "d0")
+                      & (got["window"] == "2040-2059")]
+            assert row["value"].item() == math.fsum(part["value"]) / len(part)
+
+    @pytest.mark.parametrize("summation", ["legacy", "exact"])
+    @pytest.mark.parametrize("dtype", ["float32", "Float64", "float64"])
+    def test_summarize_samples_is_float64_whatever_the_value_dtype(
+        self, dtype, summation
+    ):
+        """The mean is asked for alone as well, because next to a
+        quantile a float32 mean was widened when stacked, which hid its
+        dtype. The float64 cases and float32 under "exact" cannot go
+        red by reverting. All six failed under a mutation that narrows
+        the result to float32."""
+        frame = _timed()
+        frame["value"] = frame["value"].astype(dtype)
+        for quantiles in ([], [0.25, 0.5]):
+            got = summarize_samples(
+                frame, sample_dims=["draw"], time_col="year",
+                window=(2040, 2059), quantiles=quantiles, summation=summation,
+            )
+            assert got["value"].dtype == np.dtype("float64")
+
+    @pytest.mark.parametrize("weighted", [False, True])
+    @pytest.mark.parametrize("quantile_method", ["legacy", "inverted_cdf"])
+    @pytest.mark.parametrize("summation", ["legacy", "exact"])
+    @pytest.mark.parametrize("dtype", ["float32", "Float64"])
+    def test_summarize_samples_widens_before_the_window_mean(
+        self, dtype, summation, quantile_method, weighted
+    ):
+        """The statistics of a float32 or nullable column are those of
+        the same numbers held as float64, to the last bit. The weighted
+        nullable cases cannot go red by reverting, since such a column
+        was always taken as float64 there. They failed under a mutation
+        that rounds the widened column to float32."""
+        frame = _timed()
+        frame.loc[(frame["target"] == "t1") & (frame["draw"] == "d2"), "value"] = np.nan
+        frame.loc[(frame["target"] == "t3") & (frame["year"] < 2047), "value"] = np.nan
+        if weighted:
+            # no member holds half the weight, so the legacy quantiles
+            # asked for below are never the -inf that "exact" refuses
+            frame["w"] = frame["draw"].map(
+                {"d0": 0.3, "d1": 0.1, "d2": 0.2, "d3": 0.15, "d4": 0.25})
+        narrow = frame.assign(value=frame["value"].astype(dtype))
+        wide = narrow.assign(value=narrow["value"].astype("float64"))
+        kwargs = dict(
+            sample_dims=["draw"], time_col="year", window=(2040, 2059),
+            quantiles=[0.5, 0.83], weight_col="w" if weighted else None,
+            quantile_method=quantile_method, summation=summation,
+        )
+        got = summarize_samples(narrow, **kwargs)
+        assert got["value"].dtype == np.dtype("float64")
+        pd.testing.assert_frame_equal(got, summarize_samples(wide, **kwargs),
+                                      check_exact=True)
 
 
 class TestInfiniteStatistics:

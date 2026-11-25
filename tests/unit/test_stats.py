@@ -506,15 +506,21 @@ class TestWindowMeansCodes:
         with pytest.raises(ValueError, match="1 rows duplicated"):
             window_means(df, time_col="epoch", windows=[(2050, 2050)])
 
-    def test_nullable_values_keep_their_dtype(self):
+    def test_nullable_values_come_back_as_float64(self):
+        """A window mean is float64 whatever the column was. The values
+        are those of a groupby over the nullable column, with NaN where
+        it gives NA."""
         from cil_regionalization.stats import window_means
 
         df = self._yearly(2)
         df["value"] = df["value"].astype("Float64")
         out = window_means(df, time_col="epoch", windows=self.WINDOWS)
-        assert out["value"].dtype == "Float64"
-        pd.testing.assert_frame_equal(out, self._by_columns(df, self.WINDOWS),
-                                      check_exact=True)
+        assert out["value"].dtype == np.dtype("float64")
+        expected = self._by_columns(df, self.WINDOWS)
+        assert expected["value"].dtype == "Float64"
+        expected["value"] = expected["value"].to_numpy(dtype="float64",
+                                                       na_value=np.nan)
+        pd.testing.assert_frame_equal(out, expected, check_exact=True)
 
 
 class TestPooledStatisticsGuards:
