@@ -511,6 +511,261 @@ class TestRowOrder:
             _ordered(stats, cfg)
 
 
+def _through_parquet(frame: pd.DataFrame, path: Path) -> pd.DataFrame:
+    frame.to_parquet(path, index=False)
+    return pd.read_parquet(path)
+
+
+class TestLabelPlacement:
+    """The level labels go on the reduced rows and not on the leaf, and
+    no file changes for it."""
+
+    _WINDOWS = [(2050, 2051), (2080, 2081)]
+
+    @staticmethod
+    def _build_tree(root: Path) -> None:
+        """Leaves with a dimension of their own next to the year."""
+        for i, combo in enumerate(itertools.product(*_LEVELS.values())):
+            leaf_dir = root.joinpath(*combo)
+            leaf_dir.mkdir(parents=True, exist_ok=True)
+            rows = [
+                {
+                    "unit_id": unit,
+                    "band": band,
+                    "year": year,
+                    "value": (base + 10.0 * i + (year - 2050)) / 7.0 + shift,
+                }
+                for unit, base in (("u1", 100.0), ("u2", 40.0))
+                for band, shift in (("old", 0.3), ("young", 0.0))
+                for year in (2050, 2051, 2080, 2081)
+            ]
+            pd.DataFrame(rows).to_parquet(leaf_dir / "damages.parquet", index=False)
+
+    @staticmethod
+    def _cfg(weights_dir, tree, out) -> MonteCarloPipelineConfig:
+        raw = _pipeline_cfg(weights_dir, tree, out, levels=_LEVELS).model_dump()
+        # kumquat is not pooled, so it stays a column of the statistics
+        raw["stats"]["sample_dims"] = ["zeppelin"]
+        raw["output"]["write_reduced"] = True
+        return MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_the_weights_are_applied_to_a_frame_without_labels(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        from cil_regionalization.pipelines import montecarlo
+
+        tree = tmp_path / "tree"
+        self._build_tree(tree)
+        real, seen = montecarlo.apply_weights, []
+
+        def apply_weights(artifact, data, **kwargs):
+            seen.append(list(data.columns))
+            return real(artifact, data, **kwargs)
+
+        monkeypatch.setattr(montecarlo, "apply_weights", apply_weights)
+        run_pipeline(self._cfg(weights_dir, tree, tmp_path / "out"))
+        assert seen == [["unit_id", "band", "year", "value"]] * 6
+
+    def test_every_file_is_what_labelling_the_leaf_first_gave(
+        self, weights_dir, tmp_path
+    ):
+        """The leaf files, the reduced file and the statistics, column
+        order and dtypes included. Cannot go red by reverting, because
+        labelling the leaf first is what the old code did. It failed
+        with the labels put after every other column."""
+        from cil_regionalization.apply import WeightsArtifact, apply_weights
+        from cil_regionalization.pipelines.montecarlo import _ordered
+        from cil_regionalization.stats import pooled_statistics, window_means
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        self._build_tree(tree)
+        cfg = self._cfg(weights_dir, tree, out)
+        result = run_pipeline(cfg)
+
+        artifact = WeightsArtifact.load(weights_dir)
+        reduced = []
+        for kumquat, zeppelin in itertools.product(*_LEVELS.values()):
+            leaf = pd.read_parquet(tree / kumquat / zeppelin / "damages.parquet")
+            applied = apply_weights(
+                artifact,
+                leaf.assign(kumquat=kumquat, zeppelin=zeppelin),
+                kind="extensive",
+                weight="area",
+                data_version=SOURCE_VERSION,
+                value_col="value",
+            ).frame
+            assert list(applied.columns) == [
+                "target_id", "band", "year", "kumquat", "zeppelin", "value",
+            ]
+            on_disk = pd.read_parquet(
+                out / "leaves" / kumquat / zeppelin / "aggregated_damages.parquet"
+            )
+            pd.testing.assert_frame_equal(
+                on_disk,
+                _through_parquet(applied, tmp_path / "expected.parquet"),
+                check_exact=True,
+            )
+            reduced.append(
+                window_means(
+                    applied, time_col="year", windows=self._WINDOWS,
+                    value_col="value",
+                    summation="fast",
+                )
+            )
+        combined = pd.concat(reduced, ignore_index=True)
+        assert list(combined.columns) == [
+            "target_id", "band", "kumquat", "zeppelin", "window", "value",
+        ]
+        statistics = _ordered(
+            pooled_statistics(
+                combined, sample_dims=["zeppelin"], value_col="value",
+                quantiles=[0.05, 0.95],
+                quantile_method="linear",
+                summation="fast",
+            ),
+            cfg,
+        )
+        assert list(statistics.columns) == [
+            "target_id", "band", "kumquat", "window", "statistic", "value",
+        ]
+
+        pd.testing.assert_frame_equal(result.stats, statistics, check_exact=True)
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(out / "statistics.parquet"),
+            _through_parquet(statistics, tmp_path / "expected.parquet"),
+            check_exact=True,
+        )
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(out / "statistics.reduced.parquet"),
+            _through_parquet(
+                _ordered(combined, cfg), tmp_path / "expected.parquet"
+            ),
+            check_exact=True,
+        )
+
+    def test_a_passthrough_leaf_file_has_its_labels_last(self, tmp_path):
+        """Without weights the labels follow the leaf's own columns in
+        the file, the value among them. Cannot go red by reverting,
+        because the old code wrote the same file. It failed with the
+        labels put before the value, where they go when weights are
+        applied."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        self._build_tree(tree)
+        raw = self._cfg(tmp_path, tree, out).model_dump()
+        del raw["weights"]
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+
+        for kumquat, zeppelin in itertools.product(*_LEVELS.values()):
+            leaf = pd.read_parquet(tree / kumquat / zeppelin / "damages.parquet")
+            on_disk = pd.read_parquet(
+                out / "leaves" / kumquat / zeppelin / "aggregated_damages.parquet"
+            )
+            assert list(on_disk.columns) == [
+                "unit_id", "band", "year", "value", "kumquat", "zeppelin",
+            ]
+            pd.testing.assert_frame_equal(
+                on_disk,
+                _through_parquet(
+                    leaf.assign(kumquat=kumquat, zeppelin=zeppelin),
+                    tmp_path / "expected.parquet",
+                ),
+                check_exact=True,
+            )
+        reduced = pd.read_parquet(out / "statistics.reduced.parquet")
+        assert list(reduced.columns) == [
+            "unit_id", "band", "kumquat", "zeppelin", "window", "value",
+        ]
+
+    @pytest.mark.parametrize(
+        "name", ["window", "statistic", "n_members", "model_weight", "target_id"]
+    )
+    def test_a_level_named_like_an_output_column_is_refused_before_any_leaf(
+        self, weights_dir, tmp_path, monkeypatch, name
+    ):
+        from cil_regionalization.pipelines import montecarlo
+
+        levels = {name: ["k0", "k1"], "zeppelin": ["z0", "z1"]}
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, levels)
+        real, read = montecarlo._read_leaf, []
+
+        def read_leaf(path, *args):
+            read.append(path)
+            return real(path, *args)
+
+        monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
+        with pytest.raises(ValueError, match=f"tree level '{name}' is also"):
+            run_pipeline(_pipeline_cfg(weights_dir, tree, out, levels=levels))
+        assert read == []
+        assert not out.exists()
+
+    def test_a_level_named_like_a_leaf_column_is_refused(
+        self, weights_dir, tmp_path
+    ):
+        """Cannot go red by reverting, because the old code refused it
+        too. It failed with the check taken out. No leaf file is
+        written here, and the year is gone from the reduced rows by the
+        time the labels go on, so nothing else stops a level of that
+        name."""
+        levels = {"year": ["k0", "k1"], "zeppelin": ["z0", "z1"]}
+        tree = tmp_path / "tree"
+        _build_tree(tree, levels)
+        raw = _pipeline_cfg(
+            weights_dir, tree, tmp_path / "out", levels=levels
+        ).model_dump()
+        raw["output"]["write_leaves"] = False
+        with pytest.raises(
+            ValueError, match="leaf already has a column named 'year'"
+        ):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+
+    def test_a_passthrough_leaf_of_the_year_and_the_value_alone_still_runs(
+        self, tmp_path
+    ):
+        """Cannot go red by reverting, because the old code labelled
+        every leaf first. It failed with this leaf reduced bare, which
+        leaves the window means nothing to group by."""
+        tree = tmp_path / "tree"
+        for i, combo in enumerate(itertools.product(*_LEVELS.values())):
+            leaf_dir = tree.joinpath(*combo)
+            leaf_dir.mkdir(parents=True)
+            pd.DataFrame(
+                {
+                    "year": [2050, 2051, 2080, 2081],
+                    "value": [100.0 + 10.0 * i + y for y in (0, 1, 30, 31)],
+                }
+            ).to_parquet(leaf_dir / "damages.parquet", index=False)
+        cfg = MonteCarloPipelineConfig.model_validate(
+            {
+                "tree": {
+                    "root": str(tree),
+                    "levels": list(_LEVELS),
+                    "filename": "damages.parquet",
+                    "expect": _LEVELS,
+                },
+                "data": {"kind": "extensive", "version": SOURCE_VERSION},
+                "stats": {
+                    "sample_dims": list(_LEVELS),
+                    "time_col": "year",
+                    "quantile_method": "linear",
+                    "summation": "fast",
+                    "windows": [[2050, 2051], [2080, 2081]],
+                },
+                "output": {"dir": str(tmp_path / "out"), "write_reduced": True},
+            }
+        )
+        stats = run_pipeline(cfg).stats
+        assert list(stats.columns) == ["window", "statistic", "value"]
+        # the six leaves average 100 + 10 i + 0.5 and 100 + 10 i + 30.5
+        assert stats["value"].tolist() == [125.5, 155.5]
+        reduced = pd.read_parquet(tmp_path / "out" / "statistics.reduced.parquet")
+        assert list(reduced.columns) == ["kumquat", "zeppelin", "window", "value"]
+        on_disk = pd.read_parquet(
+            tmp_path / "out" / "leaves" / "k0" / "z0" / "aggregated_damages.parquet"
+        )
+        assert list(on_disk.columns) == ["year", "value", "kumquat", "zeppelin"]
+
+
 class TestConfigurableTree:
     def test_three_level_layout_with_other_names(self, weights_dir, tmp_path):
         """Not batch/rcp/gcm/iam/ssp: three levels, different names and

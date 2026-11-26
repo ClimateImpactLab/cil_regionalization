@@ -8,14 +8,14 @@ Composes the library core and adds no mathematics. The sequence:
        layout is one instance of the pattern; nothing here knows those
        names, the depth, or the order.
     2. Fail before any work if a declared leaf is missing on disk.
-    3. Per leaf: read the frame, attach the leaf's level values as
-       columns, run `apply.apply_weights` with the configured kind,
-       weight, versions, and policies. Coverage and mass balance run per
-       leaf exactly as they do for a direct library call, and a failing
-       leaf fails the run. Optionally write the aggregated leaf, mirrored
-       under the output directory. Then take the window mean
-       (`stats.window_means`) over the configured windows, collapsing the
-       time dimension to the window count before anything is pooled.
+    3. Per leaf: read the frame and run `apply.apply_weights` with the
+       configured kind, weight, versions, and policies. Coverage and mass
+       balance run per leaf exactly as they do for a direct library call,
+       and a failing leaf fails the run. Optionally write the aggregated
+       leaf, mirrored under the output directory. Then take the window
+       mean (`stats.window_means`) over the configured windows, collapsing
+       the time dimension to the window count before anything is pooled,
+       and attach the leaf's level values as columns to the reduced rows.
     4. Concatenate the reduced leaves and run `stats.pooled_statistics`
        once, with the window label as an ordinary identity dimension;
        write the combined statistics plus a pipeline manifest recording
@@ -493,6 +493,10 @@ def run_pipeline(
         if cfg.weights is not None
         else None
     )
+    _check_level_names(
+        cfg.tree.levels,
+        list(artifact.schema.id_fields) if artifact is not None else [],
+    )
     model_weights = None
     if cfg.stats.model_weights is not None:
         # The file is read here and nowhere else. The workers get these
@@ -669,6 +673,35 @@ def run_pipeline(
             "manifest": str(plan.manifest_path),
         },
     )
+
+
+def _check_level_names(levels: list[str], id_fields: list[str]) -> None:
+    """Raise if a tree level is named like an id field of the weights
+    artifact or like a column the pipeline writes itself."""
+    taken = {
+        **{name: "an id field of the weights artifact" for name in id_fields},
+        "window": "the column of window labels",
+        "statistic": "the column of statistic labels",
+        "n_members": "the column stats.include_n_members writes",
+        "model_weight": "the column the model weights travel in",
+    }
+    for level in levels:
+        if level in taken:
+            raise ValueError(
+                f"tree level {level!r} is also {taken[level]}. A tree "
+                f"level becomes a column of the output, so it needs a "
+                f"name of its own."
+            )
+
+
+def _labelled(
+    frame: pd.DataFrame, labels: dict[str, str], before: Optional[str] = None
+) -> pd.DataFrame:
+    """``frame`` with one constant column per tree level, placed just
+    before the column ``before``, or after every column if it is None."""
+    columns = list(frame.columns)
+    at = len(columns) if before is None else columns.index(before)
+    return frame.assign(**labels)[columns[:at] + list(labels) + columns[at:]]
 
 
 def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame:
@@ -850,7 +883,9 @@ def _subtract_leaf(
 
 def _process_leaf(task: tuple) -> dict:
     """Apply weights to one leaf (unless passthrough), then reduce it
-    to window means.
+    to window means. The leaf's level values go on the reduced rows, and
+    on the leaf file if one is written, never on the frame the weights
+    are applied to.
 
     Returns accounting, never raises. Module-level and tuple-argument so
     a multiprocessing pool can run it; errors come back as strings so
@@ -865,13 +900,13 @@ def _process_leaf(task: tuple) -> dict:
         frame = _read_leaf(leaf.path, data_cfg, artifact)
         if leaf.subtract_path is not None:
             frame = _subtract_leaf(frame, leaf.subtract_path, data_cfg, artifact)
-        for name, value in leaf.labels(levels).items():
+        labels = leaf.labels(levels)
+        for name in labels:
             if name in frame.columns:
                 raise ValueError(
                     f"leaf already has a column named {name!r}; tree level "
                     f"names must not collide with leaf columns"
                 )
-            frame[name] = value
 
         if artifact is None:
             # passthrough: the leaf's own regions are the product rows,
@@ -880,6 +915,8 @@ def _process_leaf(task: tuple) -> dict:
             out_frame = frame
             coverage = None
             rel_error = None
+            # the labels follow the leaf's own columns in the file
+            labels_before = None
         else:
             applied = apply_weights(
                 artifact,
@@ -896,17 +933,32 @@ def _process_leaf(task: tuple) -> dict:
             coverage = applied.coverage.counts
             balance = applied.mass_balance
             rel_error = balance.rel_error if balance is not None else None
+            # the labels sit between the dimensions and the value
+            labels_before = data_cfg.value_col
         if leaf.output_path is not None:
             leaf.output_path.parent.mkdir(parents=True, exist_ok=True)
-            out_frame.to_parquet(leaf.output_path, index=False)
+            _labelled(out_frame, labels, labels_before).to_parquet(
+                leaf.output_path, index=False
+            )
 
+        # The labels are constant over a leaf. On the frame they would be
+        # grouping keys of every row, in the weights and again in the
+        # window means, so they go on the reduced rows. A passthrough
+        # leaf of the time and the value alone has nothing else to
+        # group by, and keeps its labels first.
+        labels_first = all(
+            c in (stats_cfg.time_col, data_cfg.value_col)
+            for c in out_frame.columns
+        )
         reduced = window_means(
-            out_frame,
+            _labelled(out_frame, labels) if labels_first else out_frame,
             time_col=stats_cfg.time_col,
             windows=stats_cfg.windows,
             value_col=data_cfg.value_col,
             summation=stats_cfg.summation,
         )
+        if not labels_first:
+            reduced = _labelled(reduced, labels, "window")
         if artifact is None:
             # Dictionary-encode the two high-cardinality repeated string
             # columns before thousands of reduced leaves concatenate in
@@ -922,7 +974,7 @@ def _process_leaf(task: tuple) -> dict:
             # one climate model per leaf, so its weight is a constant
             # column here; attaching it per leaf replaces a merge over
             # the full combined frame that dominated end-of-run memory
-            value = leaf.labels(levels)[stats_cfg.model_weight_level]
+            value = labels[stats_cfg.model_weight_level]
             reduced["model_weight"] = _WORKER_STATE["model_weights"].weight_of(
                 value
             )

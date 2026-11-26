@@ -53,7 +53,7 @@ def test_label_placement_gives_the_same_leaf():
     after_s, after = best(
         lambda: window_means(applied, **_KW).assign(**LABELS)[_COLUMNS]
     )
-    # the pipeline's order: labels on the leaf before the weights
+    # labels on the leaf before the weights, which the pipeline avoids
     labelled_leaf = leaf.assign(**LABELS)
     first_s, applied_first = best(lambda: apply(art, labelled_leaf))
     first = window_means(applied_first, **_KW)[_COLUMNS]

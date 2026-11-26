@@ -15,6 +15,8 @@ float64 whatever the dtype of the value column. That changes their
 result for a float32 or a nullable column under every setting.
 A model weights table with two rows for one model is now refused, and
 the pipeline manifest records the weights each run used.
+A tree level named like a column the pipeline writes itself is refused
+before any leaf is read.
 
 - Changed: the pipeline sorts the statistics rows before writing them:
   by statistic in the order requested (the mean, then the quantiles as
@@ -149,6 +151,23 @@ the pipeline manifest records the weights each run used.
   their weights. The two together are the whole table, so a run can be
   repeated from its manifest when the file is gone. A run without
   model weights records `null`. No statistic changes.
+- Changed: the pipeline puts the tree level labels on a leaf's rows
+  after the window means are taken. Before, it put them on the leaf
+  first, where `apply_weights` and `window_means` grouped every row by
+  them. On the benchmark leaf (4.26 million rows after the weights)
+  `apply_weights` took 2.7 s with the labels and 1.1 s without, and
+  `window_means` 0.46 s against 0.24 s. No file changes for it. The
+  statistics, the reduced file and the leaf files keep their columns,
+  column order and values.
+- Changed: a tree level named `window`, `statistic`, `n_members` or
+  `model_weight`, or like an id field of the weights artifact, is
+  refused before any leaf is read. A level becomes a column of the
+  output, and those names are columns the pipeline writes itself.
+  Before, `window` and `statistic` were refused leaf by leaf, after
+  every leaf had been read, and the name of an id field failed every
+  leaf with an error that gave only the name. A level named `n_members`
+  or `model_weight` ran when `stats.include_n_members` and the model
+  weights were off, and its values sat in a column of that name.
 
 ## v0.5.0
 
