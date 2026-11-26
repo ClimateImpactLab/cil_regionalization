@@ -307,6 +307,7 @@ time_col = "year"
 quantiles = [0.05, 0.5, 0.95]
 quantile_method = "lower_step"
 summation = "fast"
+time_reduction = "window_mean"
 
 [stats.warming_levels]
 gmst = "gmst.csv"
@@ -344,13 +345,14 @@ distinct members of the temperature table behind it, which is the
 number to read a 95th percentile over four models by. A level nobody
 is at in a period has no row, and the manifest records it with a zero.
 
-The statistics come from the leaf files under every stage, as with
-`stats.pool_years`, so stage `all` writes the leaves and then reduces
-them, and `--stage reduce` gives other levels, other periods or the
-other reduction from the same leaves. Collapsing each member's window
-first is the default, and `stats.pool_years = true` pools the years
-instead. The span is what is written: `[2040, 2058]` is nineteen
-years.
+The statistics come from the leaf files under every stage, as when
+the years are pooled, so stage `all` writes the leaves and then
+reduces them, and `--stage reduce` gives other levels, other periods
+or the other reduction from the same leaves. `time_reduction =
+"window_mean"` collapses each member's window first and `"pooled"`
+pools its years. `"per_year"` is refused with warming levels, since a
+level is reached over a period. The span is what is written:
+`[2040, 2058]` is nineteen years.
 
 A config that leaves out `reference_period`, `offset`, `levels`,
 `half_width`, `smoothing` or `periods` is refused. So is one that sets
@@ -361,9 +363,9 @@ The paper's two families differ in both settings. Its physical
 products collapse each member's window first and take the extraction
 tool's step, so `quantile_method = "lower_step"`, as in the example.
 Its valued products pool the years with the models and the draws over
-twenty years and take xarray's quantile, so `stats.pool_years = true`
-with `quantile_method = "linear"` and periods whose impact span is
-twenty years. A member the tree declares
+twenty years and take xarray's quantile, so `time_reduction =
+"pooled"` with `quantile_method = "linear"` and periods whose impact
+span is twenty years. A member the tree declares
 that has no row in the table is refused before any leaf is read. A
 leaf that lacks a year of an impact span its member is pooled over, as
 a row or as a value, is refused by name, since its mean would be over
@@ -465,18 +467,27 @@ plain string when leaves are written. A categorical, datetime or
 nullable column is refused, because pandas 2 and pandas 3 write those
 differently.
 
-## Pooling the years of a window
+## What happens to the years
 
-By default the years of a member inside a window are averaged first,
-and the statistics are over those means, one value a model and draw.
-`stats.pool_years = true` (experimental) takes no window mean. Every
-year of a member inside a window is a member of the sample, so a
-quantile is over models, draws and years together and carries the
-spread from year to year. A year inside two windows is pooled in both.
+`stats.time_reduction` says what is done with the years of a member,
+and has no default:
+
+- `"window_mean"` averages each member's years inside a window first,
+  and the statistics are over those means, one value a model and draw.
+- `"pooled"` takes no window mean. Every year of a member inside a
+  window is a member of the sample, so a quantile is over models,
+  draws and years together and carries the spread from year to year.
+  A year inside two windows is pooled in both.
+- `"per_year"` takes no window mean either and keeps the year. The
+  statistics are over the members within each year from the first to
+  the last of `stats.years`, which takes the place of `stats.windows`,
+  and the file has a `year` column where the others have `window`. It
+  is a time series, one row a target, year and statistic.
 
 ```toml
 [stats]
-pool_years = true
+time_reduction = "per_year"
+years = [2020, 2099]
 
 [output]
 write_leaves = true
@@ -485,17 +496,21 @@ write_leaves = true
 memory_gb = 128
 ```
 
-The pooled rows are the leaves' own rows, far more than one process
-can hold, so the statistics always come from the leaf files, one block
-of targets at a time. Stage `all` writes the leaves and then reduces
-them. It asks for `output.write_leaves = true` and for the memory
-budget before it reads a leaf. The blocks are sized after the leaves
-are written, so a budget too small for one row group is found then.
-The leaves stay, and `--stage reduce` takes the statistics from them
-with a larger budget. `output.write_reduced` is refused, and so is a
-run without `[weights]`.
+The rows of `"pooled"` and `"per_year"` are the leaves' own rows, far
+more than one process can hold, so their statistics always come from
+the leaf files, one block of targets at a time. Stage `all` writes the
+leaves and then reduces them. It asks for `output.write_leaves = true`
+and for the memory budget before it reads a leaf. The blocks are sized
+after the leaves are written, so a budget too small for one row group
+is found then. The leaves stay, and `--stage reduce` takes the
+statistics from them with a larger budget. `output.write_reduced` is
+refused, and so is a run without `[weights]`. A config that still has
+`stats.pool_years` is refused and told which value to write.
 
-What it changes:
+Per year, a year a member lacks is left out of that year's statistics,
+and `n_members` shows the smaller sample. Nothing is refused for it.
+
+What pooling changes:
 
 - The mean is over member-years. When every member has every year of
   the window it is the mean of the window means, up to rounding. A
@@ -508,8 +523,8 @@ What it changes:
   what it is without pooling, the members behind a statistic: those
   with a value in the window and, with model weights, a weight above
   zero. `n_sample` is the member-years behind it.
-- The manifest records `pool_years`, next to `quantile_method` and
-  `summation`.
+- The manifest records `time_reduction`, next to `quantile_method`
+  and `summation`, and `years` for a product per year.
 
 ## Your own NetCDF
 

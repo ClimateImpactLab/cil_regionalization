@@ -22,8 +22,9 @@ before any leaf is read.
 is written in a new layout under a new name.** Leaf files of the old
 layout are left where they are and are not read.
 A new stage, `reduce`, takes the statistics from leaves written before.
-A new experimental option, `stats.pool_years`, pools the years of a
-window with the models and the draws.
+A new option, `stats.time_reduction`, says what is done with the years
+of a member: averaged over a window first, pooled with the models and
+the draws, or kept, one row a year.
 New: `assign_warming_levels` gives each member of a temperature table
 its warming level in a calendar period.
 
@@ -305,8 +306,10 @@ its warming level in a calendar period.
   repeated. No run of the pipeline built such a frame.
 - The pipeline writes a statistics file and its manifest under a
   temporary name and renames them, the manifest last.
-- New, experimental: `stats.pool_years` in a pipeline config, off by
-  default. With it no window mean is taken. Every year of a member
+- New: `stats.time_reduction` in a pipeline config, with no default:
+  `"window_mean"`, `"pooled"` or `"per_year"`. `"window_mean"` is what
+  every release so far has done. Under `"pooled"` no window mean is
+  taken. Every year of a member
   inside a window is a member of the sample, so the statistics are
   over models, draws and years together, and a year inside two windows
   is pooled in both. A model weight applies to each member-year. A
@@ -321,18 +324,31 @@ its warming level in a calendar period.
   stay and `--stage reduce` runs from them. `output.write_reduced` and
   a run without `[weights]` are refused, and so is `stats.time_col`
   among `stats.sample_dims`.
-- New: with `stats.pool_years` and `stats.include_n_members` the
-  statistics file has an `n_sample` column after `n_members`.
-  `n_sample` is the member-years behind a statistic. `n_members` keeps
-  its meaning, the members behind it: those with a value in the window
-  and, with model weights, a weight above zero. Without
-  `stats.pool_years` no file gains a column.
+- New: under `"per_year"` no window mean is taken and the year is
+  kept. The statistics are over the members within each year from the
+  first to the last of `stats.years`, which replaces `stats.windows`,
+  and the file has an integer `year` column where the others have
+  `window`, sorted where the window is. A year a member lacks is left
+  out of that year's statistics and shows in `n_members`. It runs from
+  the leaf files under every stage, as `"pooled"` does, and is refused
+  with warming levels, since a level is reached over a period. With one
+  window a year, `"window_mean"` gives the same statistics, to the bit,
+  under another column name.
+- New: with `"pooled"` and `stats.include_n_members` the statistics
+  file has an `n_sample` column after `n_members`. `n_sample` is the
+  member-years behind a statistic. `n_members` keeps its meaning, the
+  members behind it: those with a value in the window and, with model
+  weights, a weight above zero. Without `"pooled"` no file gains a
+  column.
+- A config with `stats.pool_years`, a boolean an earlier build of this
+  release had, is refused with the value of `stats.time_reduction` to
+  write.
 - Changed: a tree level named `n_sample` is refused before any leaf is
   read, as `n_members` is.
-- The pipeline manifest records `pool_years`. A run of stage `all`
-  with pooled years writes the manifest the reduce stage writes, with
-  `"stage": "all"`.
-- New: `ReduceRequest.pool_years`, and `ReduceBackend.check_options`,
+- The pipeline manifest records `time_reduction`, and `years` for a
+  product per year. A run of stage `all` that pools or keeps the years
+  writes the manifest the reduce stage writes, with `"stage": "all"`.
+- New: `ReduceRequest.time_reduction`, and `ReduceBackend.check_options`,
   which the pipeline calls before it aggregates anything.
 - Changed: the pandas reduce backend plans a block at 240 bytes for a
   row it keeps and 40 more for each dimension the leaf has of its own,
@@ -379,8 +395,9 @@ its warming level in a calendar period.
   with a zero. The statistics come from the leaf files under every
   stage, so stage `all` writes the leaves and then reduces, and the
   reduce stage gives other levels, periods or the other reduction
-  from the same leaves. `stats.pool_years` chooses between collapsing
-  each member's window first and pooling its years.
+  from the same leaves. `stats.time_reduction` chooses between
+  collapsing each member's window first and pooling its years, and
+  `"per_year"` is refused with warming levels.
   Refused: a config without `reference_period`, `offset`, `levels`,
   `half_width`, `smoothing` or `periods`; `stats.windows` or
   `stats.model_weights` next to it; a member column that is not a tree

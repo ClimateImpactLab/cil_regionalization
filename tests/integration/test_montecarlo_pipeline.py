@@ -19,6 +19,7 @@ import math
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pytest
 from shapely.geometry import box
@@ -135,6 +136,7 @@ def _pipeline_cfg(
                 "time_col": "year",
                 "quantile_method": "linear",
                 "summation": "fast",
+                "time_reduction": "window_mean",
                 "windows": [[2050, 2051], [2080, 2081]],
                 "quantiles": [0.05, 0.95],
             },
@@ -742,6 +744,7 @@ class TestLabelPlacement:
                     "time_col": "year",
                     "quantile_method": "linear",
                     "summation": "fast",
+                    "time_reduction": "window_mean",
                     "windows": [[2050, 2051], [2080, 2081]],
                 },
                 "output": {
@@ -792,6 +795,7 @@ class TestConfigurableTree:
                     "time_col": "year",
                     "quantile_method": "linear",
                     "summation": "fast",
+                    "time_reduction": "window_mean",
                     "windows": [[2050, 2051]],
                     "quantiles": [0.5],
                 },
@@ -912,6 +916,7 @@ sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
 quantile_method = "linear"
 summation = "fast"
+time_reduction = "window_mean"
 windows = [[2050, 2051]]
 quantiles = [0.5]
 
@@ -959,6 +964,7 @@ sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
 quantile_method = "linear"
 summation = "fast"
+time_reduction = "window_mean"
 windows = [[2050, 2051]]
 
 [output]
@@ -1046,6 +1052,7 @@ class TestNetcdfVariant:
                     "time_col": "year",
                     "quantile_method": "linear",
                     "summation": "fast",
+                    "time_reduction": "window_mean",
                     "windows": [[2050, 2051], [2080, 2081]],
                     "quantiles": [0.05, 0.95],
                 },
@@ -1092,6 +1099,7 @@ sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
 quantile_method = "linear"
 summation = "fast"
+time_reduction = "window_mean"
 windows = [[2050, 2051]]
 quantiles = [0.5]
 
@@ -1474,6 +1482,7 @@ class TestPassthrough:
                 "time_col": "year",
                 "quantile_method": "linear",
                 "summation": "fast",
+                "time_reduction": "window_mean",
                 "windows": windows or [[2050, 2051], [2080, 2081]],
                 "quantiles": [0.05, 0.95],
             },
@@ -2377,6 +2386,7 @@ sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
 quantile_method = "linear"
 summation = "fast"
+time_reduction = "window_mean"
 windows = [[2050, 2051]]
 
 [output]
@@ -2926,6 +2936,7 @@ sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
 quantile_method = "linear"
 summation = "fast"
+time_reduction = "window_mean"
 windows = [[2050, 2051]]
 
 [output]
@@ -2963,7 +2974,7 @@ _ONE_POOLED_GROUP_GB = 14000e-9
 
 @pytest.mark.usefixtures("one_target_a_group")
 class TestPooledYears:
-    """``stats.pool_years`` pools the years inside a window with the
+    """``stats.time_reduction = "pooled"`` pools the years inside a window with the
     models and the draws, from the leaf files, under every stage."""
 
     _MODEL_WEIGHTS = {"z0": 0.6, "z1": 0.3, "z2": 0.0}
@@ -2974,7 +2985,7 @@ class TestPooledYears:
         if not tree.exists():
             TestLabelPlacement._build_tree(tree)
         raw = TestReduce._raw(weights_dir, tree, out, **kwargs)
-        raw["stats"]["pool_years"] = True
+        raw["stats"]["time_reduction"] = "pooled"
         raw["run"]["n_workers"] = n_workers
         raw["reduce"] = {"pandas": {"memory_gb": memory_gb}}
         return raw, out
@@ -3064,7 +3075,7 @@ class TestPooledYears:
         there are two rows of each."""
         raw, out = self._raw(weights_dir, tmp_path, include_n_members=True)
         years = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
-        raw["stats"]["pool_years"] = False
+        raw["stats"]["time_reduction"] = "window_mean"
         raw["output"].update(dir=str(tmp_path / "means"), write_leaves=False)
         means = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
 
@@ -3098,7 +3109,7 @@ class TestPooledYears:
             manifest = json.loads((out / f"{stem}.manifest.json").read_text())
             assert manifest["reduce"]["blocks"] == blocks
             assert manifest["stage"] == "reduce"
-            assert manifest["pool_years"] is True
+            assert manifest["time_reduction"] == "pooled"
 
     def test_workers_in_both_passes_change_no_bit(self, weights_dir, tmp_path):
         raw, _ = self._raw(weights_dir, tmp_path, weighted=True)
@@ -3122,7 +3133,7 @@ class TestPooledYears:
         manifest = json.loads((out / "statistics.manifest.json").read_text())
         leaves = out / "leaves" / "statistics.leaves.manifest.json"
         assert manifest["stage"] == "all"
-        assert manifest["pool_years"] is True
+        assert manifest["time_reduction"] == "pooled"
         assert manifest["leaves_manifest"] == str(leaves)
         assert manifest["leaves_manifest_sha256"] == hashlib.sha256(
             leaves.read_bytes()
@@ -3143,12 +3154,12 @@ class TestPooledYears:
         self, weights_dir, tmp_path
     ):
         raw, out = self._raw(weights_dir, tmp_path)
-        raw["stats"]["pool_years"] = False
+        raw["stats"]["time_reduction"] = "window_mean"
         run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
         TestReduce._reduce(raw)
         for stem in ("statistics", "again"):
             manifest = json.loads((out / f"{stem}.manifest.json").read_text())
-            assert manifest["pool_years"] is False
+            assert manifest["time_reduction"] == "window_mean"
 
     def test_what_stage_all_needs_is_asked_before_any_leaf_is_read(
         self, weights_dir, tmp_path, monkeypatch
@@ -3168,7 +3179,7 @@ class TestPooledYears:
             ({"output": {"write_leaves": False}},
              "stage 'all' needs output.write_leaves = true"),
             ({"output": {"write_reduced": True}},
-             "stats.pool_years cannot write the reduced file.*"
+             "stats.time_reduction = 'pooled' cannot write the reduced file.*"
              "output.write_reduced = false"),
         ):
             raw, out = self._raw(weights_dir, tmp_path)
@@ -3250,7 +3261,9 @@ class TestPooledYears:
         raw["output"]["write_reduced"] = True
         with pytest.raises(ValueError) as refused:
             TestReduce._reduce(raw)
-        assert "stats.pool_years cannot write the reduced file" in str(refused.value)
+        assert "stats.time_reduction = 'pooled' cannot write the reduced file" in str(
+            refused.value
+        )
         assert "use stage 'all'" not in str(refused.value)
 
     def test_a_dry_run_with_the_weights_table_gone_still_returns(
@@ -3265,22 +3278,24 @@ class TestPooledYears:
             "  the leaves on disk now do not say how the blocks will be sized: "
         )
 
-    def test_configs_that_cannot_pool_years_are_refused_when_read(
+    def test_configs_that_cannot_pool_the_years_are_refused_when_read(
         self, weights_dir, tmp_path
     ):
         raw, _ = self._raw(weights_dir, tmp_path)
         passthrough = json.loads(json.dumps(raw))
         del passthrough["weights"]
-        with pytest.raises(ValueError, match=r"stats.pool_years needs \[weights\]"):
+        with pytest.raises(
+            ValueError, match=r"stats.time_reduction = 'pooled' needs \[weights\]"
+        ):
             MonteCarloPipelineConfig.model_validate(passthrough)
         raw["stats"]["sample_dims"] = ["zeppelin", "year"]
         with pytest.raises(
             ValueError,
-            match="pools over stats.time_col 'year' itself. Leave it out of "
-            "stats.sample_dims",
+            match="decides what happens to stats.time_col 'year' itself. Leave it "
+            "out of stats.sample_dims",
         ):
             MonteCarloPipelineConfig.model_validate(raw)
-        raw["stats"]["pool_years"] = False
+        raw["stats"]["time_reduction"] = "window_mean"
         MonteCarloPipelineConfig.model_validate(raw)
 
     def test_a_leaf_column_named_like_the_count_of_rows_is_refused(
@@ -3294,10 +3309,10 @@ class TestPooledYears:
                 path, index=False
             )
         raw, _ = self._raw(weights_dir, tmp_path)
-        raw["stats"]["pool_years"] = False
+        raw["stats"]["time_reduction"] = "window_mean"
         run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
         with pytest.raises(ValueError, match="a column named 'n_sample'"):
-            TestReduce._reduce(raw, stats={"pool_years": True})
+            TestReduce._reduce(raw, stats={"time_reduction": "pooled"})
 
     def test_a_second_pass_that_fails_leaves_the_leaves_and_says_so(
         self, weights_dir, tmp_path
@@ -3353,7 +3368,7 @@ class TestPooledYears:
         )
         assert result.stats is None
         pooled = _leaves_manifest(out)
-        raw["stats"]["pool_years"] = False
+        raw["stats"]["time_reduction"] = "window_mean"
         raw["output"]["dir"] = str(tmp_path / "means")
         run_pipeline(MonteCarloPipelineConfig.model_validate(raw), stage="aggregate")
         means = _leaves_manifest(tmp_path / "means")
@@ -3373,7 +3388,7 @@ class TestPooledYears:
             f"  statistics -> {out / 'statistics.parquet'}",
             f"  manifest   -> {out / 'statistics.manifest.json'}",
             f"  leaves     -> {out / 'leaves' / 'statistics.leaves.manifest.json'}",
-            "  reduce: stats.pool_years takes the statistics from the leaf "
+            "  reduce: stats.time_reduction = 'pooled' takes the statistics from the leaf "
             "files, by blocks, after every leaf is written",
         ]
         assert plan.summary().splitlines() == head + [
@@ -3434,8 +3449,8 @@ sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
 quantile_method = "linear"
 summation = "fast"
+time_reduction = "pooled"
 windows = [[2050, 2051]]
-pool_years = true
 include_n_members = true
 
 [output]
@@ -3460,6 +3475,255 @@ memory_gb = 1
         # six leaves, and both years of each
         assert stats["n_members"].tolist() == [6, 6]
         assert stats["n_sample"].tolist() == [12, 12]
+
+
+@pytest.mark.usefixtures("one_target_a_group")
+class TestPerYear:
+    """``stats.time_reduction = "per_year"`` keeps the year: the
+    statistics are over the members within each year of
+    ``stats.years``, from the leaf files, under every stage."""
+
+    _MODEL_WEIGHTS = TestPooledYears._MODEL_WEIGHTS
+
+    @staticmethod
+    def _raw(
+        weights_dir, tmp_path, *, years=(2050, 2081), memory_gb=1.0, n_workers=1,
+        **kwargs,
+    ):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        if not tree.exists():
+            TestLabelPlacement._build_tree(tree)
+        raw = TestReduce._raw(weights_dir, tree, out, **kwargs)
+        del raw["stats"]["windows"]
+        raw["stats"].update(time_reduction="per_year", years=list(years))
+        raw["run"]["n_workers"] = n_workers
+        raw["reduce"] = {"pandas": {"memory_gb": memory_gb}}
+        return raw, out
+
+    def _by_hand(self, cfg: MonteCarloPipelineConfig, out: Path) -> pd.DataFrame:
+        """The statistics from the leaf files in one call, with the year
+        as one more identity column."""
+        from cil_regionalization.leaves import ORDINAL_COLUMN
+        from cil_regionalization.pipelines.montecarlo import _ordered
+        from cil_regionalization.stats import pooled_statistics
+
+        first, last = cfg.stats.years
+        pieces = []
+        for kumquat, zeppelin in itertools.product(*_LEVELS.values()):
+            leaf = pd.read_parquet(
+                out / "leaves" / kumquat / zeppelin / "damages.aggregated.parquet"
+            ).drop(columns=[ORDINAL_COLUMN])
+            pieces.append(
+                leaf[leaf["year"].between(first, last)].assign(
+                    kumquat=kumquat, zeppelin=zeppelin
+                )
+            )
+        kept = pd.concat(pieces, ignore_index=True)[
+            ["target_id", "band", "kumquat", "year", "zeppelin", "value"]
+        ]
+        weighted = cfg.stats.model_weights is not None
+        if weighted:
+            kept["model_weight"] = kept["zeppelin"].map(self._MODEL_WEIGHTS)
+        stats = pooled_statistics(
+            kept,
+            sample_dims=["zeppelin"],
+            value_col="value",
+            quantiles=cfg.stats.quantiles,
+            weight_col="model_weight" if weighted else None,
+            include_n_members=True,
+            quantile_method=cfg.stats.quantile_method,
+            summation=cfg.stats.summation,
+        )
+        return _ordered(stats, cfg)
+
+    @_METHODS_AND_WEIGHTS
+    def test_stage_all_writes_the_leaves_and_keeps_every_year(
+        self, weights_dir, tmp_path, methods, weighted
+    ):
+        raw, out = self._raw(
+            weights_dir, tmp_path, weighted=weighted, methods=methods,
+            include_n_members=True,
+        )
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+        assert list(result.stats.columns) == [
+            "target_id", "band", "kumquat", "year", "statistic", "value",
+            "n_members",
+        ]
+        assert result.stats["year"].dtype == np.int64
+        assert sorted(result.stats["year"].unique()) == [2050, 2051, 2080, 2081]
+        assert _leaves_manifest(out)["complete"] is True
+        _same_frames(result.stats, self._by_hand(cfg, out))
+        _same_frames(pd.read_parquet(out / "statistics.parquet"), result.stats)
+        # three models, and z2 weighs nothing
+        assert set(result.stats["n_members"]) == {2 if weighted else 3}
+
+    @_METHODS_AND_WEIGHTS
+    def test_it_gives_what_windows_of_one_year_give(
+        self, weights_dir, tmp_path, methods, weighted
+    ):
+        """The mean of one value is that value, so the window means
+        path with a window a year computes the same statistics another
+        way. Only the year's column differs."""
+        raw, _ = self._raw(weights_dir, tmp_path, weighted=weighted, methods=methods)
+        years = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+        windows = json.loads(json.dumps(raw))
+        del windows["stats"]["years"]
+        windows["stats"].update(
+            time_reduction="window_mean",
+            windows=[[year, year] for year in (2050, 2051, 2080, 2081)],
+        )
+        windows["output"].update(dir=str(tmp_path / "windows"), write_leaves=False)
+        means = run_pipeline(MonteCarloPipelineConfig.model_validate(windows)).stats
+        means = means.assign(year=means["window"].astype(np.int64)).drop(
+            columns="window"
+        )[list(years.columns)]
+        _same_frames(years, means)
+
+    def test_the_years_outside_the_range_are_left_out(self, weights_dir, tmp_path):
+        raw, _ = self._raw(weights_dir, tmp_path, years=(2051, 2080))
+        stats = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+        assert sorted(stats["year"].unique()) == [2051, 2080]
+
+    def test_a_year_a_leaf_lacks_counts_one_member_less(self, weights_dir, tmp_path):
+        """No year is refused for it: a time series shows the smaller
+        sample in its count."""
+        raw, _ = self._raw(weights_dir, tmp_path, include_n_members=True)
+        path = tmp_path / "tree" / "k0" / "z1" / "damages.parquet"
+        frame = pd.read_parquet(path)
+        frame[frame["year"] != 2051].to_parquet(path, index=False)
+        stats = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+        k0 = stats[stats["kumquat"] == "k0"].groupby("year")["n_members"].max()
+        assert k0.to_dict() == {2050: 3, 2051: 2, 2080: 3, 2081: 3}
+
+    def test_the_reduce_stage_gives_what_stage_all_gave(self, weights_dir, tmp_path):
+        """In one block, in a block a row group, and with two workers."""
+        raw, out = self._raw(
+            weights_dir, tmp_path, weighted=True, include_n_members=True
+        )
+        whole = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        for stem, memory_gb, n_workers, blocks in (
+            ("one", 1.0, None, 1),
+            ("two", _ONE_POOLED_GROUP_GB, None, 2),
+            ("pool", 2 * _ONE_POOLED_GROUP_GB, 2, 2),
+        ):
+            got = TestReduce._reduce(
+                raw, stem=stem, memory_gb=memory_gb, n_workers=n_workers
+            )
+            _same_frames(got.stats, whole.stats)
+            manifest = json.loads((out / f"{stem}.manifest.json").read_text())
+            assert manifest["reduce"]["blocks"] == blocks
+
+    def test_the_manifest_says_the_years_were_kept(self, weights_dir, tmp_path):
+        raw, out = self._raw(weights_dir, tmp_path)
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        manifest = json.loads((out / "statistics.manifest.json").read_text())
+        assert manifest["stage"] == "all"
+        assert manifest["time_reduction"] == "per_year"
+        assert manifest["years"] == [2050, 2081]
+        assert manifest["windows"] == []
+        assert manifest["reduce"]["kept_share"] == 1.0
+
+    def test_configs_that_cannot_keep_the_years_are_refused_when_read(
+        self, weights_dir, tmp_path
+    ):
+        raw, _ = self._raw(weights_dir, tmp_path)
+
+        def refused(message, **stats):
+            changed = json.loads(json.dumps(raw))
+            for key, value in stats.items():
+                if value is None:
+                    del changed["stats"][key]
+                else:
+                    changed["stats"][key] = value
+            with pytest.raises(ValueError, match=message):
+                MonteCarloPipelineConfig.model_validate(changed)
+
+        refused("'per_year' needs stats.years", years=None)
+        refused("stats.years starts in 2081, after it ends in 2050", years=[2081, 2050])
+        refused(
+            "stats.windows and stats.time_reduction = 'per_year' are both set",
+            windows=[[2050, 2051]],
+        )
+        refused(
+            "decides what happens to stats.time_col 'year' itself",
+            sample_dims=["zeppelin", "year"],
+        )
+        refused(
+            "stats.years is for stats.time_reduction = 'per_year', and this "
+            "config has 'pooled'",
+            time_reduction="pooled", windows=[[2050, 2051]],
+        )
+        refused("stats.time_reduction", time_reduction=None)
+        refused("stats.time_reduction", time_reduction="yearly")
+        gwl = json.loads(json.dumps(raw))
+        gwl["stats"]["warming_levels"] = TestWarmingLevels._raw(
+            weights_dir, tmp_path / "gwl"
+        )[0]["stats"]["warming_levels"]
+        with pytest.raises(
+            ValueError,
+            match="\\[stats.warming_levels\\] and stats.time_reduction = 'per_year'",
+        ):
+            MonteCarloPipelineConfig.model_validate(gwl)
+        passthrough = json.loads(json.dumps(raw))
+        del passthrough["weights"]
+        with pytest.raises(
+            ValueError, match="stats.time_reduction = 'per_year' needs \\[weights\\]"
+        ):
+            MonteCarloPipelineConfig.model_validate(passthrough)
+
+    @pytest.mark.parametrize("value, replacement", [(True, "pooled"), (False, "window_mean")])
+    def test_a_config_with_the_former_key_is_told_what_to_write(
+        self, weights_dir, tmp_path, value, replacement
+    ):
+        raw = TestReduce._raw(weights_dir, tmp_path / "tree", tmp_path / "out")
+        raw["stats"]["pool_years"] = value
+        with pytest.raises(
+            ValueError,
+            match="stats.pool_years is replaced by stats.time_reduction. Use "
+            "'pooled' where it was true and 'window_mean' where it was false",
+        ):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_what_stage_all_needs_is_asked_before_any_leaf_is_read(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        from cil_regionalization.pipelines import montecarlo
+
+        def read_leaf(*args):
+            raise AssertionError("a leaf was read")
+
+        monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
+        for change, message in (
+            ({"reduce": {"pandas": {"memory_gb": None}}},
+             r"Set \[reduce.pandas\] memory_gb"),
+            ({"output": {"write_leaves": False}},
+             "'per_year' takes the statistics from the leaf files, so stage "
+             "'all' needs output.write_leaves = true"),
+            ({"output": {"write_reduced": True}},
+             "stats.time_reduction = 'per_year' cannot write the reduced file"),
+        ):
+            raw, out = self._raw(weights_dir, tmp_path)
+            for section, values in change.items():
+                raw[section] = {**raw.get(section, {}), **values}
+            for dry_run in (True, False):
+                with pytest.raises(ValueError, match=message):
+                    run_pipeline(
+                        MonteCarloPipelineConfig.model_validate(raw), dry_run=dry_run
+                    )
+            assert not out.exists()
+
+    def test_the_dry_run_says_when_the_blocks_are_sized(self, weights_dir, tmp_path):
+        raw, out = self._raw(weights_dir, tmp_path)
+        lines = run_pipeline(
+            MonteCarloPipelineConfig.model_validate(raw), dry_run=True
+        ).summary().splitlines()
+        assert lines[-2:] == [
+            "  reduce: stats.time_reduction = 'per_year' takes the statistics "
+            "from the leaf files, by blocks, after every leaf is written",
+            "  the blocks are sized once the leaves are written",
+        ]
+        assert not out.exists()
 
 
 _GWL_LEVELS = {
@@ -3585,7 +3849,7 @@ class TestWarmingLevels:
                 if level is None:
                     continue
                 inside = leaf[leaf["year"].between(lo, hi)]
-                if not cfg.stats.pool_years:
+                if not cfg.stats.time_reduction == "pooled":
                     inside = (
                         inside.groupby("target_id", sort=False)["value"]
                         .mean().reset_index()
@@ -3597,7 +3861,7 @@ class TestWarmingLevels:
                     )
                 )
         members = pd.concat(pieces, ignore_index=True)
-        years = ["year"] if cfg.stats.pool_years else []
+        years = ["year"] if cfg.stats.time_reduction == "pooled" else []
         members = members[
             ["target_id", "warming_level", "window", "batch", "rcp", "gcm"]
             + years + ["value"]
@@ -3620,7 +3884,7 @@ class TestWarmingLevels:
             model=members["gcm"] + "/" + members["rcp"],
         ).groupby(keys)
         index = pd.MultiIndex.from_frame(stats[keys])
-        if cfg.stats.pool_years:
+        if cfg.stats.time_reduction == "pooled":
             stats = stats.rename(columns={"n_members": "n_sample"})
             stats.insert(
                 list(stats.columns).index("n_sample"), "n_members",
@@ -3632,22 +3896,22 @@ class TestWarmingLevels:
     @pytest.mark.parametrize(
         "quantile_method", ["lower_step", "inverted_cdf", "linear"]
     )
-    @pytest.mark.parametrize("pool_years", [False, True], ids=["means", "years"])
+    @pytest.mark.parametrize("pooled", [False, True], ids=["means", "years"])
     def test_the_statistics_are_over_the_members_at_each_level(
-        self, weights_dir, tmp_path, quantile_method, pool_years
+        self, weights_dir, tmp_path, quantile_method, pooled
     ):
         """Collapsing the window first and pooling its years, each
         under the three quantile definitions."""
         raw, out = self._raw(
             weights_dir, tmp_path, quantile_method=quantile_method,
-            pool_years=pool_years,
+            time_reduction="pooled" if pooled else "window_mean",
         )
         cfg = MonteCarloPipelineConfig.model_validate(raw)
         result = run_pipeline(cfg)
         assert list(result.stats.columns) == (
             ["target_id", "warming_level", "window", "statistic", "value",
              "n_members"]
-            + (["n_sample"] if pool_years else [])
+            + (["n_sample"] if pooled else [])
             + ["n_bin_members"]
         )
         assert result.stats["warming_level"].dtype == "float64"
@@ -3665,7 +3929,7 @@ class TestWarmingLevels:
             ("2080-2083", 2.0): 1, ("2080-2083", 3.0): 3,
         }
         assert (counts["n_members"] == 2 * counts["n_bin_members"]).all()
-        if pool_years:
+        if pooled:
             years = counts.index.get_level_values("window").map(
                 {"2040-2042": 3, "2080-2083": 4}
             )
@@ -3756,7 +4020,7 @@ class TestWarmingLevels:
 
         monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
         again = json.loads(json.dumps(raw))
-        again["stats"]["pool_years"] = True
+        again["stats"]["time_reduction"] = "pooled"
         again["stats"]["warming_levels"]["periods"] = [
             {"gmst_span": [2040, 2043], "impact_span": [2040, 2043]},
         ]
@@ -3766,7 +4030,7 @@ class TestWarmingLevels:
         _same_frames(got.stats, self._by_hand(cfg, out))
         assert set(got.stats["window"]) == {"2040-2043"}
         manifest = json.loads((out / "pooled.manifest.json").read_text())
-        assert manifest["stage"] == "reduce" and manifest["pool_years"] is True
+        assert manifest["stage"] == "reduce" and manifest["time_reduction"] == "pooled"
         assert manifest["warming_levels"]["periods"][0]["impact_span"] == [2040, 2043]
 
     @pytest.mark.parametrize(

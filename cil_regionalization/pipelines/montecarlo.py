@@ -75,13 +75,18 @@ everything else under ``[stats]`` can differ from the run that wrote
 the leaves. The default stage, ``all``, runs everything in one process
 and holds every reduced leaf at once.
 
-Pooled years. With ``stats.pool_years`` no window mean is taken. Every
-year of a member inside a window is a member of the sample, so the
-statistics are over models, draws and years together. The pooled rows
-are the leaves' own rows, far too many to hold at once, so the
-statistics always come from the leaf files, one block of targets at a
-time. Stage ``all`` then writes the leaves, as ``aggregate`` does, and
-reduces them, as ``reduce`` does.
+Time reduction. ``stats.time_reduction`` says what happens to the
+years of a member. Under "window_mean" each member's window is reduced
+to its mean first, as described above. Under "pooled" no mean is taken:
+every year of a member inside a window is a member of the sample, so
+the statistics are over models, draws and years together. Under
+"per_year" no mean is taken either, and the year stays in the output:
+the statistics are over the members within each year of
+``stats.years``. The rows of the last two are the leaves' own rows, far
+too many to hold at once, so their statistics always come from the
+leaf files, one block of targets at a time. Stage ``all`` then writes
+the leaves, as ``aggregate`` does, and reduces them, as ``reduce``
+does.
 
 Warming levels. With ``[stats.warming_levels]`` the statistics are over
 the members at a warming level in a period, where a member is a
@@ -342,13 +347,18 @@ class StatsConfig(_Strict):
     # `stats.summarize_samples`.
     quantile_method: Literal["linear", "lower_step", "inverted_cdf"]
     summation: Literal["fast", "exact"]
-    # Experimental. The years inside a window are pooled with the models
-    # and the draws, where the default takes each member's mean over the
-    # window first. The statistics then come from the leaf files, by
-    # blocks, under every stage. With include_n_members the file gets an
-    # n_sample column as well, the rows behind a statistic. n_members
-    # stays the members behind it.
-    pool_years: bool = False
+    # What happens to the years of a member, with no default.
+    # "window_mean" takes each member's mean over a window first.
+    # "pooled" takes no mean, and the years inside a window are members
+    # of the sample with the models and the draws; with include_n_members
+    # the file gets an n_sample column as well, the rows behind a
+    # statistic. "per_year" takes no mean either and keeps the year, so
+    # the statistics are over the members within each year of `years`.
+    # The last two take their statistics from the leaf files, by blocks,
+    # under every stage. The manifest records it.
+    time_reduction: Literal["window_mean", "pooled", "per_year"]
+    # the first and the last year of a "per_year" product
+    years: Optional[tuple[int, int]] = None
     model_weights: Optional[str] = None
     model_weight_level: Optional[str] = None
 
@@ -358,6 +368,12 @@ class StatsConfig(_Strict):
         # Both options were once "legacy". The message says which value
         # it meant for this config.
         if isinstance(data, dict):
+            if "pool_years" in data:
+                raise ValueError(
+                    "stats.pool_years is replaced by stats.time_reduction. "
+                    "Use 'pooled' where it was true and 'window_mean' where "
+                    "it was false."
+                )
             if data.get("quantile_method") == "legacy":
                 check_quantile_method(
                     "legacy", weighted=data.get("model_weights") is not None
@@ -385,16 +401,47 @@ class StatsConfig(_Strict):
                 f"stats.model_weight_level {self.model_weight_level!r} must "
                 f"be one of stats.sample_dims {self.sample_dims}"
             )
-        if self.pool_years and self.time_col in self.sample_dims:
+        if self.time_reduction != "window_mean" and self.time_col in self.sample_dims:
             raise ValueError(
-                f"stats.pool_years pools over stats.time_col {self.time_col!r} "
-                f"itself. Leave it out of stats.sample_dims."
+                f"stats.time_reduction = {self.time_reduction!r} decides what "
+                f"happens to stats.time_col {self.time_col!r} itself. Leave it "
+                f"out of stats.sample_dims."
+            )
+        if self.time_reduction == "per_year":
+            if self.years is None:
+                raise ValueError(
+                    "stats.time_reduction = 'per_year' needs stats.years, the "
+                    "first and the last year of the product"
+                )
+            if self.years[0] > self.years[1]:
+                raise ValueError(
+                    f"stats.years starts in {self.years[0]}, after it ends in "
+                    f"{self.years[1]}"
+                )
+            if self.windows:
+                raise ValueError(
+                    "stats.windows and stats.time_reduction = 'per_year' are "
+                    "both set. A per-year product has no windows. Give its "
+                    "years as stats.years."
+                )
+            if self.warming_levels is not None:
+                raise ValueError(
+                    "[stats.warming_levels] and stats.time_reduction = "
+                    "'per_year' are both set. A warming level is reached over "
+                    "a period, so its statistics are over the years of one."
+                )
+            return self
+        if self.years is not None:
+            raise ValueError(
+                f"stats.years is for stats.time_reduction = 'per_year', and "
+                f"this config has {self.time_reduction!r}"
             )
         if self.warming_levels is None:
             if not self.windows:
                 raise ValueError(
                     "stats.windows must list at least one window, unless "
-                    "[stats.warming_levels] gives the periods"
+                    "[stats.warming_levels] gives the periods or "
+                    "stats.time_reduction is 'per_year'"
                 )
             return self
         if self.windows:
@@ -481,11 +528,12 @@ class MonteCarloPipelineConfig(_Strict):
                     "[policies] governs how source units meet the weights; "
                     "without [weights] there is nothing for it to govern"
                 )
-            if self.stats.pool_years:
+            if self.stats.time_reduction != "window_mean":
                 raise ValueError(
-                    "stats.pool_years needs [weights]. Pooled years are "
-                    "reduced from the leaf files, and a passthrough run "
-                    "writes none of the kind that reads."
+                    f"stats.time_reduction = {self.stats.time_reduction!r} "
+                    f"needs [weights]. Its statistics are reduced from the "
+                    f"leaf files, and a passthrough run writes none of the "
+                    f"kind that reads."
                 )
             if self.stats.warming_levels is not None:
                 raise ValueError(
@@ -701,8 +749,8 @@ def run_pipeline(
     plan = resolve_plan(cfg, stage)
     if stage == "reduce":
         return _run_reduce(cfg, plan, dry_run=dry_run, verify_leaves=verify_leaves)
-    # pooled years and warming levels are reduced from the leaf files
-    # this run writes
+    # pooled years, years kept and warming levels are reduced from the
+    # leaf files this run writes
     by_blocks = stage == "all" and bool(_from_leaf_files(cfg))
     warming = None
     if by_blocks:
@@ -951,7 +999,8 @@ def run_pipeline(
         "quantiles": cfg.stats.quantiles,
         "quantile_method": cfg.stats.quantile_method,
         "summation": cfg.stats.summation,
-        "pool_years": cfg.stats.pool_years,
+        "time_reduction": cfg.stats.time_reduction,
+        "years": None,
         "warming_levels": None,
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
@@ -1030,12 +1079,13 @@ def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
         raise ValueError(
             f"unknown stage {stage!r}; expected 'all', 'aggregate' or 'reduce'"
         )
-    if cfg.stats.pool_years and stage != "aggregate" and cfg.output.write_reduced:
+    if (cfg.stats.time_reduction != "window_mean" and stage != "aggregate"
+            and cfg.output.write_reduced):
         raise ValueError(
-            "stats.pool_years cannot write the reduced file. The pooled "
-            "rows are the leaves' own rows, one block of targets at a "
-            "time, and the leaf files already hold them. Set "
-            "output.write_reduced = false."
+            f"stats.time_reduction = {cfg.stats.time_reduction!r} cannot "
+            f"write the reduced file. Its rows are the leaves' own rows, one "
+            f"block of targets at a time, and the leaf files already hold "
+            f"them. Set output.write_reduced = false."
         )
     if (cfg.stats.warming_levels is not None and stage != "aggregate"
             and cfg.output.write_reduced):
@@ -1361,10 +1411,10 @@ def _reduce_request(
             f"stats.time_col {time_col!r} is not a column of the leaves "
             f"(they have {columns})"
         )
-    if cfg.stats.pool_years and "n_sample" in columns:
+    if cfg.stats.time_reduction == "pooled" and "n_sample" in columns:
         raise ValueError(
             "the leaves have a column named 'n_sample', which is the column "
-            "stats.pool_years writes its pooled rows in"
+            "stats.time_reduction = 'pooled' writes its pooled rows in"
         )
     if warming is not None:
         for name in ("warming_level", "n_bin_members"):
@@ -1490,7 +1540,7 @@ def _reduce_request(
         ),
         quantile_method=cfg.stats.quantile_method,
         summation=cfg.stats.summation,
-        pool_years=cfg.stats.pool_years,
+        time_reduction=cfg.stats.time_reduction,
         include_n_bin_members=warming is not None,
         whole_spans=warming is not None,
         n_workers=cfg.run.n_workers,
@@ -1500,8 +1550,11 @@ def _reduce_request(
 
 def _windows(cfg: MonteCarloPipelineConfig) -> list[tuple[float, float]]:
     """The spans the impacts are reduced over. With warming levels they
-    are the impact years of the periods."""
+    are the impact years of the periods, and per year it is the one
+    span of ``stats.years``."""
     warming = cfg.stats.warming_levels
+    if cfg.stats.time_reduction == "per_year":
+        return [tuple(cfg.stats.years)]
     if warming is None:
         return list(cfg.stats.windows)
     return [tuple(period.impact_span) for period in warming.periods]
@@ -1510,7 +1563,10 @@ def _windows(cfg: MonteCarloPipelineConfig) -> list[tuple[float, float]]:
 def _from_leaf_files(cfg: MonteCarloPipelineConfig) -> list[str]:
     """The options set that take the statistics from the leaf files
     under every stage."""
-    return (["stats.pool_years"] if cfg.stats.pool_years else []) + (
+    shape = cfg.stats.time_reduction
+    return (
+        [f"stats.time_reduction = {shape!r}"] if shape != "window_mean" else []
+    ) + (
         ["[stats.warming_levels]"] if cfg.stats.warming_levels is not None else []
     )
 
@@ -1785,11 +1841,15 @@ def _run_reduce(
             "regions_version"
         ],
         "sample_dims": cfg.stats.sample_dims,
-        "windows": [_window_label(lo, hi) for lo, hi in _windows(cfg)],
+        "windows": (
+            [] if cfg.stats.time_reduction == "per_year"
+            else [_window_label(lo, hi) for lo, hi in _windows(cfg)]
+        ),
         "quantiles": cfg.stats.quantiles,
         "quantile_method": cfg.stats.quantile_method,
         "summation": cfg.stats.summation,
-        "pool_years": cfg.stats.pool_years,
+        "time_reduction": cfg.stats.time_reduction,
+        "years": list(cfg.stats.years) if cfg.stats.years else None,
         "warming_levels": (
             warming.record(
                 dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves)
@@ -1855,7 +1915,7 @@ def _check_level_names(levels: list[str], id_fields: list[str]) -> None:
         "window": "the column of window labels",
         "statistic": "the column of statistic labels",
         "n_members": "the column stats.include_n_members writes",
-        "n_sample": "the column of pooled rows stats.pool_years writes",
+        "n_sample": "the column of pooled rows stats.time_reduction writes",
         "warming_level": "the column of levels [stats.warming_levels] writes",
         "n_bin_members": "the column of members [stats.warming_levels] writes",
         "model_weight": "the column the model weights travel in",
@@ -1883,14 +1943,20 @@ def _labelled(
 def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame:
     """``frame`` in the order it is written in. Rows go by the
     statistic as requested, then each tree level by its declared
-    values, then the window as configured, then the target's id fields
-    ascending. Together those name a row, so the order is total and
-    does not depend on the order the leaves were pooled in."""
+    values, then the window as configured, or the year ascending when
+    each year is kept, then the target's id fields ascending. Together
+    those name a row, so the order is total and does not depend on the
+    order the leaves were pooled in."""
+    if cfg.stats.time_reduction == "per_year":
+        first, last = cfg.stats.years
+        time = {cfg.stats.time_col: list(range(first, last + 1))}
+    else:
+        time = {"window": [_window_label(lo, hi) for lo, hi in _windows(cfg)]}
     declared = {
         "statistic": (["mean"] if cfg.stats.include_mean else [])
         + [_quantile_label(q) for q in cfg.stats.quantiles],
         **{level: list(cfg.tree.expect[level]) for level in cfg.tree.levels},
-        "window": [_window_label(lo, hi) for lo, hi in _windows(cfg)],
+        **time,
     }
     # Rows are picked by label below, and a frame put together from
     # several without a new index has labels that repeat.

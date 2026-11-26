@@ -58,12 +58,12 @@ def kept_share(request: ReduceRequest) -> float:
     """The rows a block keeps of a row group, as a share of the group's
     rows in the leaf files. A leaf's rows shrink to one a window where
     they were one a time value, and each leaf counts by its own windows
-    and its own time values, since two leaves may differ in both. Under
-    ``pool_years`` a leaf keeps its rows inside its windows, and a row
-    inside two windows counts twice."""
+    and its own time values, since two leaves may differ in both. When
+    no window mean is taken a leaf keeps its rows inside its windows,
+    and a row inside two windows counts twice."""
     kept = total = 0.0
     for leaf in request.leaves:
-        if request.pool_years:
+        if request.time_reduction != "window_mean":
             values = np.asarray(leaf.profile["values"], dtype=np.float64)
             rows = np.asarray(leaf.profile["rows"], dtype=np.float64)
             kept += sum(
@@ -192,7 +192,7 @@ class PandasBlocks(ReduceBackend):
                 )
                 + f"with "
                 f"{plan['share']:.4g} of a group's rows kept"
-                f"{', each with its year' if request.pool_years else ''}. "
+                f"{', each with its year' if request.time_reduction != 'window_mean' else ''}. "
                 f"The rows of a "
                 f"group are known summed over the leaves, so this takes "
                 f"every leaf to spread its rows over the groups alike.",
@@ -354,16 +354,32 @@ def _leaf_years(
 _BIN = "bin_member_code"
 
 
+def _leaf_span(
+    request: ReduceRequest, leaf, frame: pd.DataFrame
+) -> pd.DataFrame | None:
+    """One leaf's rows of a block inside its one window, with their time
+    value, which stays a column of the statistics. None if the window
+    has no row here."""
+    (_, start, end), = leaf.windows
+    inside = frame[request.time_col].between(start, end).to_numpy()
+    if not inside.any():
+        return None
+    group = [
+        c for c in frame.columns if c not in (request.time_col, request.value_col)
+    ]
+    return frame.loc[inside, group + [request.time_col, request.value_col]]
+
+
 def _with_counts(
     stats: pd.DataFrame, members: list[pd.DataFrame], request: ReduceRequest
 ) -> pd.DataFrame:
     """The statistics with the counts that come from ``members``, which
     holds one row for each member with a value in a window. Under
-    ``pool_years`` the count `pooled_statistics` gave is the rows
+    "pooled" the count `pooled_statistics` gave is the rows
     behind a statistic and becomes 'n_sample', and 'n_members' is the
     rows of ``members`` behind it. 'n_bin_members' is the distinct bin
     members among those rows."""
-    if request.pool_years:
+    if request.time_reduction == "pooled":
         stats = stats.rename(columns={"n_members": "n_sample"})
     identity = [
         c for c in stats.columns
@@ -373,7 +389,7 @@ def _with_counts(
         identity, sort=False, observed=True
     )
     counts = []
-    if request.pool_years:
+    if request.time_reduction == "pooled":
         counts.append(grouped.size().rename("n_members"))
     if request.include_n_bin_members:
         counts.append(grouped[_BIN].nunique().rename("n_bin_members"))
@@ -441,7 +457,8 @@ def _reduce_block(block: tuple[int, int]) -> dict:
         for i in range(len(request.level_names))
     ]
     weighted = request.weighted
-    pooled = request.pool_years
+    pooled = request.time_reduction == "pooled"
+    per_year = request.time_reduction == "per_year"
     count_bins = request.include_n_bin_members
     count_members = (pooled and request.include_n_members) or count_bins
     bins = list(dict.fromkeys(leaf.bin_member for leaf in request.leaves))
@@ -461,7 +478,10 @@ def _reduce_block(block: tuple[int, int]) -> dict:
         frame = table.to_pandas()
         if request.whole_spans:
             _check_whole_spans(request, leaf, frame)
-        reduced = (_leaf_years if pooled else _leaf_rows)(request, leaf, frame)
+        if per_year:
+            reduced = _leaf_span(request, leaf, frame)
+        else:
+            reduced = (_leaf_years if pooled else _leaf_rows)(request, leaf, frame)
         if reduced is None:
             continue
         pieces = [reduced]
@@ -480,7 +500,7 @@ def _reduce_block(block: tuple[int, int]) -> dict:
                 with_value.drop_duplicates() if pooled else with_value.copy()
             )
         for piece in pieces:
-            at = list(piece.columns).index("window")
+            at = list(piece.columns).index(request.time_col if per_year else "window")
             for i, name in enumerate(request.level_names):
                 # one code a row and the leaf's value once, not a string
                 # a row
@@ -502,7 +522,7 @@ def _reduce_block(block: tuple[int, int]) -> dict:
                     len(pieces[1].columns), _BIN, bins.index(leaf.bin_member)
                 )
             members.append(pieces[1])
-        if not pooled:
+        if request.time_reduction == "window_mean":
             reduced["window"] = pd.Categorical(
                 reduced["window"], categories=list(request.window_labels)
             )
