@@ -27,6 +27,7 @@ from cil_regionalization.reduce.base import (
     ReduceRequest,
 )
 from cil_regionalization.stats import (
+    GroupError,
     UnweightedModelWeightsWarning,
     _window_label,
     pooled_statistics,
@@ -354,6 +355,16 @@ def _leaf_years(
 _BIN = "bin_member_code"
 
 
+def _by_id(request: ReduceRequest, group: dict) -> dict:
+    """``group`` with the target's ordinal replaced by its id fields,
+    from the target table."""
+    if leaf_format.ORDINAL_COLUMN not in group:
+        return group
+    rest = {k: v for k, v in group.items() if k != leaf_format.ORDINAL_COLUMN}
+    ids = _STATE["targets"].ids[int(group[leaf_format.ORDINAL_COLUMN])]
+    return {**dict(zip(request.id_fields, ids)), **rest}
+
+
 def _leaf_span(
     request: ReduceRequest, leaf, frame: pd.DataFrame
 ) -> pd.DataFrame | None:
@@ -542,18 +553,22 @@ def _reduce_block(block: tuple[int, int]) -> dict:
     with warnings.catch_warnings():
         # the parent says it once
         warnings.simplefilter("ignore", UnweightedModelWeightsWarning)
-        stats = pooled_statistics(
-            combined,
-            sample_dims=list(request.sample_dims)
-            + ([request.time_col] if pooled else []),
-            value_col=request.value_col,
-            quantiles=list(request.quantiles),
-            include_mean=request.include_mean,
-            weight_col="model_weight" if weighted else None,
-            include_n_members=request.include_n_members,
-            quantile_method=request.quantile_method,
-            summation=request.summation,
-        )
+        try:
+            stats = pooled_statistics(
+                combined,
+                sample_dims=list(request.sample_dims)
+                + ([request.time_col] if pooled else []),
+                value_col=request.value_col,
+                quantiles=list(request.quantiles),
+                include_mean=request.include_mean,
+                weight_col="model_weight" if weighted else None,
+                include_n_members=request.include_n_members,
+                quantile_method=request.quantile_method,
+                summation=request.summation,
+            )
+        except GroupError as error:
+            # the frame names a target by its ordinal, the reader by its id
+            raise error.naming(_by_id(request, error.group)) from None
     del combined
     stats = _plain_labels(stats)
     if count_members:

@@ -504,6 +504,94 @@ class TestLowerStep:
         assert got["value"].tolist() == [8.0 / 3.0, 3.0]
 
 
+class TestExactShares:
+    """Under "exact" the cumulative weight shares of the weighted
+    quantiles come from exact sums, and equal values are taken in order
+    of weight, so the row order and the order of summation decide
+    nothing."""
+
+    def test_the_running_shares_are_exact(self):
+        """Each share is the ratio of two exact sums rounded once, as
+        exact rational arithmetic gives it."""
+        from fractions import Fraction
+
+        rng = np.random.default_rng(5)
+        for _ in range(300):
+            n = int(rng.integers(1, 40))
+            weights = rng.uniform(0, 1, n) * 10.0 ** rng.integers(-6, 4, n)
+            weights[rng.random(n) < 0.1] = 0.0
+            weights[0] = max(weights[0], 1e-3)
+            running, total = [], sum(Fraction(float(w)) for w in weights)
+            acc = Fraction(0)
+            for w in weights:
+                acc += Fraction(float(w))
+                running.append(float(acc / total))
+            got = stats._exact_shares(weights)
+            assert got.tobytes() == np.array(running).tobytes()
+
+    # In both groups the running sum of the first four weights is half
+    # the total in exact arithmetic. With np.cumsum the share of the
+    # step falls below one half in the first, and the share of the
+    # standard inverse in the second.
+    STEP_TIE = [0.3, 0.1, 0.6, 0.2, 0.2, 0.7, 0.2, 0.1]
+    INVERSE_TIE = [0.2, 0.7, 0.7, 0.1, 0.1, 0.7, 0.2, 0.7]
+
+    @pytest.mark.parametrize("method, weights, fast", [
+        ("lower_step", STEP_TIE, 4.0),
+        ("inverted_cdf", INVERSE_TIE, 5.0),
+    ], ids=["lower_step", "inverted_cdf"])
+    def test_a_share_equal_to_q_is_decided_by_the_rule(self, method, weights, fast):
+        """At q = 0.5 the fourth member's share reaches q, so the
+        standard inverse is the fourth value and the step the third.
+        With the shares np.cumsum gives, one of them comes out a member
+        higher."""
+        frame = _members([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], weights)
+        exact = _pooled(frame, [0.5], quantile_method=method, summation="exact")
+        assert exact["q50"] == (3.0 if method == "lower_step" else 4.0)
+        assert _pooled(frame, [0.5], quantile_method=method, summation="fast")["q50"] == fast
+
+    @pytest.mark.parametrize("method", ["lower_step", "inverted_cdf"])
+    def test_the_row_order_decides_nothing(self, method):
+        """Three members share the value 1. Under "fast" the step
+        depends on which of them comes first, and is 1 in one order and
+        -inf in another. The standard inverse cannot go red here, and
+        did not under a mutation that takes equal values in the order of
+        the rows: it is the smallest value whose share reaches q, and
+        every member of a run of equal values is the same value. It is
+        here to show the two side by side."""
+        values = np.array([1.0, 1.0, 1.0, 2.0, 3.0, 4.0])
+        weights = np.array([0.1, 0.2, 0.1, 0.2, 0.7, 0.1])
+        quantiles = [0.142857, 0.25, 0.5, 0.75]
+        exact, fast = set(), set()
+        for order in itertools.permutations(range(6)):
+            order = list(order)
+            frame = _members(values[order], weights[order])
+            exact.add(tuple(
+                _pooled(frame, quantiles, quantile_method=method, summation="exact",
+                        include_mean=False).values()
+            ))
+            fast.add(tuple(
+                _pooled(frame, quantiles, quantile_method=method, summation="fast",
+                        include_mean=False).values()
+            ))
+        assert len(exact) == 1
+        if method == "lower_step":
+            assert len(fast) > 1
+
+    def test_equal_weights_give_the_shares_they_gave(self):
+        """k of n equal weights are a share of k / n either way, so
+        nothing changes for a group without weights. Cannot go red by
+        reverting, since before the change both sums took the same
+        shares. It failed with the median of equal weights left out of
+        the step under "exact"."""
+        frame = _random_frame(2).drop(columns="w")
+        kwargs = dict(sample_dims=["draw"], quantiles=QUANTILES, include_mean=False)
+        for method in ("lower_step", "inverted_cdf"):
+            exact = pooled_statistics(frame, quantile_method=method, summation="exact", **kwargs)
+            fast = pooled_statistics(frame, quantile_method=method, summation="fast", **kwargs)
+            pd.testing.assert_frame_equal(exact, fast, check_exact=True)
+
+
 class TestExactSummation:
     def test_the_mean_does_not_depend_on_the_order(self):
         """1e16 + 1 is not a float, so a sum taken in row order loses

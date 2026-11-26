@@ -223,7 +223,12 @@ fourth, and the fourth.
   depend on the order the rows arrive in, which in a pipeline run with
   several workers is the order the workers finish in.
 - `"exact"` takes the window means and the pooled mean from exactly
-  rounded sums, so the order cannot change them.
+  rounded sums, so the order cannot change them. With weights it also
+  takes the cumulative weight shares of `"lower_step"` and
+  `"inverted_cdf"` from exact sums, and takes equal values in order of
+  weight. A share that equals q in exact arithmetic is then decided by
+  the rule and not by the order the weights were added in, and the row
+  order cannot move a quantile.
 
 Neither option has a default. `summarize_samples` and
 `pooled_statistics` take both, `window_means` takes `summation`, and a

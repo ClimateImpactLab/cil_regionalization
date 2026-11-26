@@ -37,6 +37,7 @@ statistic is an error.
 from __future__ import annotations
 
 import functools
+import itertools
 import math
 import re
 import warnings
@@ -118,6 +119,24 @@ def check_summation(summation: str) -> None:
             f"summation must be one of {list(SUMMATIONS)}; got {summation!r}"
         )
 _QUANTILE_NAME_RE = re.compile(r"(^|_)(q\d{1,3}|mean)$")
+
+
+class GroupError(ValueError):
+    """A refusal that names one identity group, held apart in ``group``
+    so that a caller whose identity columns are codes can name the
+    group by what the codes stand for, with `naming`."""
+
+    def __init__(self, before: str, group: dict, after: str = "") -> None:
+        self.before, self.group, self.after = before, group, after
+        super().__init__(f"{before}{group}{after}")
+
+    def naming(self, group: dict) -> "GroupError":
+        """The same refusal about ``group``."""
+        return type(self)(self.before, group, self.after)
+
+    def __reduce__(self):
+        # a worker process sends it back to its parent by pickling
+        return (type(self), (self.before, self.group, self.after))
 
 
 def summarize_samples(
@@ -526,9 +545,10 @@ def _statistic_pieces(
                 member_counts.append(0)
             continue
         if len(values) == 0 or weights.sum() == 0:
-            raise ValueError(
-                f"weights sum to zero for identity group {dict(zip(identity, key_tuple))}; "
-                f"no member carries any weight"
+            raise GroupError(
+                "weights sum to zero for identity group ",
+                dict(zip(identity, key_tuple)),
+                ", so no member carries any weight",
             )
         if count_members:
             member_counts.append(int(np.count_nonzero(weights)))
@@ -542,19 +562,17 @@ def _statistic_pieces(
             else:
                 mean = float(np.average(values, weights=weights))
             rows["mean"].append((*key_tuple, mean))
+        exact = summation == "exact"
         if quantile_method == "inverted_cdf":
             # a member with weight zero is not in the sample
             positive = weights > 0
             picked = _inverted_cdf_quantiles(
-                values[positive], weights[positive], quantiles
+                values[positive], weights[positive], quantiles, exact=exact
             )
-            for q, value in zip(quantiles, picked):
-                rows[_quantile_label(q)].append((*key_tuple, value))
         else:
-            for q in quantiles:
-                rows[_quantile_label(q)].append(
-                    (*key_tuple, _weighted_quantile(values, weights, q))
-                )
+            picked = _step_quantiles(values, weights, quantiles, exact=exact)
+        for q, value in zip(quantiles, picked):
+            rows[_quantile_label(q)].append((*key_tuple, value))
     pieces = []
     for label in labels:
         piece = pd.DataFrame(rows[label], columns=identity + [value_col])
@@ -579,15 +597,60 @@ def _weighted_quantile(values: np.ndarray, weights: np.ndarray, q: float) -> flo
     of the weighted empirical distribution. A quantile below the first
     step returns -inf; with all weights equal the 0.5 quantile is the
     ordinary median, both matching that tool."""
-    if q == 0.5 and np.all(weights == weights[0]):
-        return float(np.median(values))
-    order = np.argsort(values, kind="stable")
-    values = values[order]
-    pp = np.cumsum(weights[order]) / weights.sum()
-    index = int(np.searchsorted(pp, q)) - 1
-    if index < 0:
-        return float("-inf")
-    return float(values[index])
+    return _step_quantiles(values, weights, [q], exact=False)[0]
+
+
+def _step_quantiles(
+    values: np.ndarray, weights: np.ndarray, quantiles: Sequence[float],
+    *, exact: bool,
+) -> list[float]:
+    """`_weighted_quantile` at every q, from one sort of the group.
+    ``exact`` takes the cumulative weight shares from exact sums, so
+    a share that equals q in exact arithmetic is not moved off it by
+    the order the weights were added in. It also takes equal values in
+    order of weight, because within equal values the step depends on
+    which member comes first, and so on the order of the rows."""
+    if not len(quantiles):
+        return []
+    equal = bool((weights == weights[0]).all())
+    order = (
+        np.lexsort((weights, values)) if exact else np.argsort(values, kind="stable")
+    )
+    ordered = values[order]
+    if exact:
+        # k of n equal weights are a share of k / n, rounded once
+        share = _equal_shares(len(values)) if equal else _exact_shares(weights[order])
+    else:
+        share = np.cumsum(weights[order]) / weights.sum()
+    out = []
+    for q in quantiles:
+        if q == 0.5 and equal:
+            out.append(float(np.median(values)))
+            continue
+        index = int(np.searchsorted(share, q)) - 1
+        out.append(float("-inf") if index < 0 else float(ordered[index]))
+    return out
+
+
+def _exact_shares(weights: np.ndarray) -> np.ndarray:
+    """The share of the total weight that each running sum of
+    ``weights`` reaches. Every sum is exact and every share is their
+    ratio rounded once, so the shares do not depend on the order the
+    weights are added in. The weights are finite and not negative, and
+    their sum is above zero."""
+    mantissa, exponent = np.frexp(weights)
+    # every weight is an integer times a power of two, and in units of
+    # the smallest such power it is an integer, which Python adds exactly
+    nonzero = weights != 0
+    low = int(exponent[nonzero].min())
+    units = (mantissa * 2.0 ** 53).astype(np.int64).tolist()
+    shifts = (exponent - low).tolist()
+    running = list(itertools.accumulate(
+        unit << shift if unit else 0 for unit, shift in zip(units, shifts)
+    ))
+    total = running[-1]
+    # an integer divided by an integer is rounded once, correctly
+    return np.array([part / total for part in running])
 
 
 @functools.lru_cache(maxsize=8)
@@ -597,12 +660,14 @@ def _equal_shares(n: int) -> np.ndarray:
 
 
 def _inverted_cdf_quantiles(
-    values: np.ndarray, weights: np.ndarray, quantiles: Sequence[float]
+    values: np.ndarray, weights: np.ndarray, quantiles: Sequence[float],
+    *, exact: bool = False,
 ) -> list[float]:
     """For each q, the smallest value whose cumulative weight share
     reaches q (Hyndman and Fan type 1). ``values`` has no NaN and every
     weight is positive. Equal values are taken in order of weight, so
-    the running sum does not depend on the order of the rows."""
+    the running sum does not depend on the order of the rows. ``exact``
+    takes the shares from exact sums, as `_step_quantiles` does."""
     n = len(values)
     if (weights == weights[0]).all():
         ordered = np.sort(values)
@@ -610,8 +675,11 @@ def _inverted_cdf_quantiles(
     else:
         order = np.lexsort((weights, values))
         ordered = values[order]
-        share = np.cumsum(weights[order])
-        share = share / share[-1]
+        if exact:
+            share = _exact_shares(weights[order])
+        else:
+            share = np.cumsum(weights[order])
+            share = share / share[-1]
     # adding 0.0 turns -0.0 into 0.0: which of two equal zeros comes
     # first depends on the row order
     return [
@@ -693,11 +761,13 @@ def _refuse_nan_interpolation(
     if not bad.any():
         return
     row, group = np.argwhere(bad)[0]
-    raise ValueError(
+    raise GroupError(
         f"{int(bad.sum())} linear quantiles interpolate next to an infinite "
         f"member and have no value (first: {_quantile_label(quantiles[row])} "
-        f"of {keys.iloc[group].to_dict()}). An infinity in impact data means "
-        f"something upstream of the statistics broke."
+        f"of ",
+        keys.iloc[group].to_dict(),
+        "). An infinity in impact data means something upstream of the "
+        "statistics broke.",
     )
 
 
@@ -733,12 +803,14 @@ def _refuse_infinite_statistics(
         return
     counts = out.loc[infinite, _STATISTIC_COLUMN].value_counts(sort=False)
     first = out.loc[infinite].iloc[0].drop(value_col).to_dict()
-    raise ValueError(
+    raise GroupError(
         f"{int(infinite.sum())} statistics are infinite "
         f"({', '.join(f'{label}: {n}' for label, n in counts.items())}; "
-        f"first: {first}). With quantile_method={quantile_method!r} and "
+        f"first: ",
+        first,
+        f"). With quantile_method={quantile_method!r} and "
         f"summation={summation!r} an infinite statistic is refused. "
-        f"'linear' and 'lower_step' with summation='fast' return it."
+        f"'linear' and 'lower_step' with summation='fast' return it.",
     )
 
 

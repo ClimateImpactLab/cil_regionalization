@@ -159,13 +159,17 @@ def _leaves(out: Path):
 # the rules the step and the weighted inverse are defined by
 
 
-def _lower_step(values: np.ndarray, weights: np.ndarray, q: float) -> float:
+def _lower_step(
+    values: np.ndarray, weights: np.ndarray, q: float, *, by_weight: bool = False
+) -> float:
     """The largest value whose cumulative weight share is strictly
     below q, or -inf if there is none. With equal weights the 0.5
-    quantile is the median."""
+    quantile is the median. Equal values come in the order given, or
+    in order of weight with ``by_weight``, as the "exact" sum takes
+    them."""
     if q == 0.5 and (weights == weights[0]).all():
         return float(np.median(values))
-    order = np.argsort(values, kind="stable")
+    order = np.lexsort((weights, values)) if by_weight else np.argsort(values, kind="stable")
     share = np.cumsum(weights[order]) / weights.sum()
     below = values[order][share < q]
     return float(below.max()) if len(below) else -np.inf
@@ -183,7 +187,8 @@ def _inverted_cdf(values: np.ndarray, weights: np.ndarray, q: float) -> float:
 
 
 def _oracle(
-    da, pooled: list[str], *, method: str, weighted: bool, quantiles=QUANTILES
+    da, pooled: list[str], *, method: str, weighted: bool, quantiles=QUANTILES,
+    summation: str = "fast",
 ) -> pd.DataFrame:
     """Every statistic of ``da`` over ``pooled``, one row a group and
     statistic, with the counts."""
@@ -203,7 +208,11 @@ def _oracle(
             out = np.full(len(flat), np.nan)
             for i, row in enumerate(flat):
                 kept = ~np.isnan(row)
-                if kept.any():
+                if kept.any() and method == "lower_step":
+                    out[i] = rule(
+                        row[kept], weights[kept], q, by_weight=summation == "exact"
+                    )
+                elif kept.any():
                     out[i] = rule(row[kept], weights[kept], q)
             table[LABELS[q]] = out.reshape(stacked.shape[:-1])
         quantiles = {
@@ -296,7 +305,7 @@ def test_pooled_years_are_xarrays_statistics(weights_dir, tmp_path, methods, wei
     for lo, hi in windows:
         oracle = _oracle(
             da.sel(year=slice(lo, hi)), POOLED + ["year"],
-            method=methods[0], weighted=weighted,
+            method=methods[0], weighted=weighted, summation=methods[1],
         )
         span = da.sel(year=slice(lo, hi))
         members = span.notnull().any("year").sum(POOLED).to_series().rename("members")
@@ -322,7 +331,8 @@ def test_each_year_is_xarrays_statistics(weights_dir, tmp_path, methods, weighte
     ours = _run(raw, out)
     da = _leaves(out).sel(year=slice(2041, 2098))
     oracle = _oracle(
-        da, POOLED, method=methods[0], weighted=weighted, quantiles=YEAR_QUANTILES
+        da, POOLED, method=methods[0], weighted=weighted, quantiles=YEAR_QUANTILES,
+        summation=methods[1],
     )
     _compare(ours, oracle, ["target_id", "band", "year"], methods[1])
     counts = ours.groupby("year")["n_members"].min()
@@ -395,7 +405,10 @@ def test_warming_levels_pooled_are_xarrays_statistics(weights_dir, tmp_path, met
             members = span.where(level == at)
             if not members.notnull().any():
                 continue
-            oracle = _oracle(members, POOLED + ["year"], method=methods[0], weighted=False)
+            oracle = _oracle(
+                members, POOLED + ["year"], method=methods[0], weighted=False,
+                summation=methods[1],
+            )
             has = members.notnull().any("year")
             counts = pd.DataFrame({
                 "members": has.sum(POOLED).to_series(),

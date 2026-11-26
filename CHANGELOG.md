@@ -424,6 +424,25 @@ its warming level in a calendar period.
   median of 1, 2 and an infinity, where pandas gave 2. Such a quantile
   is refused, naming the group, rather than written as a NaN that
   would read as a group with no value.
+- Changed: under `summation="exact"` the weighted quantiles of
+  `"lower_step"` and `"inverted_cdf"` take their cumulative weight
+  shares from exact sums, each share their ratio rounded once, and
+  `"lower_step"` takes equal values in order of weight, as
+  `"inverted_cdf"` already did. Before, a share that equals q in exact
+  arithmetic could land a bit either side of it, depending on the order
+  the weights were added in, and then decide the quantile: about one in
+  a few hundred on weights of 0.1 to 0.7. And within equal values the
+  step depended on which member came first, so on the order of the rows,
+  1 in one order and `-inf` in another on six members. Without weights
+  nothing changes. On 2,880 members a group the step costs what it did
+  under `"exact"`, about 1.3 ms, and the weighted standard inverse 1.2 ms
+  where it took 0.6 ms. `summation="fast"` is unchanged.
+- Changed: `"lower_step"` sorts a group once for all its quantiles,
+  where it sorted it once a quantile. The values are the same, and under
+  `"fast"` the step is about three times faster on large groups.
+- Fixed: a refusal raised while a reduce block is pooled named the
+  target by its ordinal in the leaf file. It names it by its id fields,
+  as the statistics file does.
 
 ## v0.5.0
 

@@ -1037,6 +1037,37 @@ class TestWholeSpans:
         assert stats.set_index("statistic").loc["mean", "value"] == 2.5
 
 
+class TestRefusalsNameTheTarget:
+    """A block holds a target by its ordinal. A refusal names it by its
+    id, from the target table, in one worker or two."""
+
+    @pytest.mark.parametrize("n_workers", [1, 2])
+    def test_weights_that_sum_to_zero(self, tmp_path, n_workers):
+        request, _ = build_request(
+            tmp_path, weighted=True, n_members=False, special="all_nan"
+        )
+        with pytest.raises(ValueError) as refused:
+            _one_group_a_block(request, n_workers=n_workers).run(request)
+        message = str(refused.value)
+        assert "weights sum to zero for identity group {'gid': 'T6'" in message
+        assert "target_ordinal" not in message
+
+    @pytest.mark.parametrize("methods, words", [
+        (("inverted_cdf", "fast"), "statistics are infinite"),
+        (("linear", "fast"), "interpolate next to an infinite member"),
+    ], ids=["infinite", "interpolation"])
+    def test_an_infinity(self, tmp_path, methods, words):
+        request, _ = build_request(
+            tmp_path, weighted=False, n_members=False, special="infinite",
+            methods=methods,
+        )
+        with pytest.raises(ValueError, match=words) as refused:
+            _one_group_a_block(request, n_workers=2).run(request)
+        message = str(refused.value)
+        assert "'gid': 'T1'" in message
+        assert "target_ordinal" not in message
+
+
 class TestBlocks:
     def test_groups_are_packed_in_order_up_to_the_budget(self):
         from cil_regionalization.reduce.pandas_blocks import (
