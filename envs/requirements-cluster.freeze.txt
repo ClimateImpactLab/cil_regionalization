@@ -27,7 +27,7 @@ google-api-core==2.34.0
 google-auth==2.56.3
 google-auth-oauthlib==1.4.0
 google-cloud-bigquery==3.43.0
-google-cloud-bigquery-storage==2.40.0
+google-cloud-bigquery-storage==2.43.0
 google-cloud-core==2.6.1
 google-cloud-storage==3.13.1
 google-cloud-storage-control==1.13.0
