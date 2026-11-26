@@ -41,7 +41,8 @@ equivalent (the equivalence is a pinned test, not an assumption) while
 shrinking the pooled frame by the ratio of years to windows, about 45
 fold for 90 years and two windows. The consequence is that the window
 bounds are final before any leaf is processed; the reduced frames carry
-no time dimension, so a different window means a rerun, and
+no time dimension, so a different window means a rerun, or a run of
+the reduce stage if the leaves were kept, and
 `stats.window_means` refuses already reduced input rather than silently
 relabeling it. The statistics ordering itself is unchanged: spatial
 aggregation per draw, then window mean, then statistics over the pooled
@@ -66,8 +67,13 @@ Stages. ``--stage aggregate`` runs steps 1 to 3 without the window mean
 and stops. It writes the leaf files and their manifest,
 ``leaves/<stem>.leaves.manifest.json``, and no statistics. The manifest
 is written before the first leaf, marked incomplete, and again when
-every leaf has succeeded. The default stage, ``all``, runs everything
-in one process.
+every leaf has succeeded. ``--stage reduce`` takes the statistics from
+leaf files written before. It checks them against their manifest, asks
+a backend of the `reduce` package for the statistics, and opens neither
+the source tree nor the weights. The windows, the quantiles and
+everything else under ``[stats]`` can differ from the run that wrote
+the leaves. The default stage, ``all``, runs everything in one process
+and holds every reduced leaf at once.
 
 Per-capita to total conversion is deliberately outside: leaves must
 already carry the extensive quantity to aggregate. The hook for such a
@@ -79,7 +85,8 @@ task, which is acceptable at current artifact sizes and revisitable if
 profiling ever says otherwise.
 
 Entry point: ``python -m cil_regionalization.pipelines.montecarlo
-<config.toml> [--dry-run] [--stage all|aggregate]``. Job submission is
+<config.toml> [--dry-run] [--stage all|aggregate|reduce]
+[--verify-leaves]``. Job submission is
 out of scope; a scheduler template that calls this entry point lives
 under ``examples/``.
 """
@@ -90,7 +97,10 @@ import hashlib
 import itertools
 import json
 import multiprocessing as mp
+import os
 import sys
+import warnings
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
@@ -109,8 +119,15 @@ from cil_regionalization.apply import WeightsArtifact, apply_weights
 from cil_regionalization.config import SourceUnitPolicies, _Strict
 from cil_regionalization.manifest import collect_package_versions
 from cil_regionalization.model_weights import ModelWeights, read_model_weights
+from cil_regionalization.reduce import (
+    LeafRequest,
+    ReduceConfig,
+    ReduceRequest,
+    get_backend,
+)
 from cil_regionalization.stats import (
     _quantile_label,
+    _warn_if_unweighted_gcm,
     _window_label,
     check_quantile_method,
     check_summation,
@@ -120,7 +137,7 @@ from cil_regionalization.stats import (
 
 
 VariableKind = Literal["extensive", "intensive", "ratio"]
-Stage = Literal["all", "aggregate"]
+Stage = Literal["all", "aggregate", "reduce"]
 
 
 class WeightsRef(_Strict):
@@ -234,7 +251,8 @@ class StatsConfig(_Strict):
     reduced to window means as it is aggregated, and the reduced frames
     carry no time dimension. Changing the windows afterwards is a rerun,
     not a reprocessing of reduced data, and the reduction step refuses
-    already reduced input by construction.
+    already reduced input by construction. If the leaves were kept, the
+    reduce stage takes other windows from them.
     """
 
     sample_dims: list[str] = Field(min_length=1)
@@ -304,10 +322,13 @@ class PipelineOutputConfig(_Strict):
     quantities cannot be recovered from the statistics file.
     ``write_leaves`` keeps every aggregated leaf with its years, under
     ``leaves/``. It is off unless asked for, because the leaves take
-    far more disk than the statistics."""
+    far more disk than the statistics. ``leaves_stem`` names the leaves
+    manifest, and is ``stem`` unless set, so a product with other
+    windows can take its own stem and reduce the leaves of another."""
 
     dir: str = Field(min_length=1)
     write_leaves: bool = False
+    leaves_stem: Optional[str] = None
     stem: str = "statistics"
     write_reduced: bool = False
 
@@ -328,6 +349,7 @@ class MonteCarloPipelineConfig(_Strict):
     output: PipelineOutputConfig
     policies: SourceUnitPolicies = Field(default_factory=SourceUnitPolicies)
     run: RunConfig = Field(default_factory=RunConfig)
+    reduce: ReduceConfig = Field(default_factory=ReduceConfig)
 
     @model_validator(mode="after")
     def _passthrough_is_coherent(self) -> "MonteCarloPipelineConfig":
@@ -425,6 +447,8 @@ class PipelinePlan:
     # set when the run writes leaf files in the layout of `leaves`
     leaves_manifest_path: Path | None = None
     stage: str = "all"
+    # what a dry run of the reduce stage found, one line each
+    notes: tuple[str, ...] = ()
 
     def summary(self) -> str:
         lines = [f"pipeline plan: {len(self.leaves)} declared leaves"]
@@ -435,6 +459,7 @@ class PipelinePlan:
             ]
         if self.leaves_manifest_path is not None:
             lines.append(f"  leaves     -> {self.leaves_manifest_path}")
+        lines += list(self.notes)
         if self.missing:
             lines.append(
                 f"  MISSING {len(self.missing)} declared leaves, e.g. "
@@ -476,7 +501,7 @@ def resolve_plan(
             if cfg.tree.subtract_filename is not None
             else None
         )
-        if not cfg.output.write_leaves:
+        if not (cfg.output.write_leaves or stage == "reduce"):
             output_path = None
         elif cfg.weights is None:
             # passthrough has no targets to lay a leaf out by, and keeps
@@ -492,7 +517,11 @@ def resolve_plan(
         leaf = Leaf(values=tuple(combo), path=path, output_path=output_path,
                     subtract_path=subtract_path)
         leaves.append(leaf)
-        if not path.exists() or (
+        if stage == "reduce":
+            # the source tree is not opened, only the leaf files
+            if not output_path.exists():
+                missing.append(leaf)
+        elif not path.exists() or (
             subtract_path is not None and not subtract_path.exists()
         ):
             missing.append(leaf)
@@ -502,12 +531,17 @@ def resolve_plan(
         stats_path=out_root / f"{cfg.output.stem}.parquet",
         manifest_path=out_root / f"{cfg.output.stem}.manifest.json",
         leaves_manifest_path=(
-            out_root / "leaves" / f"{cfg.output.stem}.leaves.manifest.json"
-            if cfg.output.write_leaves and cfg.weights is not None
+            out_root / "leaves" / f"{_leaves_stem(cfg)}.leaves.manifest.json"
+            if (cfg.output.write_leaves or stage == "reduce")
+            and cfg.weights is not None
             else None
         ),
         stage=stage,
     )
+
+
+def _leaves_stem(cfg: MonteCarloPipelineConfig) -> str:
+    return cfg.output.leaves_stem or cfg.output.stem
 
 
 def run_pipeline(
@@ -515,12 +549,23 @@ def run_pipeline(
     *,
     dry_run: bool = False,
     stage: Stage = "all",
+    verify_leaves: bool = False,
 ) -> PipelinePlan | PipelineResult:
     """Run the pipeline, or return the plan untouched when ``dry_run``.
     ``stage="aggregate"`` writes the leaf files and their manifest and
-    stops, and the result's ``stats`` is then None."""
+    stops, and the result's ``stats`` is then None. ``stage="reduce"``
+    takes the statistics from leaf files written before and opens
+    neither the source tree nor the weights. ``verify_leaves`` makes it
+    hash every leaf file first, which reads all of them."""
     _check_stage(cfg, stage)
+    if verify_leaves and stage != "reduce":
+        raise ValueError(
+            "verify_leaves checks the leaf files the reduce stage reads, so "
+            "it goes with stage 'reduce'"
+        )
     plan = resolve_plan(cfg, stage)
+    if stage == "reduce":
+        return _run_reduce(cfg, plan, dry_run=dry_run, verify_leaves=verify_leaves)
     if dry_run:
         return plan
     if plan.missing:
@@ -541,22 +586,7 @@ def run_pipeline(
         cfg.tree.levels,
         list(artifact.schema.id_fields) if artifact is not None else [],
     )
-    model_weights = None
-    if stage != "aggregate" and cfg.stats.model_weights is not None:
-        # The file is read here and nowhere else. The workers get these
-        # rows, so a file edited during the run cannot give different
-        # leaves different weights.
-        model_weights = read_model_weights(cfg.stats.model_weights)
-        # fail before the run, not after it: every declared value of the
-        # weight level must have a row in the table
-        declared = cfg.tree.expect[cfg.stats.model_weight_level]
-        unmatched = model_weights.missing(declared)
-        if unmatched:
-            raise ValueError(
-                f"{len(unmatched)} values of "
-                f"{cfg.stats.model_weight_level!r} have no row in the model "
-                f"weights file (first: {unmatched[:5]})"
-            )
+    model_weights = _model_weights(cfg) if stage != "aggregate" else None
 
     leaves_document = None
     job = {
@@ -605,9 +635,31 @@ def run_pipeline(
           flush=True)
     _log_memory("start")
 
+    outcomes: list[dict] = []
+    first_written: dict = {}
+
+    def collect(outcome: dict) -> None:
+        # The first leaf file to arrive fixes the columns. A later one
+        # that differs stops the run there, not after the last leaf.
+        written = outcome.get("leaf_file")
+        if written is not None and not first_written:
+            first_written.update(leaf=outcome["leaf"], schema=written["schema"])
+        elif written is not None and written["schema"] != first_written["schema"]:
+            raise ValueError(
+                f"leaf {'/'.join(outcome['leaf'])} was written with columns "
+                f"{written['schema']} where leaf "
+                f"{'/'.join(first_written['leaf'])} has "
+                f"{first_written['schema']}. The leaves of one tree need "
+                f"the same columns and dtypes. The run stopped after "
+                f"{len(outcomes) + 1} of {len(tasks)} leaves, and the "
+                f"leaves manifest is left incomplete."
+            )
+        outcomes.append(outcome)
+
     if cfg.run.n_workers == 1 or len(tasks) <= 1:
         _init_worker(*initargs)
-        outcomes = [_process_leaf(t) for t in tasks]
+        for task in tasks:
+            collect(_process_leaf(task))
     else:
         # The artifact loads once per worker (initializer), not once per
         # task: shipping it in every task pickle made long-lived workers
@@ -616,7 +668,6 @@ def run_pipeline(
         # workers to bound what churn remains; chunksize=1 so recycling
         # counts actual leaves. imap_unordered streams results so memory
         # can be logged as the run accumulates.
-        outcomes = []
         worker_peak = 0.0
         with mp.Pool(
             processes=cfg.run.n_workers,
@@ -626,7 +677,7 @@ def run_pipeline(
         ) as pool:
             for outcome in pool.imap_unordered(_process_leaf, tasks,
                                                chunksize=1):
-                outcomes.append(outcome)
+                collect(outcome)
                 worker_peak = max(worker_peak,
                                   outcome.get("worker_peak_gb") or 0.0)
                 if len(outcomes) % 250 == 0 or len(outcomes) == len(tasks):
@@ -658,6 +709,7 @@ def run_pipeline(
     files = {tuple(o["leaf"]): o.pop("leaf_file") for o in outcomes}
     if leaves_document is not None:
         _finish_leaves(plan, leaves_document, outcomes, files)
+        print(_unlisted_report(plan.leaves_manifest_path.parent), flush=True)
     if stage == "aggregate":
         for o in outcomes:
             o.pop("frame")
@@ -697,7 +749,7 @@ def run_pipeline(
 
     out_root = Path(cfg.output.dir)
     out_root.mkdir(parents=True, exist_ok=True)
-    stats.to_parquet(plan.stats_path, index=False)
+    _write_parquet(stats, plan.stats_path)
     reduced_path = None
     if cfg.output.write_reduced:
         reduced_path = out_root / f"{cfg.output.stem}.reduced.parquet"
@@ -736,20 +788,14 @@ def run_pipeline(
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
-        # what the leaves were given, not what the config declares
-        "model_weights_record": (
-            model_weights.record(
-                o["leaf"][cfg.tree.levels.index(cfg.stats.model_weight_level)]
-                for o in outcomes
-            )
-            if model_weights is not None
-            else None
+        "model_weights_record": _model_weights_record(
+            cfg, model_weights, [o["leaf"] for o in outcomes]
         ),
         "subtract_filename": cfg.tree.subtract_filename,
         "excluded_leaves": [list(c) for c in cfg.tree.exclude],
         "package_versions": collect_package_versions(),
     }
-    plan.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    leaf_format.write_json(plan.manifest_path, manifest)
 
     return PipelineResult(
         stats=stats,
@@ -766,11 +812,69 @@ def run_pipeline(
     )
 
 
-def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
-    if stage not in ("all", "aggregate"):
+def _model_weights(cfg: MonteCarloPipelineConfig) -> Optional[ModelWeights]:
+    """The model weights table, read once, or None if the config has
+    none. Raises if a declared value of the weight level has no row."""
+    if cfg.stats.model_weights is None:
+        return None
+    # The file is read here and nowhere else. The workers get these
+    # rows, so a file edited during the run cannot give different
+    # leaves different weights.
+    model_weights = read_model_weights(cfg.stats.model_weights)
+    # fail before the run, not after it: every declared value of the
+    # weight level must have a row in the table
+    declared = cfg.tree.expect[cfg.stats.model_weight_level]
+    unmatched = model_weights.missing(declared)
+    if unmatched:
         raise ValueError(
-            f"unknown stage {stage!r}; expected 'all' or 'aggregate'"
+            f"{len(unmatched)} values of "
+            f"{cfg.stats.model_weight_level!r} have no row in the model "
+            f"weights file (first: {unmatched[:5]})"
         )
+    return model_weights
+
+
+def _model_weights_record(
+    cfg: MonteCarloPipelineConfig,
+    model_weights: Optional[ModelWeights],
+    leaves: list[list[str]],
+) -> Optional[dict]:
+    """What the leaves were given, not what the config declares."""
+    if model_weights is None:
+        return None
+    level = cfg.tree.levels.index(cfg.stats.model_weight_level)
+    return model_weights.record(values[level] for values in leaves)
+
+
+def _write_parquet(frame: pd.DataFrame, path: Path) -> None:
+    """Write under a temporary name, then rename, so a file under
+    ``path`` is always whole."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        frame.to_parquet(tmp, index=False)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
+    if stage not in ("all", "aggregate", "reduce"):
+        raise ValueError(
+            f"unknown stage {stage!r}; expected 'all', 'aggregate' or 'reduce'"
+        )
+    if stage == "reduce":
+        if cfg.weights is None:
+            raise ValueError(
+                "stage 'reduce' needs [weights]. A passthrough run writes "
+                "no leaves of the kind it reads."
+            )
+        if cfg.output.write_reduced:
+            raise ValueError(
+                "stage 'reduce' cannot write the reduced file. It pools one "
+                "block of targets at a time, and the reduced file is sorted "
+                "with the tree levels ahead of the target. Set "
+                "output.write_reduced = false, or use stage 'all'."
+            )
     if stage == "aggregate":
         if cfg.weights is None:
             raise ValueError(
@@ -827,6 +931,18 @@ def _aggregation_identity(
     leaf itself. It holds no path. A path says where something was, and
     the hashes say what it was."""
     return {
+        **_config_identity(cfg),
+        "artifact": {
+            "source_version": artifact.source_version,
+            "regions_version": artifact.regions_version,
+            "sha256": sha256,
+        },
+    }
+
+
+def _config_identity(cfg: MonteCarloPipelineConfig) -> dict:
+    """The part of the identity that the config alone says."""
+    return {
         "weight": cfg.weights.weight,
         "kind": cfg.data.kind,
         "data_version": cfg.data.version,
@@ -839,11 +955,6 @@ def _aggregation_identity(
         "filename": cfg.tree.filename,
         "subtract_filename": cfg.tree.subtract_filename,
         "levels": list(cfg.tree.levels),
-        "artifact": {
-            "source_version": artifact.source_version,
-            "regions_version": artifact.regions_version,
-            "sha256": sha256,
-        },
     }
 
 
@@ -882,7 +993,7 @@ def _begin_leaves(
     document = {
         "complete": False,
         "format_version": leaf_format.FORMAT_VERSION,
-        "stem": cfg.output.stem,
+        "stem": _leaves_stem(cfg),
         "targets_per_group": leaf_format.TARGETS_PER_GROUP,
         "targets": {
             "file": targets.filename,
@@ -926,8 +1037,7 @@ def _finish_leaves(
     plan: PipelinePlan, document: dict, outcomes: list[dict], files: dict
 ) -> None:
     """Write the leaves manifest again, complete, with the accounting
-    of every leaf in plan order. Raises, and leaves the manifest
-    incomplete, if two leaves have different columns."""
+    of every leaf in plan order."""
     by_leaf = {tuple(o["leaf"]): o for o in outcomes}
     schema = files[plan.leaves[0].values]["schema"]
     profiles: list[dict] = []
@@ -937,12 +1047,6 @@ def _finish_leaves(
     entries = []
     for leaf, claimed in zip(plan.leaves, document["leaves"]):
         written, outcome = files[leaf.values], by_leaf[leaf.values]
-        if written["schema"] != schema:
-            raise ValueError(
-                f"leaf {'/'.join(leaf.values)} was written with columns "
-                f"{written['schema']} where the first leaf has {schema}. "
-                f"The leaves of one tree need the same columns and dtypes."
-            )
         rows_per_group += np.asarray(written["rows_per_group"], dtype=np.int64)
         if written["profile"] not in profiles:
             profiles.append(written["profile"])
@@ -971,6 +1075,377 @@ def _finish_leaves(
             "profiles": profiles,
             "package_versions": collect_package_versions(),
         },
+    )
+
+
+def _load_leaves_document(path: Path) -> tuple[dict, str]:
+    """The leaves manifest and the SHA256 of its bytes. Raises if it is
+    missing, which is what a directory of old leaf files looks like, or
+    if the run that wrote it did not finish."""
+    if not path.exists():
+        raise ValueError(
+            f"stage 'reduce' reads the leaves manifest {path}, and it is not "
+            f"there. Leaf files written before the manifest existed cannot "
+            f"be reduced. Run stage 'aggregate' first, or set "
+            f"output.leaves_stem to the stem the leaves were written under."
+        )
+    raw = path.read_bytes()
+    document = json.loads(raw)
+    if not document.get("complete"):
+        raise ValueError(
+            f"the leaves manifest {path} is incomplete. The run that wrote "
+            f"it did not finish, so its leaves are not all there. Run stage "
+            f"'aggregate' again."
+        )
+    if document["format_version"] != leaf_format.FORMAT_VERSION:
+        raise ValueError(
+            f"the leaves under {path} have layout version "
+            f"{document['format_version']}, and this version of the library "
+            f"reads version {leaf_format.FORMAT_VERSION}"
+        )
+    return document, hashlib.sha256(raw).hexdigest()
+
+
+def _check_identity(cfg: MonteCarloPipelineConfig, document: dict) -> list[str]:
+    """Raise if the config would aggregate other leaves than those the
+    manifest describes, naming the field. A path that differs is not a
+    reason to refuse. It comes back as a note, and so does a weights
+    artifact that is no longer where the config says."""
+    recorded = document["aggregation"]
+    for key, value in _config_identity(cfg).items():
+        if recorded[key] != value:
+            raise ValueError(
+                f"the leaves were aggregated with {key} = {recorded[key]!r} "
+                f"and the config has {value!r}. Stage 'reduce' pools the "
+                f"leaves as they are. To change {key}, aggregate again."
+            )
+    notes = []
+    try:
+        found = _artifact_sha256(cfg.weights.dir, cfg.weights.stem)
+    except OSError:
+        notes.append(
+            f"the weights artifact is not at {cfg.weights.dir}. The leaves "
+            f"manifest holds its hashes, and the leaves are reduced as they "
+            f"are."
+        )
+    else:
+        if found != recorded["artifact"]["sha256"]:
+            raise ValueError(
+                f"the weights artifact at {cfg.weights.dir} is not the one "
+                f"the leaves were aggregated with. Its files hash to {found} "
+                f"and the leaves manifest has "
+                f"{recorded['artifact']['sha256']}."
+            )
+    now = {
+        "weights_dir": cfg.weights.dir,
+        "weights_stem": cfg.weights.stem,
+        "tree_root": cfg.tree.root,
+    }
+    for name, value in now.items():
+        if document["paths"][name] != value:
+            notes.append(
+                f"{name} was {document['paths'][name]!r} when the leaves "
+                f"were written and is {value!r} in the config. Paths are "
+                f"recorded and not compared."
+            )
+    return notes
+
+
+def _reduce_request(
+    cfg: MonteCarloPipelineConfig,
+    plan: PipelinePlan,
+    document: dict,
+    model_weights: Optional[ModelWeights],
+    windows_of=None,
+) -> tuple[ReduceRequest, list[str]]:
+    """The request for the declared leaves, and the reasons, if any, the
+    member counts are switched on whatever the config says.
+
+    ``windows_of`` gives a leaf's own windows from its level values. It
+    is the list in ``stats.windows`` for every leaf unless given.
+    Nothing in a config gives it yet.
+    """
+    time_col = cfg.stats.time_col
+    columns = [c["name"] for c in document["schema"]]
+    if time_col not in columns:
+        raise ValueError(
+            f"stats.time_col {time_col!r} is not a column of the leaves "
+            f"(they have {columns})"
+        )
+    common = tuple(
+        (_window_label(lo, hi), lo, hi) for lo, hi in cfg.stats.windows
+    )
+    listed = {tuple(entry["leaf"]): entry for entry in document["leaves"]}
+    absent = [leaf.values for leaf in plan.leaves if leaf.values not in listed]
+    if absent:
+        raise ValueError(
+            f"{len(absent)} declared leaves are not in the leaves manifest "
+            f"{plan.leaves_manifest_path} (first: {'/'.join(absent[0])}). "
+            f"Stage 'reduce' can pool fewer leaves than were aggregated, "
+            f"not more."
+        )
+    weight_level = (
+        cfg.tree.levels.index(cfg.stats.model_weight_level)
+        if model_weights is not None
+        else None
+    )
+    leaves = []
+    for leaf in plan.leaves:
+        entry = listed[leaf.values]
+        profile = document["profiles"][entry["profile"]].get(time_col)
+        if profile is None:
+            raise ValueError(
+                f"the leaves manifest has no profile of {time_col!r}, so "
+                f"the windows cannot be checked or the blocks sized. A "
+                f"profile is kept for a numeric dimension of at most "
+                f"{leaf_format.PROFILE_LIMIT} distinct values."
+            )
+        windows = common if windows_of is None else tuple(windows_of(leaf.values))
+        for label, lo, hi in windows:
+            if not any(lo <= value <= hi for value in profile["values"]):
+                raise ValueError(
+                    f"window ({lo}, {hi}) on {time_col!r} selects no rows in "
+                    f"leaf {'/'.join(leaf.values)} (it spans "
+                    f"{min(profile['values'])} to {max(profile['values'])})"
+                )
+        leaves.append(
+            LeafRequest(
+                file=entry["file"],
+                levels=leaf.values,
+                windows=windows,
+                rows=entry["rows_out"],
+                profile=profile,
+                model_weight=(
+                    model_weights.weight_of(leaf.values[weight_level])
+                    if model_weights is not None
+                    else None
+                ),
+            )
+        )
+
+    reasons = []
+    if len(leaves) < len(document["leaves"]):
+        reasons.append(
+            f"{len(document['leaves']) - len(leaves)} of the "
+            f"{len(document['leaves'])} aggregated leaves are not declared"
+        )
+    if len({leaf.windows for leaf in leaves}) > 1:
+        reasons.append("the windows differ between leaves")
+
+    # the manifest has the rows of a group summed over all its leaves
+    kept = sum(leaf.rows for leaf in leaves)
+    every = sum(entry["rows_out"] for entry in document["leaves"])
+    scale = kept / every if every else 0.0
+    labels = list(dict.fromkeys(label for label, _, _ in common))
+    for leaf in leaves:
+        labels += [label for label, _, _ in leaf.windows if label not in labels]
+    request = ReduceRequest(
+        leaves_root=str(plan.leaves_manifest_path.parent),
+        leaves=tuple(leaves),
+        footer={
+            "format_version": document["format_version"],
+            "targets_per_group": document["targets_per_group"],
+            "n_targets": document["targets"]["n_targets"],
+            "target_digest": document["targets"]["digest"],
+            "aggregation_digest": document["aggregation_digest"],
+        },
+        targets_file=document["targets"]["file"],
+        rows_per_group=tuple(n * scale for n in document["rows_per_group"]),
+        schema=tuple(document["schema"]),
+        id_fields=tuple(document["targets"]["id_fields"]),
+        level_names=tuple(cfg.tree.levels),
+        time_col=time_col,
+        value_col=cfg.data.value_col,
+        window_labels=tuple(labels),
+        sample_dims=tuple(cfg.stats.sample_dims),
+        quantiles=tuple(cfg.stats.quantiles),
+        include_mean=cfg.stats.include_mean,
+        include_n_members=cfg.stats.include_n_members or bool(reasons),
+        quantile_method=cfg.stats.quantile_method,
+        summation=cfg.stats.summation,
+        n_workers=cfg.run.n_workers,
+    )
+    return request, reasons
+
+
+def _verify_leaves(leaves_dir: Path, entries: list[dict], n_workers: int) -> None:
+    """Hash every leaf file and raise if one differs from the manifest.
+    This reads every byte of every leaf."""
+
+    def differs(entry: dict) -> bool:
+        return leaf_format.file_sha256(leaves_dir / entry["file"]) != entry["sha256"]
+
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        changed = list(pool.map(differs, entries))
+    bad = [entry["file"] for entry, wrong in zip(entries, changed) if wrong]
+    if bad:
+        raise ValueError(
+            f"{len(bad)} of {len(entries)} leaf files do not hash to what "
+            f"the leaves manifest has (first: {bad[:5]}). They were changed "
+            f"after they were written. No statistics were written."
+        )
+    print(f"leaves: {len(entries)} files hash to what the manifest has",
+          flush=True)
+
+
+def _run_reduce(
+    cfg: MonteCarloPipelineConfig,
+    plan: PipelinePlan,
+    *,
+    dry_run: bool,
+    verify_leaves: bool,
+) -> PipelinePlan | PipelineResult:
+    """Pass 2 alone. The statistics come from leaf files a run of stage
+    'aggregate' or 'all' wrote, checked against their manifest first.
+    The source tree is not opened, and neither is the weights artifact
+    beyond hashing it if it is still there."""
+    leaves_dir = plan.leaves_manifest_path.parent
+    document, document_sha256 = _load_leaves_document(plan.leaves_manifest_path)
+    notes = _check_identity(cfg, document)
+    _check_level_names(cfg.tree.levels, document["targets"]["id_fields"])
+    model_weights = _model_weights(cfg)
+    request, forced = _reduce_request(cfg, plan, document, model_weights)
+    for reason in forced:
+        notes.append(
+            f"n_members is written although the config does not ask for "
+            f"it, because {reason}"
+        )
+    backend = get_backend(cfg.reduce)
+    if request.methods not in backend.supports:
+        raise ValueError(
+            f"the {backend.kind!r} reduce backend does not give "
+            f"quantile_method={request.quantile_method!r} with "
+            f"summation={request.summation!r} to the last bit. It supports "
+            f"{sorted(backend.supports)}."
+        )
+    description = backend.describe(request)
+    summary = description["text"] + [_unlisted_report(leaves_dir)]
+    if dry_run:
+        return PipelinePlan(
+            leaves=plan.leaves,
+            missing=plan.missing,
+            stats_path=plan.stats_path,
+            manifest_path=plan.manifest_path,
+            leaves_manifest_path=plan.leaves_manifest_path,
+            stage="reduce",
+            notes=tuple(f"  {line.strip()}" for line in summary + notes),
+        )
+
+    listed = {tuple(entry["leaf"]): entry for entry in document["leaves"]}
+    entries = [listed[leaf.values] for leaf in plan.leaves]
+    for entry in entries:
+        file = leaves_dir / entry["file"]
+        if not file.exists():
+            raise ValueError(
+                f"leaf file {file} is in the leaves manifest and not on disk"
+            )
+        if file.stat().st_size != entry["size"]:
+            raise ValueError(
+                f"leaf file {file} is {file.stat().st_size} bytes and the "
+                f"leaves manifest has {entry['size']}. It was changed after "
+                f"it was written."
+            )
+    for line in summary:
+        print(line, flush=True)
+    for note in notes:
+        warnings.warn(note, stacklevel=3)
+    if verify_leaves:
+        _verify_leaves(leaves_dir, entries, cfg.run.n_workers)
+    _warn_if_unweighted_gcm(
+        list(cfg.stats.sample_dims), "model_weight" if model_weights else None
+    )
+    _log_memory("reduce start")
+    stats, report = backend.run(request)
+    stats = stats[request.columns]
+    for field, column in zip(request.id_fields, document["schema"][1:]):
+        # what the same ids are in a frame of the pipeline's own
+        wanted = "string" if column["pandas"] == "string" else pd.Series(["a"]).dtype
+        stats[field] = stats[field].astype(wanted)
+    stats = _ordered(stats, cfg)
+    _log_memory("after reduce")
+
+    out_root = Path(cfg.output.dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+    _write_parquet(stats, plan.stats_path)
+    declared = {leaf.values for leaf in plan.leaves}
+    manifest = {
+        "leaves": entries,
+        "n_leaves": len(entries),
+        "stage": "reduce",
+        "leaves_manifest": str(plan.leaves_manifest_path),
+        "leaves_manifest_sha256": document_sha256,
+        "leaves_left_out": [
+            entry["leaf"]
+            for entry in document["leaves"]
+            if tuple(entry["leaf"]) not in declared
+        ],
+        "leaves_verified": verify_leaves,
+        "n_members_forced": forced,
+        "notes": notes,
+        "reduce": report,
+        "artifact_sha256": document["aggregation"]["artifact"]["sha256"],
+        "weight": cfg.weights.weight,
+        "spatial_aggregation": "weighted",
+        "kind": cfg.data.kind,
+        "data_version": cfg.data.version,
+        "artifact_source_version": document["aggregation"]["artifact"][
+            "source_version"
+        ],
+        "artifact_regions_version": document["aggregation"]["artifact"][
+            "regions_version"
+        ],
+        "sample_dims": cfg.stats.sample_dims,
+        "windows": [_window_label(lo, hi) for lo, hi in cfg.stats.windows],
+        "quantiles": cfg.stats.quantiles,
+        "quantile_method": cfg.stats.quantile_method,
+        "summation": cfg.stats.summation,
+        "reduced": None,
+        "model_weights": cfg.stats.model_weights,
+        "model_weight_level": cfg.stats.model_weight_level,
+        "model_weights_record": _model_weights_record(
+            cfg, model_weights, [entry["leaf"] for entry in entries]
+        ),
+        "subtract_filename": cfg.tree.subtract_filename,
+        "excluded_leaves": [list(c) for c in cfg.tree.exclude],
+        "package_versions": collect_package_versions(),
+    }
+    leaf_format.write_json(plan.manifest_path, manifest)
+    return PipelineResult(
+        stats=stats,
+        leaf_reports=entries,
+        paths={
+            "statistics": str(plan.stats_path),
+            "manifest": str(plan.manifest_path),
+            "leaves_manifest": str(plan.leaves_manifest_path),
+        },
+    )
+
+
+def _unlisted_report(leaves_dir: Path) -> str:
+    """One line on the files under ``leaves_dir`` that no leaves
+    manifest there lists, with their number and total size. The
+    manifests of every stem count, complete or not, and so do the
+    target tables they name. Nothing is deleted."""
+    listed = set()
+    for manifest in leaves_dir.glob("*.leaves.manifest.json"):
+        document = json.loads(manifest.read_text())
+        listed.add(manifest.name)
+        listed.add(document["targets"]["file"])
+        listed.update(entry["file"] for entry in document["leaves"])
+    unlisted = sorted(
+        path
+        for path in leaves_dir.rglob("*")
+        if path.is_file()
+        and path.relative_to(leaves_dir).as_posix() not in listed
+    )
+    if not unlisted:
+        return f"leaves: every file under {leaves_dir} is in a leaves manifest"
+    size = sum(path.stat().st_size for path in unlisted)
+    shown = [path.relative_to(leaves_dir).as_posix() for path in unlisted[:3]]
+    return (
+        f"leaves: {len(unlisted)} files under {leaves_dir} are in no leaves "
+        f"manifest, {size:,} bytes ({size / 1e9:.2f} GB), first {shown}. "
+        f"Nothing was deleted."
     )
 
 
@@ -1016,6 +1491,9 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
         **{level: list(cfg.tree.expect[level]) for level in cfg.tree.levels},
         "window": [_window_label(lo, hi) for lo, hi in cfg.stats.windows],
     }
+    # Rows are picked by label below, and a frame put together from
+    # several without a new index has labels that repeat.
+    frame = frame.reset_index(drop=True)
     keys = pd.DataFrame(index=frame.index)
     for column, values in declared.items():
         if column not in frame.columns:
@@ -1370,10 +1848,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--stage",
-        choices=["all", "aggregate"],
+        choices=["all", "aggregate", "reduce"],
         default="all",
-        help="aggregate writes the leaf files and stops; all (the default) "
-        "runs everything",
+        help="aggregate writes the leaf files and stops; reduce takes the "
+        "statistics from leaf files written before; all (the default) runs "
+        "everything",
+    )
+    parser.add_argument(
+        "--verify-leaves",
+        action="store_true",
+        help="with --stage reduce, hash every leaf file against the leaves "
+        "manifest first; reads every byte of every leaf",
     )
     args = parser.parse_args(argv)
 
@@ -1383,9 +1868,10 @@ def main(argv: list[str] | None = None) -> int:
         print(plan.summary())
         return 1 if plan.missing else 0
 
-    result = run_pipeline(cfg, stage=args.stage)
+    result = run_pipeline(cfg, stage=args.stage, verify_leaves=args.verify_leaves)
+    done = "reduced" if args.stage == "reduce" else "aggregated"
     print(
-        f"pipeline: {len(result.leaf_reports)} leaves aggregated; "
+        f"pipeline: {len(result.leaf_reports)} leaves {done}; "
         + (
             f"statistics rows={len(result.stats)}"
             if result.stats is not None

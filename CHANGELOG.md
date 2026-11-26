@@ -20,6 +20,7 @@ before any leaf is read.
 **`output.write_leaves` now defaults to false, and an aggregated leaf
 is written in a new layout under a new name.** Leaf files of the old
 layout are left where they are and are not read.
+A new stage, `reduce`, takes the statistics from leaves written before.
 
 - Changed: the pipeline sorts the statistics rows before writing them:
   by statistic in the order requested (the mean, then the quantiles as
@@ -227,6 +228,78 @@ layout are left where they are and are not read.
   loaded other bytes than the run started with fails its leaves. The
   statistics manifest gains `artifact_sha256`, `stage` and
   `leaves_manifest`.
+- New: `--stage reduce`, and `stage="reduce"` on `run_pipeline`. It
+  takes the statistics from the leaf files a run of `aggregate` or
+  `all` wrote, and opens neither the source tree nor the weights.
+  Everything under `[stats]` can differ from the run that wrote the
+  leaves, so other windows cost one pass over the leaf files.
+  - It pools one block of targets at a time. `[reduce.pandas]
+    memory_gb` is what all its workers may hold together and has no
+    default. `[reduce.pandas] n_workers` defaults to `run.n_workers`.
+    The dry run prints the blocks and the file opens the budget gives.
+    A budget that does not fit one row group a worker is refused, with
+    the smallest that would run.
+  - It gives the same bits whatever the number of workers, under
+    the `"fast"` sum too, because a block pools its leaves in the
+    order the config declares them. `all` with several workers still
+    pools them in the order the workers finish.
+  - Under `summation = "exact"` it gives what `all` gives on one
+    worker, to the last bit, whatever the size of the blocks, with
+    any `quantile_method` and with or without model weights.
+  - Under the `"fast"` sum it gives the same, to the last bit, on
+    leaves without missing values. On leaves with them it can differ
+    from `all`, and between two block sizes, in the last bit of a
+    window mean. The cause is pandas' own mean, which `"fast"` is:
+    on pandas 3.1.1 a missing value in one group of a frame changes
+    the mean of other groups (92 of 400 groups in a test, by 4e-17),
+    and a block holds part of a leaf where `all` holds all of it.
+    pandas 2.3.3 and 3.0.3 do not do this. `"exact"` does not depend
+    on what else is in the frame.
+  - `output.leaves_stem` names the leaves to reduce. It is
+    `output.stem` unless set, and it also names the leaves manifest
+    the other stages write.
+  - Before any work the leaves are checked against their manifest.
+    What aggregated them has to be what the config says, field by
+    field, and a difference is refused by name. The weights artifact
+    is hashed if it is where the config says, and refused if it is not
+    the one the leaves were made with. A path that differs is not a
+    reason to refuse: the run warns and records it. Each leaf file is
+    checked by its size before work and by its footer, its row groups
+    and its ordinals at every open.
+  - `--verify-leaves` hashes every leaf file against the manifest
+    first. It is off by default because it reads every byte of every
+    leaf. Without it a file changed in place, with the same size and
+    footer, is not noticed.
+  - Fewer leaves than were aggregated can be reduced, with a narrower
+    `tree.expect` or a longer `tree.exclude`. The manifest lists the
+    leaves left out, and `n_members` is then written whether
+    `stats.include_n_members` asks for it or not.
+  - `output.write_reduced` is refused under `reduce`, and so is a
+    config without `[weights]`.
+  - The statistics manifest records the stage, the backend with its
+    options and the versions of pandas, numpy and pyarrow, the blocks,
+    the SHA256 of the leaves manifest, and whether the leaves were
+    verified.
+- New: the `reduce` package. The pipeline asks a backend for the
+  statistics of a set of leaves with a `ReduceRequest`, and
+  `[reduce] kind` picks the backend. `"pandas"` is the only one. A
+  request gives each leaf its own windows, a label with a first and a
+  last time value, so two leaves can give one label different spans.
+  Every config gives every leaf the same list today. If the windows of
+  a request do differ between leaves, `n_members` is written.
+  `tests/integration/test_reduce_parity.py` holds the comparison a
+  second backend has to pass.
+- Changed: a leaf whose columns differ from the first leaf's stops the
+  run when it arrives. Before, the run wrote every leaf and found out
+  at the end.
+- New: a run that writes leaves prints how many files under `leaves/`
+  are in no leaves manifest there, with their total size, and `reduce`
+  prints it too. Nothing is deleted.
+- Fixed: the row sort of the statistics picked rows by the label of
+  their index, so a frame whose index repeated came out with rows
+  repeated. No run of the pipeline built such a frame.
+- The pipeline writes a statistics file and its manifest under a
+  temporary name and renames them, the manifest last.
 
 ## v0.5.0
 

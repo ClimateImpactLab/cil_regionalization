@@ -12,7 +12,7 @@ Subcommands:
         report status. `--test-mode` caps the local backend to the first
         three regions for fast smoke testing.
 
-    cilreg pipeline <pipeline.toml> [--dry-run] [--stage all|aggregate]
+    cilreg pipeline <pipeline.toml> [--dry-run] [--stage all|aggregate|reduce]
         Run the Monte Carlo pipeline (apply weights per leaf, then
         statistics). Thin wrapper over
         `python -m cil_regionalization.pipelines.montecarlo`.
@@ -91,10 +91,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     pp.add_argument(
         "--stage",
-        choices=["all", "aggregate"],
+        choices=["all", "aggregate", "reduce"],
         default="all",
-        help="aggregate writes the leaf files and stops; all (the default) "
-        "runs everything",
+        help="aggregate writes the leaf files and stops; reduce takes the "
+        "statistics from leaf files written before; all (the default) runs "
+        "everything",
+    )
+    pp.add_argument(
+        "--verify-leaves",
+        action="store_true",
+        help="with --stage reduce, hash every leaf file against the leaves "
+        "manifest first; reads every byte of every leaf",
     )
 
     preg = sub.add_parser(
@@ -189,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
             [args.config]
             + (["--dry-run"] if args.dry_run else [])
             + ["--stage", args.stage]
+            + (["--verify-leaves"] if args.verify_leaves else [])
         )
         return pipeline_main(argv_out)
     if args.cmd == "regions":

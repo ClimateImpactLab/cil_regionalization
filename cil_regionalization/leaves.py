@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -436,3 +437,86 @@ def read_leaf_footer(path: str | Path) -> dict:
             f"file of this layout"
         )
     return json.loads(metadata[LEAF_KEY])
+
+
+# what the footer of a leaf has to share with the leaves manifest
+_FOOTER_CHECKED = (
+    "format_version",
+    "targets_per_group",
+    "n_targets",
+    "target_digest",
+    "aggregation_digest",
+)
+
+
+def read_groups(
+    path: str | Path,
+    first: int,
+    stop: int,
+    *,
+    expect: dict,
+    columns: list[str] | None = None,
+    attempts: int = 3,
+    pause: float = 0.5,
+) -> tuple[pa.Table, int]:
+    """Row groups ``first`` up to ``stop`` of a leaf file, and the number
+    of opens that failed before the one that worked.
+
+    The file is checked against ``expect`` before anything is read. The
+    footer has to agree with it on the layout and the two digests, the
+    file has to have the groups and the rows it says, and the ordinals of
+    each group read have to lie in that group's range. An `OSError` is
+    tried again, up to ``attempts`` opens in all. A file that is wrong is
+    not tried again.
+    """
+    failed = 0
+    while True:
+        try:
+            return _read_groups(Path(path), first, stop, expect, columns), failed
+        except OSError:
+            failed += 1
+            if failed >= attempts:
+                raise
+            time.sleep(pause * failed)
+
+
+def _read_groups(path, first, stop, expect, columns) -> pa.Table:
+    file = pq.ParquetFile(path)
+    metadata = file.metadata
+    raw = (file.schema_arrow.metadata or {}).get(LEAF_KEY)
+    if raw is None:
+        raise ValueError(
+            f"{path} has no {LEAF_KEY.decode()} footer, so it is not a leaf "
+            f"file of this layout"
+        )
+    footer = json.loads(raw)
+    for key in _FOOTER_CHECKED:
+        if footer.get(key) != expect[key]:
+            raise ValueError(
+                f"leaf {path}: its footer has {key} = {footer.get(key)!r} "
+                f"and the leaves manifest has {expect[key]!r}"
+            )
+    per_group = expect["targets_per_group"]
+    n_groups = -(-expect["n_targets"] // per_group)
+    if metadata.num_row_groups != n_groups:
+        raise ValueError(
+            f"leaf {path} has {metadata.num_row_groups} row groups where "
+            f"its layout has {n_groups}"
+        )
+    if metadata.num_rows != expect["rows"]:
+        raise ValueError(
+            f"leaf {path} has {metadata.num_rows} rows and the leaves "
+            f"manifest has {expect['rows']}"
+        )
+    ordinal = metadata.schema.names.index(ORDINAL_COLUMN)
+    for g in range(first, stop):
+        group = metadata.row_group(g)
+        statistics = group.column(ordinal).statistics
+        if group.num_rows == 0 or statistics is None or not statistics.has_min_max:
+            continue
+        if statistics.min < g * per_group or statistics.max >= (g + 1) * per_group:
+            raise ValueError(
+                f"leaf {path}: row group {g} holds ordinals {statistics.min} "
+                f"to {statistics.max}, outside its range"
+            )
+    return file.read_row_groups(list(range(first, stop)), columns=columns)

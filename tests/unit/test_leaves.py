@@ -384,3 +384,155 @@ class TestWrite:
         two = leaves.canonical_digest({"b": {"d": None, "c": [1, 2]}, "a": 1})
         assert one == two
         assert one != leaves.canonical_digest({"a": 1, "b": {"c": [2, 1], "d": None}})
+
+
+class TestReadGroups:
+    """`read_groups` checks a leaf file against what the leaves manifest
+    says of it before it reads a row."""
+
+    @staticmethod
+    def _expect(rows: int = 15, **changed) -> dict:
+        return {
+            "format_version": 1,
+            "targets_per_group": 2,
+            "n_targets": 5,
+            "target_digest": _targets().digest,
+            "aggregation_digest": "abc",
+            "rows": rows,
+            **changed,
+        }
+
+    @staticmethod
+    def _file(tmp_path, frame=None):
+        path, _ = _write(
+            _leaf() if frame is None else frame,
+            tmp_path,
+            identity={"aggregation_digest": "abc"},
+        )
+        return path
+
+    def test_it_reads_the_groups_asked_for_and_no_others(self, tmp_path):
+        path = self._file(tmp_path)
+        table, failed = leaves.read_groups(path, 1, 3, expect=self._expect())
+        assert failed == 0
+        assert table.column("gid").to_pylist() == ["T3"] * 3 + ["T4"] * 3 + ["T5"] * 3
+        table, _ = leaves.read_groups(
+            path, 0, 1, expect=self._expect(), columns=[ORDINAL_COLUMN, "value"]
+        )
+        assert table.column_names == [ORDINAL_COLUMN, "value"]
+        assert table.column(ORDINAL_COLUMN).to_pylist() == [0] * 3 + [1] * 3
+        table, _ = leaves.read_groups(path, 1, 1, expect=self._expect())
+        assert table.num_rows == 0
+
+    @pytest.mark.parametrize(
+        "changed",
+        [
+            {"format_version": 2},
+            {"targets_per_group": 4},
+            {"n_targets": 6},
+            {"target_digest": "0" * 64},
+            {"aggregation_digest": "abd"},
+        ],
+        ids=lambda changed: next(iter(changed)),
+    )
+    def test_a_footer_that_says_otherwise_is_refused(self, tmp_path, changed):
+        key = next(iter(changed))
+        with pytest.raises(ValueError, match=f"its footer has {key} = "):
+            leaves.read_groups(
+                self._file(tmp_path), 0, 1, expect=self._expect(**changed)
+            )
+
+    def test_a_file_with_other_rows_than_the_manifest_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="has 15 rows and the leaves manifest"):
+            leaves.read_groups(self._file(tmp_path), 0, 1, expect=self._expect(14))
+
+    def test_a_file_without_the_footer_is_refused(self, tmp_path):
+        _leaf().to_parquet(tmp_path / "old.parquet", index=False)
+        with pytest.raises(ValueError, match="has no cil_regionalization.leaf"):
+            leaves.read_groups(tmp_path / "old.parquet", 0, 1, expect=self._expect())
+
+    def _by_hand(self, tmp_path, groups: list[list[int]]):
+        """A file with the footer of a leaf and the row groups given,
+        each a list of ordinals, written without `write_leaf`."""
+        schema = pa.schema(
+            [(ORDINAL_COLUMN, pa.int32()), ("value", pa.float64())],
+            metadata={
+                b"cil_regionalization.leaf": json.dumps(
+                    {k: v for k, v in self._expect().items() if k != "rows"}
+                ).encode()
+            },
+        )
+        path = tmp_path / "by_hand.parquet"
+        with pq.ParquetWriter(path, schema) as writer:
+            for ordinals in groups:
+                writer.write_table(
+                    pa.table(
+                        [pa.array(ordinals, pa.int32()), pa.array([0.0] * len(ordinals))],
+                        schema=schema,
+                    ),
+                    row_group_size=max(len(ordinals), 1),
+                )
+        return path
+
+    def test_a_file_with_other_groups_than_its_layout_is_refused(self, tmp_path):
+        """Five targets at two a group make three groups. This file has
+        its rows in two, as a writer that skips an empty group leaves
+        them."""
+        path = self._by_hand(tmp_path, [[0, 1], [4]])
+        with pytest.raises(ValueError, match="has 2 row groups where its layout has 3"):
+            leaves.read_groups(path, 0, 1, expect=self._expect(3))
+
+    def test_a_group_with_an_ordinal_of_another_group_is_refused(self, tmp_path):
+        """Only for a group that is read. The check costs nothing,
+        because the range of a group is in the footer."""
+        path = self._by_hand(tmp_path, [[0, 1], [2, 4], [4]])
+        with pytest.raises(
+            ValueError, match="row group 1 holds ordinals 2 to 4, outside its range"
+        ):
+            leaves.read_groups(path, 0, 2, expect=self._expect(5))
+        table, _ = leaves.read_groups(path, 0, 1, expect=self._expect(5))
+        assert table.num_rows == 2
+
+    def test_an_open_that_fails_is_tried_again(self, tmp_path, monkeypatch):
+        """Twice here, and the third open is the one that counts. Failed
+        with one open and no more."""
+        path = self._file(tmp_path)
+        real, opens = pq.ParquetFile, []
+
+        def flaky(*args, **kwargs):
+            opens.append(args)
+            if len(opens) <= 2:
+                raise OSError("the volume dropped")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(leaves.pq, "ParquetFile", flaky)
+        table, failed = leaves.read_groups(
+            path, 0, 1, expect=self._expect(), pause=0.0
+        )
+        assert (failed, len(opens), table.num_rows) == (2, 3, 6)
+
+    def test_three_opens_that_fail_are_the_end(self, tmp_path, monkeypatch):
+        path = self._file(tmp_path)
+        opens = []
+
+        def gone(*args, **kwargs):
+            opens.append(args)
+            raise OSError("the volume dropped")
+
+        monkeypatch.setattr(leaves.pq, "ParquetFile", gone)
+        with pytest.raises(OSError, match="the volume dropped"):
+            leaves.read_groups(path, 0, 1, expect=self._expect(), pause=0.0)
+        assert len(opens) == 3
+
+    def test_a_file_that_is_wrong_is_not_tried_again(self, tmp_path, monkeypatch):
+        path = self._file(tmp_path)
+        real, opens = pq.ParquetFile, []
+
+        def counted(*args, **kwargs):
+            opens.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(leaves.pq, "ParquetFile", counted)
+        with pytest.raises(ValueError, match="rows and the leaves manifest"):
+            leaves.read_groups(path, 0, 1, expect=self._expect(1), pause=0.0)
+        assert len(opens) == 1

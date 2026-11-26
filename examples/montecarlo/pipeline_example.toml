@@ -65,3 +65,9 @@ write_leaves = true
 
 [run]
 n_workers = 1
+
+# Only `--stage reduce` reads this. It takes the statistics from the
+# leaves under pipeline_out/leaves, one block of targets at a time, and
+# memory_gb is what all its workers may hold together.
+[reduce.pandas]
+memory_gb = 4

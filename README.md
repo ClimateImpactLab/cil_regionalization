@@ -268,6 +268,48 @@ cilreg pipeline config.toml --stage aggregate
 
 writes the leaves and their manifest and stops before the statistics.
 
+```
+cilreg pipeline config.toml --stage reduce
+```
+
+takes the statistics from leaves written before, without opening the
+source tree or the weights. Everything under `[stats]` can differ from
+the run that wrote the leaves, so other windows or quantiles cost one
+pass over the leaf files and no aggregation. A product with other
+windows takes its own `output.stem` and names the leaves it reduces
+with `output.leaves_stem`. It gives the same bits whatever the number
+of workers. Under `summation = "exact"` those are the bits `all` gives
+on one worker, whatever the size of the blocks. Under `"fast"` they
+are too when the leaves have no missing values. With missing values
+the last bit of a window mean can depend on the block, because on
+some pandas versions the mean of one group changes with what else is
+in the frame.
+
+Reducing pools one block of targets at a time, so it needs to be told
+how much memory it may use:
+
+```toml
+[reduce.pandas]
+memory_gb = 128   # for all the workers together
+n_workers = 16    # run.n_workers unless set
+```
+
+`--dry-run` prints the blocks and the number of file opens that
+budget gives. Before any work the leaves are checked against their
+manifest: what aggregated them has to be what the config says, field
+by field, and every file has to be there with its size. A path is not
+part of that. If the weights or the tree have moved, the run says so
+and goes on, because the hashes in the manifest say what they were.
+`--verify-leaves` also hashes every leaf file against the manifest,
+which reads all of them and is the way to rule out a file changed in
+place.
+
+Reducing fewer leaves than were aggregated is allowed, with a narrower
+`tree.expect` or a longer `tree.exclude`. The statistics file then has
+an `n_members` column whether the config asks for it or not, so that
+the smaller sample shows in the file. `output.write_reduced` is not
+available under `reduce`.
+
 A leaf's own dimension has to be an integer, a float, a boolean or a
 plain string when leaves are written. A categorical, datetime or
 nullable column is refused, because pandas 2 and pandas 3 write those

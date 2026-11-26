@@ -2046,17 +2046,107 @@ class TestLeafFiles:
         assert _leaves_manifest(out)["complete"] is False
         assert not (out / "statistics.parquet").exists()
 
-    def test_leaves_with_different_columns_are_refused(self, weights_dir, tmp_path):
+    def test_a_leaf_with_other_columns_stops_the_run_when_it_arrives(
+        self, weights_dir, tmp_path
+    ):
+        """The fourth leaf of six has its year as int32. The two after
+        it are never read."""
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         path = tree / "k1" / "z0" / "damages.parquet"
         pd.read_parquet(path).astype({"year": "int32"}).to_parquet(path, index=False)
         with pytest.raises(
-            ValueError, match="leaf k1/z0 was written with columns .* same columns"
+            ValueError,
+            match="leaf k1/z0 was written with columns .* where leaf k0/z0 has "
+            ".* stopped after 4 of 6 leaves",
         ):
             run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        written = sorted(
+            p.parent.relative_to(out / "leaves").as_posix()
+            for p in (out / "leaves").rglob("*.aggregated.parquet")
+        )
+        assert written == ["k0/z0", "k0/z1", "k0/z2", "k1/z0"]
         assert _leaves_manifest(out)["complete"] is False
         assert not (out / "statistics.parquet").exists()
+
+    def test_the_first_leaf_to_arrive_fixes_the_columns(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Not the first in plan order. The pool here runs in this
+        process and hands each leaf back as it is asked for, last
+        first, so the odd leaf is the third to arrive."""
+        import types
+
+        from cil_regionalization.pipelines import montecarlo
+
+        class LastFirstPool:
+            def __init__(self, processes, initializer, initargs, maxtasksperchild):
+                initializer(*initargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def imap_unordered(self, func, tasks, chunksize=1):
+                return (func(task) for task in reversed(list(tasks)))
+
+        monkeypatch.setattr(
+            montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool)
+        )
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        path = tree / "k1" / "z0" / "damages.parquet"
+        pd.read_parquet(path).astype({"year": "int32"}).to_parquet(path, index=False)
+        with pytest.raises(
+            ValueError,
+            match="leaf k1/z0 was written .* where leaf k1/z2 has .* after 3 of 6",
+        ):
+            run_pipeline(_leaves_cfg(weights_dir, tree, out, n_workers=2))
+        written = sorted(
+            p.parent.relative_to(out / "leaves").as_posix()
+            for p in (out / "leaves").rglob("*.aggregated.parquet")
+        )
+        assert written == ["k1/z0", "k1/z1", "k1/z2"]
+
+    def test_files_no_manifest_lists_are_counted_and_kept(
+        self, weights_dir, tmp_path, capsys
+    ):
+        """A second run under the stem declares half the leaves. The
+        other half stays on disk and is reported with its size, next to
+        a file of the old layout. The leaves of another stem are
+        listed, so they are not counted."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        assert (
+            f"leaves: every file under {out / 'leaves'} is in a leaves manifest"
+            in capsys.readouterr().out
+        )
+
+        old = out / "leaves" / "k1" / "z0" / "aggregated_damages.parquet"
+        pd.DataFrame({"value": [1.0]}).to_parquet(old)
+        narrow = {"kumquat": ["k0"], "zeppelin": _LEVELS["zeppelin"]}
+        run_pipeline(_leaves_cfg(weights_dir, tree, out, levels=narrow))
+        left = sorted((out / "leaves" / "k1").rglob("*.parquet"))
+        assert len(left) == 4
+        size = sum(p.stat().st_size for p in left)
+        assert (
+            f"leaves: 4 files under {out / 'leaves'} are in no leaves manifest, "
+            f"{size:,} bytes ({size / 1e9:.2f} GB), first "
+            f"['k1/z0/aggregated_damages.parquet', "
+            f"'k1/z0/damages.aggregated.parquet', "
+            f"'k1/z1/damages.aggregated.parquet']. Nothing was deleted."
+        ) in capsys.readouterr().out
+
+        k1 = {"kumquat": ["k1"], "zeppelin": _LEVELS["zeppelin"]}
+        run_pipeline(_leaves_cfg(weights_dir, tree, out, levels=k1, stem="other"))
+        assert (
+            f"leaves: 1 files under {out / 'leaves'} are in no leaves manifest"
+            in capsys.readouterr().out
+        )
+        assert old.exists()
 
     def test_a_passthrough_run_has_no_leaves_manifest(self, weights_dir, tmp_path):
         """Without weights there are no targets to lay a leaf out by,
@@ -2174,9 +2264,9 @@ class TestStages:
     def test_an_unknown_stage_is_refused(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
-        with pytest.raises(ValueError, match="unknown stage 'reduce'"):
+        with pytest.raises(ValueError, match="unknown stage 'pool'"):
             run_pipeline(
-                _leaves_cfg(weights_dir, tree, tmp_path / "out"), stage="reduce"
+                _leaves_cfg(weights_dir, tree, tmp_path / "out"), stage="pool"
             )
 
     def test_the_dry_run_names_the_leaves_manifest_and_touches_nothing(
@@ -2267,3 +2357,566 @@ write_leaves = true
         assert run() == 0
         assert "statistics rows=2" in capsys.readouterr().out
         assert (out / "statistics.parquet").exists()
+
+
+_METHODS = list(
+    itertools.product(["linear", "lower_step", "inverted_cdf"], ["fast", "exact"])
+)
+# "linear" has no weighted form, so it is tried without weights only
+_METHODS_AND_WEIGHTS = pytest.mark.parametrize(
+    "methods, weighted",
+    [
+        (methods, weighted)
+        for methods in _METHODS
+        for weighted in (False, True)
+        if not (weighted and methods[0] == "linear")
+    ],
+    ids=lambda value: (
+        "-".join(value) if isinstance(value, tuple)
+        else "weighted" if value else "unweighted"
+    ),
+)
+# One row group of the tree below, at 130 bytes a row with half its
+# rows kept, is 3,120 bytes. This fits one group a worker and not two.
+_ONE_GROUP_GB = 3200e-9
+
+
+def _same_frames(one: pd.DataFrame, two: pd.DataFrame) -> None:
+    """Equal with their dtypes and row order, and to the bit."""
+    pd.testing.assert_frame_equal(one, two, check_exact=True)
+    assert (
+        one["value"].to_numpy().tobytes() == two["value"].to_numpy().tobytes()
+    )
+
+
+@pytest.mark.usefixtures("one_target_a_group")
+class TestReduce:
+    """`--stage reduce` takes the statistics from the leaf files."""
+
+    @staticmethod
+    def _raw(weights_dir, tree, out, *, weighted=False, methods=None, **stats):
+        """A config over the tree of `TestLabelPlacement`, which has a
+        dimension of its own. kumquat is not pooled. The quantiles sit
+        above the first step of three weighted members, so the step
+        gives a number and not minus infinity. A config that names no
+        method gets the step with weights and interpolation without."""
+        raw = _leaves_cfg(weights_dir, tree, out).model_dump()
+        raw["stats"].update(
+            sample_dims=["zeppelin"], quantiles=[0.75, 0.95], **stats
+        )
+        if methods is None:
+            methods = ("lower_step" if weighted else "linear", "fast")
+        raw["stats"].update(quantile_method=methods[0], summation=methods[1])
+        if weighted:
+            table = Path(tree).parent / "model_weights.tsv"
+            table.write_text("model\tweight\nz0\t0.6\nz1\t0.3\nz2\t0.0\n")
+            raw["stats"].update(
+                model_weights=str(table), model_weight_level="zeppelin"
+            )
+        return raw
+
+    @staticmethod
+    def _reduce(
+        raw: dict, *, stem="again", memory_gb=1.0, n_workers=None, stats=None,
+        **kwargs,
+    ):
+        raw = json.loads(json.dumps(raw))
+        raw["stats"].update(stats or {})
+        raw["output"].update(stem=stem, leaves_stem="statistics")
+        raw["reduce"] = {"pandas": {"memory_gb": memory_gb, "n_workers": n_workers}}
+        return run_pipeline(
+            MonteCarloPipelineConfig.model_validate(raw), stage="reduce", **kwargs
+        )
+
+    def _aggregated(self, weights_dir, tmp_path, **kwargs):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        TestLabelPlacement._build_tree(tree)
+        raw = self._raw(weights_dir, tree, out, **kwargs)
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        return raw, result, out
+
+    @_METHODS_AND_WEIGHTS
+    def test_it_gives_what_a_run_with_one_worker_gives(
+        self, weights_dir, tmp_path, methods, weighted
+    ):
+        """The file and the frame, with dtypes and row order, to the
+        bit, in one block and in one block a row group."""
+        raw, whole, out = self._aggregated(
+            weights_dir, tmp_path, weighted=weighted, methods=methods,
+            include_n_members=True,
+        )
+        assert list(whole.stats.columns) == [
+            "target_id", "band", "kumquat", "window", "statistic", "value",
+            "n_members",
+        ]
+        for stem, memory_gb, blocks in (("one", 1.0, 1), ("two", _ONE_GROUP_GB, 2)):
+            got = self._reduce(raw, stem=stem, memory_gb=memory_gb)
+            _same_frames(got.stats, whole.stats)
+            _same_frames(
+                pd.read_parquet(out / f"{stem}.parquet"),
+                pd.read_parquet(out / "statistics.parquet"),
+            )
+            manifest = json.loads((out / f"{stem}.manifest.json").read_text())
+            assert manifest["reduce"]["blocks"] == blocks
+
+    def test_two_workers_give_the_same_bits(self, weights_dir, tmp_path):
+        raw, whole, out = self._aggregated(weights_dir, tmp_path, weighted=True)
+        got = self._reduce(raw, memory_gb=2 * _ONE_GROUP_GB, n_workers=2)
+        _same_frames(got.stats, whole.stats)
+        manifest = json.loads((out / "again.manifest.json").read_text())
+        assert manifest["reduce"]["blocks"] == 2
+        assert manifest["reduce"]["options"] == {
+            "memory_gb": 2 * _ONE_GROUP_GB, "n_workers": 2,
+        }
+
+    def test_other_windows_need_neither_the_tree_nor_the_weights(
+        self, weights_dir, tmp_path, recwarn
+    ):
+        """They are deleted before the reduce, which then gives what a
+        full run with those windows gave."""
+        import shutil
+
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        fresh = json.loads(json.dumps(raw))
+        fresh["stats"]["windows"] = [[2050, 2050], [2051, 2081]]
+        fresh["output"].update(dir=str(tmp_path / "fresh"), write_leaves=False)
+        expected = run_pipeline(MonteCarloPipelineConfig.model_validate(fresh)).stats
+
+        shutil.rmtree(tmp_path / "tree")
+        shutil.rmtree(weights_dir)
+        got = self._reduce(raw, stats={"windows": [[2050, 2050], [2051, 2081]]})
+        _same_frames(got.stats, expected)
+        assert sorted(got.stats["window"].unique()) == ["2050", "2051-2081"]
+        notes = json.loads((out / "again.manifest.json").read_text())["notes"]
+        assert len(notes) == 1 and "weights artifact is not at" in notes[0]
+        assert any("weights artifact is not at" in str(w.message) for w in recwarn)
+
+    def test_the_manifest_says_how_the_statistics_were_reduced(
+        self, weights_dir, tmp_path
+    ):
+        raw, _, out = self._aggregated(weights_dir, tmp_path, weighted=True)
+        result = self._reduce(raw, memory_gb=_ONE_GROUP_GB)
+        manifest = json.loads((out / "again.manifest.json").read_text())
+        leaves = out / "leaves" / "statistics.leaves.manifest.json"
+        assert manifest["stage"] == "reduce"
+        assert manifest["leaves_manifest"] == str(leaves)
+        assert manifest["leaves_manifest_sha256"] == hashlib.sha256(
+            leaves.read_bytes()
+        ).hexdigest()
+        assert manifest["leaves_left_out"] == []
+        assert manifest["leaves_verified"] is False
+        assert manifest["n_members_forced"] == []
+        assert manifest["notes"] == []
+        assert manifest["reduced"] is None
+        reduce = manifest["reduce"]
+        assert reduce["kind"] == "pandas"
+        assert sorted(reduce["engine"]) == ["numpy", "pandas", "pyarrow"]
+        assert reduce["engine"]["pandas"] == pd.__version__
+        assert (reduce["blocks"], reduce["opens_per_leaf"], reduce["opens"]) == (2, 2, 12)
+        assert reduce["failed_opens"] == 0
+        assert reduce["rows_pooled"] == 48
+        assert reduce["bytes_per_row"] == 130
+        assert reduce["kept_share"] == 0.5
+        assert manifest["artifact_sha256"] == _leaves_manifest(out)["aggregation"][
+            "artifact"
+        ]["sha256"]
+        assert manifest["n_leaves"] == 6 and len(manifest["leaves"]) == 6
+        assert manifest["model_weights_record"]["members"]["z0"] == {
+            "row": "z0", "weight": 0.6, "n_leaves": 2,
+        }
+        assert result.paths == {
+            "statistics": str(out / "again.parquet"),
+            "manifest": str(out / "again.manifest.json"),
+            "leaves_manifest": str(leaves),
+        }
+        assert len(result.leaf_reports) == 6
+
+    def test_fewer_leaves_than_were_aggregated_shows_in_a_column(
+        self, weights_dir, tmp_path
+    ):
+        """The config does not ask for the member counts. They are
+        written all the same, because the statistics are over fewer
+        members than the leaves on disk and nothing else would say so."""
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        fewer = json.loads(json.dumps(raw))
+        fewer["tree"]["exclude"] = [["k0", "z1"], ["k1", "z1"]]
+        with pytest.warns(UserWarning, match="n_members is written although"):
+            got = self._reduce(fewer)
+        assert "n_members" in got.stats.columns
+        assert set(got.stats["n_members"]) == {2}
+        manifest = json.loads((out / "again.manifest.json").read_text())
+        assert manifest["leaves_left_out"] == [["k0", "z1"], ["k1", "z1"]]
+        assert manifest["n_members_forced"] == [
+            "2 of the 6 aggregated leaves are not declared"
+        ]
+        assert manifest["n_leaves"] == 4
+
+        fresh = json.loads(json.dumps(fewer))
+        fresh["stats"]["include_n_members"] = True
+        fresh["output"].update(dir=str(tmp_path / "fresh"), write_leaves=False)
+        expected = run_pipeline(MonteCarloPipelineConfig.model_validate(fresh)).stats
+        _same_frames(got.stats, expected)
+
+    def test_windows_that_differ_between_leaves_show_in_a_column(
+        self, weights_dir, tmp_path
+    ):
+        """No config gives a leaf its own windows yet. The request
+        takes them, and the member counts are then switched on."""
+        from cil_regionalization.pipelines import montecarlo
+
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        plan = montecarlo.resolve_plan(cfg, "reduce")
+        document = _leaves_manifest(out)
+        request, reasons = montecarlo._reduce_request(cfg, plan, document, None)
+        assert reasons == [] and request.include_n_members is False
+        assert {leaf.windows for leaf in request.leaves} == {
+            (("2050-2051", 2050, 2051), ("2080-2081", 2080, 2081))
+        }
+
+        def windows_of(values):
+            first = 2050 if values[1] == "z0" else 2051
+            return [("warm", first, first + 30)]
+
+        request, reasons = montecarlo._reduce_request(
+            cfg, plan, document, None, windows_of=windows_of
+        )
+        assert reasons == ["the windows differ between leaves"]
+        assert request.include_n_members is True
+        assert request.window_labels == ("2050-2051", "2080-2081", "warm")
+        assert request.leaves[0].windows == (("warm", 2050, 2080),)
+        assert request.leaves[1].windows == (("warm", 2051, 2081),)
+
+    def test_a_copy_of_the_weights_elsewhere_is_a_note_and_not_a_refusal(
+        self, weights_dir, tmp_path
+    ):
+        import shutil
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        moved = tmp_path / "moved" / "weights"
+        shutil.copytree(weights_dir, moved)
+        elsewhere = json.loads(json.dumps(raw))
+        elsewhere["weights"]["dir"] = str(moved)
+        with pytest.warns(UserWarning, match="weights_dir was .* Paths are recorded"):
+            got = self._reduce(elsewhere)
+        _same_frames(got.stats, whole.stats)
+        notes = json.loads((out / "again.manifest.json").read_text())["notes"]
+        assert len(notes) == 1 and str(moved) in notes[0]
+
+    def test_other_weights_under_the_same_name_are_refused(
+        self, weights_dir, tmp_path
+    ):
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        table = pd.read_parquet(weights_dir / "weights.parquet")
+        table["areawt"] = table["areawt"] * 0.5
+        table.to_parquet(weights_dir / "weights.parquet", index=False)
+        with pytest.raises(ValueError, match="is not the one the leaves were"):
+            self._reduce(raw)
+        assert not (out / "again.parquet").exists()
+
+    @pytest.mark.parametrize(
+        "section, key, value, message",
+        [
+            ("weights", "weight", "pop", "weight = 'area' and the config has 'pop'"),
+            ("data", "kind", "intensive", "kind = 'extensive' and the config has"),
+            ("data", "version", "units-v2", "data_version = 'units-v1'"),
+            ("tree", "filename", "other.parquet", "filename = 'damages.parquet'"),
+            ("policies", "on_unmatched", "skip", "policies = "),
+        ],
+    )
+    def test_a_config_that_would_aggregate_differently_is_refused(
+        self, weights_dir, tmp_path, section, key, value, message
+    ):
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        other = json.loads(json.dumps(raw))
+        other[section][key] = value
+        with pytest.raises(ValueError, match=message):
+            self._reduce(other)
+        assert not (out / "again.parquet").exists()
+
+    def test_leaves_without_a_manifest_are_refused(self, weights_dir, tmp_path):
+        """A directory of leaf files of the old layout has none."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        TestLabelPlacement._build_tree(tree)
+        raw = self._raw(weights_dir, tree, out)
+        old = out / "leaves" / "k0" / "z0" / "aggregated_damages.parquet"
+        old.parent.mkdir(parents=True)
+        pd.DataFrame({"target_id": ["T1"], "value": [1.0]}).to_parquet(old)
+        with pytest.raises(ValueError, match="it is not there.*output.leaves_stem"):
+            self._reduce(raw)
+        with pytest.raises(ValueError, match="it is not there"):
+            self._reduce(raw, dry_run=True)
+
+    def test_an_incomplete_manifest_is_refused(self, weights_dir, tmp_path):
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        path = out / "leaves" / "statistics.leaves.manifest.json"
+        document = json.loads(path.read_text())
+        path.write_text(json.dumps({**document, "complete": False}))
+        with pytest.raises(ValueError, match="is incomplete"):
+            self._reduce(raw)
+
+    def test_a_leaf_file_that_is_gone_or_of_another_size_is_refused(
+        self, weights_dir, tmp_path
+    ):
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        leaf = out / "leaves" / "k1" / "z0" / "damages.aggregated.parquet"
+        whole = leaf.read_bytes()
+        leaf.write_bytes(whole + b"x")
+        with pytest.raises(ValueError, match="bytes and the leaves manifest has"):
+            self._reduce(raw)
+        leaf.unlink()
+        with pytest.raises(ValueError, match="in the leaves manifest and not on disk"):
+            self._reduce(raw)
+        plan = self._reduce(raw, dry_run=True)
+        assert [m.values for m in plan.missing] == [("k1", "z0")]
+        assert not (out / "again.parquet").exists()
+
+    def test_a_leaf_whose_footer_says_another_aggregation_is_refused(
+        self, weights_dir, tmp_path
+    ):
+        """The manifest is given another digest here, which is the same
+        disagreement seen from the other side."""
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        path = out / "leaves" / "statistics.leaves.manifest.json"
+        document = json.loads(path.read_text())
+        path.write_text(json.dumps({**document, "aggregation_digest": "0" * 64}))
+        with pytest.raises(ValueError, match="its footer has aggregation_digest"):
+            self._reduce(raw)
+        assert not (out / "again.parquet").exists()
+
+    def test_a_leaf_changed_in_place_passes_unless_the_leaves_are_verified(
+        self, weights_dir, tmp_path, capsys
+    ):
+        """One value of one leaf is changed, in a file of the same size
+        with the same footer. Only the hash can tell."""
+        import pyarrow.parquet as pq
+
+        from cil_regionalization.leaves import (
+            TargetTable, read_leaf_footer, write_leaf,
+        )
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        path = out / "leaves" / "k1" / "z2" / "damages.aggregated.parquet"
+        size, footer = path.stat().st_size, read_leaf_footer(path)
+        frame = pq.read_table(path).to_pandas().drop(columns="target_ordinal")
+        frame.loc[3, "value"] = frame.loc[3, "value"] + 0.125
+        document = _leaves_manifest(out)
+        write_leaf(
+            frame, path,
+            targets=TargetTable.read(out / "leaves" / document["targets"]["file"]),
+            value_col="value",
+            identity={
+                k: footer[k]
+                for k in ("aggregation", "aggregation_digest", "levels", "sources")
+            },
+            targets_per_group=1,
+        )
+        assert path.stat().st_size == size
+        assert read_leaf_footer(path) == footer
+
+        got = self._reduce(raw)
+        assert not got.stats["value"].equals(whole.stats["value"])
+        manifest = json.loads((out / "again.manifest.json").read_text())
+        assert manifest["leaves_verified"] is False
+
+        with pytest.raises(
+            ValueError, match="1 of 6 leaf files do not hash .*k1/z2/damages"
+        ):
+            self._reduce(raw, stem="checked", verify_leaves=True)
+        assert not (out / "checked.parquet").exists()
+
+    def test_verified_leaves_are_said_to_be_so(self, weights_dir, tmp_path, capsys):
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        got = self._reduce(raw, verify_leaves=True)
+        _same_frames(got.stats, whole.stats)
+        assert "leaves: 6 files hash to what the manifest has" in capsys.readouterr().out
+        manifest = json.loads((out / "again.manifest.json").read_text())
+        assert manifest["leaves_verified"] is True
+
+    def test_verifying_goes_with_the_reduce_stage_only(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        with pytest.raises(ValueError, match="goes with stage 'reduce'"):
+            run_pipeline(
+                _leaves_cfg(weights_dir, tree, tmp_path / "out"), verify_leaves=True
+            )
+
+    def test_a_budget_is_needed_and_has_to_fit_a_row_group(
+        self, weights_dir, tmp_path
+    ):
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        with pytest.raises(ValueError, match=r"Set \[reduce.pandas\] memory_gb"):
+            self._reduce(raw, memory_gb=None)
+        with pytest.raises(
+            ValueError,
+            match="one row group of 1 targets needs 3.12e-06 GB. The smallest "
+            "budget that runs with 3 workers is 9.36e-06 GB",
+        ):
+            self._reduce(raw, memory_gb=_ONE_GROUP_GB, n_workers=3)
+        with pytest.raises(ValueError, match="smallest budget"):
+            self._reduce(raw, memory_gb=_ONE_GROUP_GB, n_workers=3, dry_run=True)
+        assert not (out / "again.parquet").exists()
+
+    def test_the_reduced_file_is_refused_by_name(self, weights_dir, tmp_path):
+        raw, _, _ = self._aggregated(weights_dir, tmp_path)
+        raw["output"]["write_reduced"] = True
+        with pytest.raises(ValueError, match="output.write_reduced = false"):
+            self._reduce(raw)
+
+    def test_a_passthrough_config_is_refused(self, weights_dir, tmp_path):
+        raw, _, _ = self._aggregated(weights_dir, tmp_path)
+        del raw["weights"]
+        with pytest.raises(ValueError, match=r"stage 'reduce' needs \[weights\]"):
+            self._reduce(raw)
+
+    def test_a_leaf_that_was_not_aggregated_is_refused(self, weights_dir, tmp_path):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        TestLabelPlacement._build_tree(tree)
+        raw = self._raw(weights_dir, tree, out)
+        half = json.loads(json.dumps(raw))
+        half["tree"]["expect"]["kumquat"] = ["k0"]
+        run_pipeline(MonteCarloPipelineConfig.model_validate(half))
+        with pytest.raises(
+            ValueError, match="3 declared leaves are not in the leaves manifest"
+        ):
+            self._reduce(raw)
+
+    def test_a_window_that_selects_nothing_in_a_leaf_is_refused_before_work(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        from cil_regionalization import leaves
+
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+
+        def read_groups(*args, **kwargs):
+            raise AssertionError("a leaf was opened")
+
+        monkeypatch.setattr(leaves, "read_groups", read_groups)
+        with pytest.raises(
+            ValueError,
+            match=r"window \(2060.0, 2070.0\) on 'year' selects no rows in leaf "
+            r"k0/z0 \(it spans 2050 to 2081\)",
+        ):
+            self._reduce(raw, stats={"windows": [[2050, 2051], [2060, 2070]]})
+        with pytest.raises(ValueError, match="'decade' is not a column"):
+            self._reduce(raw, stats={"time_col": "decade"})
+
+    def test_the_dry_run_says_what_it_would_do_and_touches_nothing(
+        self, weights_dir, tmp_path
+    ):
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        before = sorted(p.name for p in out.iterdir())
+        plan = self._reduce(raw, memory_gb=_ONE_GROUP_GB, dry_run=True)
+        assert plan.summary().splitlines() == [
+            "pipeline plan: 6 declared leaves",
+            f"  statistics -> {out / 'again.parquet'}",
+            f"  manifest   -> {out / 'again.manifest.json'}",
+            f"  leaves     -> {out / 'leaves' / 'statistics.leaves.manifest.json'}",
+            "  reduce: pandas, 3.2e-06 GB over 1 workers, 3.2e-06 GB a worker",
+            "  2 blocks of up to 1 targets and 24 rows",
+            "  2 opens a leaf, 12 in all",
+            "  sized at 130 bytes a row, with 0.5 of a group's rows kept. The "
+            "rows of a group are known summed over the leaves, so this takes "
+            "every leaf to spread its rows over the groups alike.",
+            f"  leaves: every file under {out / 'leaves'} is in a leaves manifest",
+        ]
+        assert plan.missing == []
+        assert sorted(p.name for p in out.iterdir()) == before
+
+    def test_an_unweighted_model_level_warns_once(self, weights_dir, tmp_path):
+        """In the parent, not once a block in every worker."""
+        import warnings as warnings_
+
+        from cil_regionalization.stats import UnweightedModelWeightsWarning
+
+        levels = {"gcm": ["a", "b"], "draw": ["d0", "d1"]}
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, levels)
+        raw = _leaves_cfg(weights_dir, tree, out, levels=levels).model_dump()
+        with warnings_.catch_warnings():
+            warnings_.simplefilter("ignore")
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        with pytest.warns(UnweightedModelWeightsWarning) as caught:
+            self._reduce(raw, memory_gb=1560e-9)
+        assert len([w for w in caught if w.category is UnweightedModelWeightsWarning]) == 1
+        manifest = json.loads((out / "again.manifest.json").read_text())
+        assert manifest["reduce"]["blocks"] == 2
+
+    @pytest.mark.parametrize("entry", ["module", "cilreg"])
+    def test_the_stage_and_the_verification_on_both_entry_points(
+        self, weights_dir, tmp_path, capsys, entry
+    ):
+        from cil_regionalization.cli import main as cilreg_main
+        from cil_regionalization.pipelines.montecarlo import main
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        cfg_path = tmp_path / "pipeline.toml"
+        cfg_path.write_text(
+            f"""
+[weights]
+dir = "{weights_dir}"
+weight = "area"
+
+[tree]
+root = "{tree}"
+levels = ["kumquat", "zeppelin"]
+filename = "damages.parquet"
+
+[tree.expect]
+kumquat = ["k0", "k1"]
+zeppelin = ["z0", "z1", "z2"]
+
+[data]
+kind = "extensive"
+version = "{SOURCE_VERSION}"
+
+[stats]
+sample_dims = ["kumquat", "zeppelin"]
+time_col = "year"
+quantile_method = "linear"
+summation = "fast"
+windows = [[2050, 2051]]
+
+[output]
+dir = "{out}"
+write_leaves = true
+
+[reduce.pandas]
+memory_gb = 1
+"""
+        )
+
+        def run(*flags):
+            if entry == "module":
+                return main([str(cfg_path), *flags])
+            return cilreg_main(["pipeline", str(cfg_path), *flags])
+
+        assert run("--stage", "aggregate") == 0
+        capsys.readouterr()
+        assert run("--stage", "reduce", "--dry-run") == 0
+        printed = capsys.readouterr().out
+        assert "reduce: pandas, 1 GB over 1 workers" in printed
+        assert not (out / "statistics.parquet").exists()
+
+        assert run("--stage", "reduce", "--verify-leaves") == 0
+        printed = capsys.readouterr().out
+        assert "leaves: 6 files hash to what the manifest has" in printed
+        assert "6 leaves reduced; statistics rows=2" in printed
+        assert (out / "statistics.parquet").exists()
+
+
+class TestOrderedIndex:
+    def test_a_frame_whose_index_repeats_keeps_its_rows(self, weights_dir, tmp_path):
+        """Two blocks put together without a new index. Failed with the
+        rows picked by the labels of the frame as it came, which gave
+        every row twice."""
+        from cil_regionalization.pipelines.montecarlo import _ordered
+
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        stats = run_pipeline(cfg).stats
+        halves = pd.concat([stats.iloc[6:], stats.iloc[:6]])
+        halves.index = list(range(6)) + list(range(6))
+        pd.testing.assert_frame_equal(_ordered(halves, cfg), stats, check_exact=True)
