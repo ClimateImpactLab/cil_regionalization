@@ -453,6 +453,12 @@ its warming level in a calendar period.
   to classify a region, although the package declared 2.0.
 - Fixed: the data scripts of `examples/energy` and `examples/labor`
   failed with a NameError when they copied the SMME weights.
+- New: `docs/reference.md` lists every public name with its signature
+  and its docstring, and every key of the weights config and of the
+  pipeline config with its type and its default. `docs/make_reference.py`
+  writes it from the package, and the test suite fails when it is out of
+  date. The README opens with what the library does and where each task
+  is described, and installing comes before the first example.
 
 ## v0.5.0
 

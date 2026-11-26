@@ -8,10 +8,73 @@
 Climate impact results come at impact region level, but most analyses
 need them at country, state, or district level. This package does that
 aggregation step. Published weight files describe how impact regions
-overlap administrative units; the library downloads them, applies them
-to your data, and computes statistics. It can also generate new weight
-files between any two sets of geometries when the published ones do
-not cover your case.
+overlap administrative units, and the library applies them to your
+data and takes the statistics over the Monte Carlo draws. It does four
+things.
+
+- **Apply published weights.** `fetch_weights` downloads a weight file
+  and `apply_weights` aggregates impact region values to its units, as
+  a total, an average or a ratio. See the [quick
+  example](#quick-example), [choosing the right type of
+  weights](#choosing-the-right-type-of-weights) and [your own
+  NetCDF](#your-own-netcdf).
+- **Take statistics over the members.** `summarize_samples` averages
+  the years of a window and takes means and quantiles over the draws
+  and the climate models, with or without the climate model weights.
+  See [climate model weights](#climate-model-weights) and [what
+  happens to the years](#what-happens-to-the-years).
+- **Run a whole projection tree.** `cilreg pipeline <config.toml>`
+  aggregates every leaf of a Monte Carlo tree, takes the statistics
+  over calendar windows or warming levels, and writes a manifest of
+  what made them. See [reading the Monte Carlo
+  trees](#reading-the-monte-carlo-trees), [warming
+  levels](#warming-levels) and [keeping the aggregated
+  leaves](#keeping-the-aggregated-leaves).
+- **Generate new weights** between any two sets of geometries, when the
+  published ones do not cover your case. See [generating new
+  weights](#generating-new-weights).
+
+Every public function, class and config key is in
+[the reference](docs/reference.md), with its signature, its default
+and its docstring. The [worked examples](#worked-example) are whole
+runs on real projections, with their outputs committed.
+
+## Installation
+
+Straight from GitHub:
+
+```
+pip install "git+https://github.com/ClimateImpactLab/cil_regionalization.git"
+pip install "cil_regionalization[netcdf] @ git+https://github.com/ClimateImpactLab/cil_regionalization.git"
+```
+
+or from a clone:
+
+```
+pip install .                # library and CLI
+pip install '.[netcdf]'      # also read NetCDF Monte Carlo trees
+```
+
+`uv pip install .` works too. The geospatial stack (geopandas,
+shapely, rasterio, exactextract) installs with it and ships wheels on
+Linux and macOS. `[netcdf]` reads the NetCDF Monte Carlo trees,
+`[examples]` adds what the example notebooks need (the NetCDF readers,
+jupyter and matplotlib), `[bigquery]` adds the BigQuery generation
+backend, `[dev]` adds pytest. Python 3.10 or newer.
+
+To run the examples from a clone at the versions in `uv.lock` (on
+Python 3.11 and newer, the versions in
+`envs/requirements-cluster.freeze.txt`, which the test suite passed
+against):
+
+```
+uv sync --extra examples
+```
+
+The `envs/` directory and `examples/montecarlo/runs/` exist to
+reproduce the runs behind the published results on the University of
+Chicago RCC cluster; they are not part of installing or using the
+package.
 
 ## Quick example
 
@@ -575,43 +638,6 @@ cooling degree days to impact regions, through segment weights read
 with `from_table`, and to provinces with the grid weights. Notebook
 outputs are committed, so they read without running.
 
-## Installation
-
-Straight from GitHub:
-
-```
-pip install "git+https://github.com/ClimateImpactLab/cil_regionalization.git"
-pip install "cil_regionalization[netcdf] @ git+https://github.com/ClimateImpactLab/cil_regionalization.git"
-```
-
-or from a clone:
-
-```
-pip install .                # library and CLI
-pip install '.[netcdf]'      # also read NetCDF Monte Carlo trees
-```
-
-`uv pip install .` works too. The geospatial stack (geopandas,
-shapely, rasterio, exactextract) installs with it and ships wheels on
-Linux and macOS. `[netcdf]` reads the NetCDF Monte Carlo trees,
-`[examples]` adds what the example notebooks need (the NetCDF readers,
-jupyter and matplotlib), `[bigquery]` adds the BigQuery generation
-backend, `[dev]` adds pytest. Python 3.10 or newer.
-
-To run the examples from a clone at the versions in `uv.lock` (on
-Python 3.11 and newer, the versions in
-`envs/requirements-cluster.freeze.txt`, which the test suite passed
-against):
-
-```
-uv sync --extra examples
-```
-
-The `envs/` directory and `examples/montecarlo/runs/` exist to
-reproduce the runs behind the published results on the University of
-Chicago RCC cluster; they are not part of installing or using the
-package.
-
 ## Generating new weights
 
 A TOML config names the target geometry, the source geometry or grid,
@@ -663,13 +689,12 @@ the dissolve scripts under `examples/gadm20/` and `examples/gadm41/`.
 The targets manifest records the source file's checksum, so you can
 confirm a regenerated set started from the same input.
 
-## More detail
+## Reference
 
-`fetch_weights`, `generate_weights`, `apply_weights`, `read_netcdf_grid`, `summarize_samples`,
-`window_means`, `pooled_statistics`, `read_gmst`,
-`assign_warming_levels`, `read_gradient_leaf`,
-`aggregate_gradient`, `delta_method`, `WeightsArtifact`, and
-`load_config` are the supported API, re-exported at the package root.
-`window_means` and `pooled_statistics` are the two halves of
-`summarize_samples`, for pipelines that reduce time per leaf before
-pooling. Everything else is internal and may change.
+[docs/reference.md](docs/reference.md) lists every name that
+`import cil_regionalization as cilreg` gives, with its signature and
+its docstring, and every key of the weights config and of the pipeline
+config, with its type and its default. `docs/make_reference.py` writes
+it from the package, and the test suite fails when it is out of date.
+A name that is not in it is internal and may change. `cilreg --help`
+and `cilreg <command> --help` describe the command line.
