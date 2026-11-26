@@ -180,9 +180,8 @@ class TestEndToEnd:
         )["value"].iloc[0]
         assert t2_mean == pytest.approx(0.5 * (40.0 + 25.0 + 0.5))
 
-        # Per-leaf outputs are mirrored under the output dir.
-        leaf_out = tmp_path / "out" / "leaves" / "k0" / "z0" / "aggregated_damages.parquet"
-        assert leaf_out.exists()
+        # No leaf is kept unless the config asks for it.
+        assert not (tmp_path / "out" / "leaves").exists()
         manifest = json.loads((tmp_path / "out" / "statistics.manifest.json").read_text())
         assert manifest["n_leaves"] == 6
         assert manifest["artifact_source_version"] == SOURCE_VERSION
@@ -569,10 +568,10 @@ class TestLabelPlacement:
     def test_every_file_is_what_labelling_the_leaf_first_gave(
         self, weights_dir, tmp_path
     ):
-        """The leaf files, the reduced file and the statistics, column
-        order and dtypes included. Cannot go red by reverting, because
-        labelling the leaf first is what the old code did. It failed
-        with the labels put after every other column."""
+        """The reduced file and the statistics, column order and dtypes
+        included. Cannot go red by reverting, because labelling the
+        leaf first is what the old code did. It failed with the labels
+        put after every other column."""
         from cil_regionalization.apply import WeightsArtifact, apply_weights
         from cil_regionalization.pipelines.montecarlo import _ordered
         from cil_regionalization.stats import pooled_statistics, window_means
@@ -594,17 +593,6 @@ class TestLabelPlacement:
                 data_version=SOURCE_VERSION,
                 value_col="value",
             ).frame
-            assert list(applied.columns) == [
-                "target_id", "band", "year", "kumquat", "zeppelin", "value",
-            ]
-            on_disk = pd.read_parquet(
-                out / "leaves" / kumquat / zeppelin / "aggregated_damages.parquet"
-            )
-            pd.testing.assert_frame_equal(
-                on_disk,
-                _through_parquet(applied, tmp_path / "expected.parquet"),
-                check_exact=True,
-            )
             reduced.append(
                 window_means(
                     applied, time_col="year", windows=self._WINDOWS,
@@ -653,6 +641,7 @@ class TestLabelPlacement:
         self._build_tree(tree)
         raw = self._cfg(tmp_path, tree, out).model_dump()
         del raw["weights"]
+        raw["output"]["write_leaves"] = True
         run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
 
         for kumquat, zeppelin in itertools.product(*_LEVELS.values()):
@@ -677,7 +666,11 @@ class TestLabelPlacement:
         ]
 
     @pytest.mark.parametrize(
-        "name", ["window", "statistic", "n_members", "model_weight", "target_id"]
+        "name",
+        [
+            "window", "statistic", "n_members", "model_weight", "target_id",
+            "target_ordinal",
+        ],
     )
     def test_a_level_named_like_an_output_column_is_refused_before_any_leaf(
         self, weights_dir, tmp_path, monkeypatch, name
@@ -751,7 +744,11 @@ class TestLabelPlacement:
                     "summation": "fast",
                     "windows": [[2050, 2051], [2080, 2081]],
                 },
-                "output": {"dir": str(tmp_path / "out"), "write_reduced": True},
+                "output": {
+                    "dir": str(tmp_path / "out"),
+                    "write_reduced": True,
+                    "write_leaves": True,
+                },
             }
         )
         stats = run_pipeline(cfg).stats
@@ -1122,15 +1119,17 @@ class TestWindowReductionPerLeaf:
     def test_reduced_rows_and_disk_output(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
-        result = run_pipeline(
-            _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
-        )
+        raw = _pipeline_cfg(
+            weights_dir, tree, tmp_path / "out", levels=_LEVELS
+        ).model_dump()
+        raw["output"]["write_leaves"] = True
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
         for report in result.leaf_reports:
             # 2 targets x 4 years aggregated; 2 targets x 2 windows pooled.
             assert report["rows_out"] == 8
             assert report["rows_reduced"] == 4
         on_disk = pd.read_parquet(
-            tmp_path / "out" / "leaves" / "k0" / "z0" / "aggregated_damages.parquet"
+            tmp_path / "out" / "leaves" / "k0" / "z0" / "damages.aggregated.parquet"
         )
         assert "year" in on_disk.columns
         assert len(on_disk) == 8
@@ -1556,3 +1555,715 @@ class TestPassthrough:
         raw["policies"] = {"on_zero_weight": "skip"}
         with pytest.raises(ValueError, match="nothing for it to govern"):
             MonteCarloPipelineConfig.model_validate(raw)
+
+
+def _leaves_cfg(
+    weights_dir, tree, out, *, levels=None, n_workers=1, **output
+) -> MonteCarloPipelineConfig:
+    raw = _pipeline_cfg(
+        weights_dir, tree, out, levels=levels or _LEVELS, n_workers=n_workers
+    ).model_dump()
+    raw["output"].update(write_leaves=True, **output)
+    return MonteCarloPipelineConfig.model_validate(raw)
+
+
+def _leaves_manifest(out: Path, stem: str = "statistics") -> dict:
+    return json.loads((out / "leaves" / f"{stem}.leaves.manifest.json").read_text())
+
+
+def _poison(tree: Path) -> pd.DataFrame:
+    """Give one leaf a unit the weights do not know, so it fails, and
+    return what it held."""
+    path = tree / "k0" / "z1" / "damages.parquet"
+    good = pd.read_parquet(path)
+    bad = good.copy()
+    bad.loc[len(bad)] = {"unit_id": "ghost", "year": 2050, "value": 1.0}
+    bad.to_parquet(path, index=False)
+    return good
+
+
+@pytest.fixture
+def one_target_a_group(monkeypatch):
+    """Two targets make two row groups."""
+    from cil_regionalization import leaves
+
+    monkeypatch.setattr(leaves, "TARGETS_PER_GROUP", 1)
+
+
+@pytest.mark.usefixtures("one_target_a_group")
+class TestLeafFiles:
+    """What `output.write_leaves` puts on disk."""
+
+    def test_a_leaf_file_is_the_aggregated_leaf_laid_out_by_target(
+        self, weights_dir, tmp_path
+    ):
+        import pyarrow.parquet as pq
+
+        from cil_regionalization.apply import WeightsArtifact, apply_weights
+        from cil_regionalization.leaves import read_leaf_footer
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        manifest = _leaves_manifest(out)
+
+        artifact = WeightsArtifact.load(weights_dir)
+        for kumquat, zeppelin in itertools.product(*_LEVELS.values()):
+            source = tree / kumquat / zeppelin / "damages.parquet"
+            applied = apply_weights(
+                artifact,
+                pd.read_parquet(source),
+                kind="extensive",
+                weight="area",
+                data_version=SOURCE_VERSION,
+                value_col="value",
+            ).frame.sort_values("target_id", kind="stable")
+            folder = out / "leaves" / kumquat / zeppelin
+            assert [p.name for p in folder.iterdir()] == ["damages.aggregated.parquet"]
+            path = folder / "damages.aggregated.parquet"
+            on_disk = pq.read_table(path).to_pandas()
+            assert list(on_disk.columns) == [
+                "target_ordinal", "target_id", "year", "value",
+            ]
+            assert on_disk["target_ordinal"].tolist() == [0] * 4 + [1] * 4
+            assert on_disk["target_id"].tolist() == applied["target_id"].tolist()
+            assert on_disk["year"].tolist() == applied["year"].tolist()
+            assert (
+                on_disk["value"].to_numpy().tobytes()
+                == applied["value"].to_numpy().tobytes()
+            )
+            assert pq.read_metadata(path).num_row_groups == 2
+            assert read_leaf_footer(path) == {
+                "format_version": 1,
+                "targets_per_group": 1,
+                "n_targets": 2,
+                "target_digest": manifest["targets"]["digest"],
+                "aggregation": manifest["aggregation"],
+                "aggregation_digest": manifest["aggregation_digest"],
+                "levels": {"kumquat": kumquat, "zeppelin": zeppelin},
+                "sources": [str(source)],
+            }
+
+    def test_the_manifest_lists_every_leaf_in_plan_order(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """The pool here runs in this process and hands the leaves back
+        last first."""
+        import types
+
+        from cil_regionalization import leaves
+        from cil_regionalization.pipelines import montecarlo
+
+        class LastFirstPool:
+            def __init__(self, processes, initializer, initargs, maxtasksperchild):
+                initializer(*initargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def imap_unordered(self, func, tasks, chunksize=1):
+                return [func(task) for task in reversed(list(tasks))]
+
+        monkeypatch.setattr(
+            montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool)
+        )
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        run_pipeline(_leaves_cfg(weights_dir, tree, out, n_workers=2))
+        manifest = _leaves_manifest(out)
+
+        assert sorted(manifest) == [
+            "aggregation", "aggregation_digest", "complete", "format_version",
+            "group_col", "leaves", "package_versions", "paths", "profiles",
+            "rows_per_group", "schema", "stem", "targets", "targets_per_group",
+        ]
+        assert manifest["complete"] is True
+        assert manifest["stem"] == "statistics"
+        assert manifest["format_version"] == 1
+        assert manifest["targets_per_group"] == 1
+        assert manifest["rows_per_group"] == [24, 24]
+        assert manifest["schema"] == [
+            {"name": "target_ordinal", "arrow": "int32", "pandas": "int32"},
+            {
+                "name": "target_id",
+                "arrow": "string",
+                "pandas": str(pd.Series(["T1"]).dtype),
+            },
+            {"name": "year", "arrow": "int64", "pandas": "int64"},
+            {"name": "value", "arrow": "double", "pandas": "float64"},
+        ]
+        assert manifest["profiles"] == [
+            {"year": {"values": [2050, 2051, 2080, 2081], "rows": [2, 2, 2, 2]}}
+        ]
+        assert "pyarrow" in manifest["package_versions"]
+
+        combos = list(itertools.product(*_LEVELS.values()))
+        assert [tuple(entry["leaf"]) for entry in manifest["leaves"]] == combos
+        for entry, (kumquat, zeppelin) in zip(manifest["leaves"], combos):
+            path = out / "leaves" / kumquat / zeppelin / "damages.aggregated.parquet"
+            assert entry == {
+                "leaf": [kumquat, zeppelin],
+                "file": f"{kumquat}/{zeppelin}/damages.aggregated.parquet",
+                "sources": [str(tree / kumquat / zeppelin / "damages.parquet")],
+                "rows_in": 8,
+                "rows_out": 8,
+                "coverage": entry["coverage"],
+                "mass_balance_rel_error": entry["mass_balance_rel_error"],
+                "size": path.stat().st_size,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "profile": 0,
+            }
+            assert entry["coverage"] is not None
+            assert abs(entry["mass_balance_rel_error"]) < 1e-12
+
+        table = leaves.TargetTable.read(out / "leaves" / manifest["targets"]["file"])
+        assert table.ids == (("T1",), ("T2",))
+        assert manifest["targets"] == {
+            "file": f"targets.{table.digest[:16]}.parquet",
+            "digest": table.digest,
+            "n_targets": 2,
+            "id_fields": ["target_id"],
+        }
+
+    def test_the_manifest_says_what_made_the_leaves_and_nothing_of_the_statistics(
+        self, weights_dir, tmp_path
+    ):
+        """The identity holds the hashes of the weights artifact and no
+        path. The paths are recorded beside it."""
+        from cil_regionalization.leaves import canonical_digest
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        manifest = _leaves_manifest(out)
+
+        assert manifest["aggregation"] == {
+            "weight": "area",
+            "kind": "extensive",
+            "data_version": SOURCE_VERSION,
+            "data_format": "parquet",
+            "value_col": "value",
+            "denominator_col": None,
+            "region_dim": None,
+            "region_labels": None,
+            "policies": {
+                "on_unmatched": "error",
+                "on_zero_weight": "error",
+                "on_absent_from_data": "error",
+            },
+            "filename": "damages.parquet",
+            "subtract_filename": None,
+            "levels": ["kumquat", "zeppelin"],
+            "artifact": {
+                "source_version": SOURCE_VERSION,
+                "regions_version": "targets-v1",
+                "sha256": {
+                    name: hashlib.sha256(
+                        (weights_dir / f"weights.{suffix}").read_bytes()
+                    ).hexdigest()
+                    for name, suffix in (
+                        ("table", "parquet"), ("manifest", "manifest.json"),
+                    )
+                },
+            },
+        }
+        assert manifest["aggregation_digest"] == canonical_digest(
+            manifest["aggregation"]
+        )
+        assert str(tmp_path) not in json.dumps(manifest["aggregation"])
+        assert manifest["paths"] == {
+            "weights_dir": str(weights_dir),
+            "weights_stem": "weights",
+            "tree_root": str(tree),
+        }
+        text = json.dumps(manifest)
+        for word in ("window", "quantile", "sample_dims", "summation", "model_weight"):
+            assert word not in text
+
+    def test_the_statistics_manifest_points_at_the_leaves(
+        self, weights_dir, tmp_path
+    ):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        hashes = {
+            "table": hashlib.sha256(
+                (weights_dir / "weights.parquet").read_bytes()
+            ).hexdigest(),
+            "manifest": hashlib.sha256(
+                (weights_dir / "weights.manifest.json").read_bytes()
+            ).hexdigest(),
+        }
+
+        result = run_pipeline(_leaves_cfg(weights_dir, tree, tmp_path / "with"))
+        manifest = json.loads(
+            (tmp_path / "with" / "statistics.manifest.json").read_text()
+        )
+        expected = str(tmp_path / "with" / "leaves" / "statistics.leaves.manifest.json")
+        assert manifest["stage"] == "all"
+        assert manifest["leaves_manifest"] == expected
+        assert result.paths["leaves_manifest"] == expected
+        assert manifest["artifact_sha256"] == hashes
+        assert "leaf_file" not in manifest["leaves"][0]
+
+        result = run_pipeline(
+            _pipeline_cfg(weights_dir, tree, tmp_path / "without", levels=_LEVELS)
+        )
+        manifest = json.loads(
+            (tmp_path / "without" / "statistics.manifest.json").read_text()
+        )
+        assert manifest["leaves_manifest"] is None
+        assert "leaves_manifest" not in result.paths
+        assert manifest["artifact_sha256"] == hashes
+
+    def test_writing_the_leaves_changes_no_statistic(self, weights_dir, tmp_path):
+        """Cannot go red by reverting, because the old code wrote its
+        leaves without changing a statistic either. It failed with the
+        window means taken from the leaf file read back, which has a
+        column the frame does not."""
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        with_leaves = run_pipeline(
+            _leaves_cfg(weights_dir, tree, tmp_path / "with", write_reduced=True)
+        )
+        raw = _pipeline_cfg(
+            weights_dir, tree, tmp_path / "without", levels=_LEVELS
+        ).model_dump()
+        raw["output"]["write_reduced"] = True
+        without = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        pd.testing.assert_frame_equal(with_leaves.stats, without.stats, check_exact=True)
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_path / "with" / "statistics.reduced.parquet"),
+            pd.read_parquet(tmp_path / "without" / "statistics.reduced.parquet"),
+            check_exact=True,
+        )
+
+    def test_the_manifest_is_incomplete_until_every_leaf_is_written(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """It is there before the first leaf, with the files the run is
+        about to write and the target table beside it."""
+        from cil_regionalization import leaves
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        real, seen = leaves.write_leaf, []
+
+        def write_leaf(frame, path, **kwargs):
+            manifest = _leaves_manifest(out)
+            seen.append(
+                (
+                    manifest["complete"],
+                    [entry["file"] for entry in manifest["leaves"]],
+                    (out / "leaves" / manifest["targets"]["file"]).exists(),
+                    sorted(manifest["leaves"][0]),
+                )
+            )
+            return real(frame, path, **kwargs)
+
+        monkeypatch.setattr(leaves, "write_leaf", write_leaf)
+        run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        files = [
+            f"{kumquat}/{zeppelin}/damages.aggregated.parquet"
+            for kumquat, zeppelin in itertools.product(*_LEVELS.values())
+        ]
+        assert seen == [(False, files, True, ["file", "leaf"])] * 6
+        assert _leaves_manifest(out)["complete"] is True
+
+    def test_a_failed_leaf_leaves_the_manifest_incomplete(
+        self, weights_dir, tmp_path
+    ):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        good = _poison(tree)
+        cfg = _leaves_cfg(weights_dir, tree, out)
+        with pytest.raises(ValueError, match="partial run"):
+            run_pipeline(cfg)
+        manifest = _leaves_manifest(out)
+        assert manifest["complete"] is False
+        assert len(manifest["leaves"]) == 6
+        assert "rows_per_group" not in manifest
+        assert not (out / "statistics.parquet").exists()
+
+        # the same stem writes them again, and the manifest is replaced
+        good.to_parquet(tree / "k0" / "z1" / "damages.parquet", index=False)
+        run_pipeline(cfg)
+        assert _leaves_manifest(out)["complete"] is True
+
+    @pytest.mark.parametrize("first_run", ["complete", "killed"])
+    def test_leaves_another_stem_lists_are_not_written_over(
+        self, weights_dir, tmp_path, first_run
+    ):
+        """Whether the other run finished or not. Failed with no
+        manifest written before the first leaf, which forgets what a
+        killed run was writing."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        first = _leaves_cfg(weights_dir, tree, out, stem="first")
+        if first_run == "complete":
+            run_pipeline(first)
+        else:
+            good = _poison(tree)
+            with pytest.raises(ValueError, match="partial run"):
+                run_pipeline(first)
+            good.to_parquet(tree / "k0" / "z1" / "damages.parquet", index=False)
+        before = {
+            p: p.read_bytes() for p in (out / "leaves").rglob("*") if p.is_file()
+        }
+
+        with pytest.raises(
+            ValueError, match="6 leaf files .* output stem 'first'"
+        ):
+            run_pipeline(_leaves_cfg(weights_dir, tree, out, stem="second"))
+        after = {
+            p: p.read_bytes() for p in (out / "leaves").rglob("*") if p.is_file()
+        }
+        assert after == before
+        assert not (out / "second.parquet").exists()
+
+    def test_two_stems_with_different_leaves_share_a_directory(
+        self, weights_dir, tmp_path
+    ):
+        """One scenario a stem, as the published runs are laid out."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        for kumquat in _LEVELS["kumquat"]:
+            run_pipeline(
+                _leaves_cfg(
+                    weights_dir, tree, out,
+                    levels={"kumquat": [kumquat], "zeppelin": _LEVELS["zeppelin"]},
+                    stem=kumquat,
+                )
+            )
+        k0, k1 = _leaves_manifest(out, "k0"), _leaves_manifest(out, "k1")
+        assert k0["complete"] and k1["complete"]
+        assert {tuple(e["leaf"]) for e in k0["leaves"]} == {
+            ("k0", z) for z in _LEVELS["zeppelin"]
+        }
+        assert {tuple(e["leaf"]) for e in k1["leaves"]} == {
+            ("k1", z) for z in _LEVELS["zeppelin"]
+        }
+        assert k0["targets"] == k1["targets"]
+        assert k0["aggregation_digest"] == k1["aggregation_digest"]
+        assert sorted(p.name for p in (out / "leaves").iterdir()) == [
+            "k0", "k0.leaves.manifest.json", "k1", "k1.leaves.manifest.json",
+            k0["targets"]["file"],
+        ]
+
+    def test_the_group_size_reaches_the_workers_of_a_pool(
+        self, weights_dir, tmp_path
+    ):
+        """A spawned worker imports the module afresh, so the size goes
+        along with the task."""
+        import pyarrow.parquet as pq
+
+        from cil_regionalization.leaves import read_leaf_footer
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        run_pipeline(_leaves_cfg(weights_dir, tree, out, n_workers=2))
+        for path in (out / "leaves").rglob("*.aggregated.parquet"):
+            assert read_leaf_footer(path)["targets_per_group"] == 1
+            assert pq.read_metadata(path).num_row_groups == 2
+        assert _leaves_manifest(out)["rows_per_group"] == [24, 24]
+
+    def test_a_leaf_without_a_target_has_an_empty_group_for_it(
+        self, weights_dir, tmp_path
+    ):
+        import pyarrow.parquet as pq
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        # u2 is the only unit that reaches T2
+        path = tree / "k0" / "z0" / "damages.parquet"
+        pd.read_parquet(path).query("unit_id == 'u1'").to_parquet(path, index=False)
+        raw = _leaves_cfg(weights_dir, tree, out).model_dump()
+        raw["policies"] = {"on_absent_from_data": "skip"}
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+
+        metadata = pq.read_metadata(
+            out / "leaves" / "k0" / "z0" / "damages.aggregated.parquet"
+        )
+        assert [metadata.row_group(g).num_rows for g in range(2)] == [4, 0]
+        assert _leaves_manifest(out)["rows_per_group"] == [24, 20]
+
+    def test_an_artifact_that_changes_during_the_run_fails_every_leaf(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """The run hashes the artifact twice when it loads it, and so
+        does the worker, which here gets other bytes."""
+        from cil_regionalization.pipelines import montecarlo
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        real, calls = montecarlo._artifact_sha256, []
+
+        def sha256(weights_dir, stem):
+            calls.append(stem)
+            found = real(weights_dir, stem)
+            return found if len(calls) <= 2 else {**found, "table": "0" * 64}
+
+        monkeypatch.setattr(montecarlo, "_artifact_sha256", sha256)
+        with pytest.raises(ValueError, match="0 of 6 leaves succeeded.*changed during"):
+            run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        assert _leaves_manifest(out)["complete"] is False
+        assert list((out / "leaves").rglob("*.aggregated.parquet")) == []
+
+    def test_an_artifact_that_changes_while_it_loads_is_refused(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        from cil_regionalization.pipelines import montecarlo
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        real, calls = montecarlo._artifact_sha256, []
+
+        def sha256(weights_dir, stem):
+            calls.append(stem)
+            found = real(weights_dir, stem)
+            return found if len(calls) == 1 else {**found, "manifest": "0" * 64}
+
+        monkeypatch.setattr(montecarlo, "_artifact_sha256", sha256)
+        with pytest.raises(ValueError, match="changed while it was being loaded"):
+            run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        assert not out.exists()
+
+    def test_a_dimension_that_cannot_be_written_fails_the_run(
+        self, weights_dir, tmp_path
+    ):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        for path in tree.rglob("damages.parquet"):
+            leaf = pd.read_parquet(path)
+            leaf["when"] = pd.to_datetime(leaf["year"].astype(str) + "-07-01")
+            leaf[["unit_id", "when", "year", "value"]].to_parquet(path, index=False)
+        with pytest.raises(
+            ValueError, match="leaf column 'when' has dtype datetime64"
+        ):
+            run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        assert _leaves_manifest(out)["complete"] is False
+        assert not (out / "statistics.parquet").exists()
+
+    def test_leaves_with_different_columns_are_refused(self, weights_dir, tmp_path):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        path = tree / "k1" / "z0" / "damages.parquet"
+        pd.read_parquet(path).astype({"year": "int32"}).to_parquet(path, index=False)
+        with pytest.raises(
+            ValueError, match="leaf k1/z0 was written with columns .* same columns"
+        ):
+            run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        assert _leaves_manifest(out)["complete"] is False
+        assert not (out / "statistics.parquet").exists()
+
+    def test_a_passthrough_run_has_no_leaves_manifest(self, weights_dir, tmp_path):
+        """Without weights there are no targets to lay a leaf out by,
+        so the file is the one it always was."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        raw = _leaves_cfg(weights_dir, tree, out).model_dump()
+        del raw["weights"]
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert sorted(p.name for p in (out / "leaves").iterdir()) == ["k0", "k1"]
+        assert sorted(p.name for p in (out / "leaves" / "k0" / "z0").iterdir()) == [
+            "aggregated_damages.parquet"
+        ]
+        manifest = json.loads((out / "statistics.manifest.json").read_text())
+        assert manifest["leaves_manifest"] is None
+        assert manifest["artifact_sha256"] is None
+        assert "leaves_manifest" not in result.paths
+
+    def test_a_file_of_the_old_layout_is_left_alone(self, weights_dir, tmp_path):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        old = out / "leaves" / "k0" / "z0" / "aggregated_damages.parquet"
+        old.parent.mkdir(parents=True)
+        pd.DataFrame({"target_id": ["T1"], "value": [1.0]}).to_parquet(old)
+        before = old.read_bytes()
+        run_pipeline(_leaves_cfg(weights_dir, tree, out))
+        assert old.read_bytes() == before
+        assert sorted(p.name for p in old.parent.iterdir()) == [
+            "aggregated_damages.parquet", "damages.aggregated.parquet",
+        ]
+
+
+@pytest.mark.usefixtures("one_target_a_group")
+class TestStages:
+    """`aggregate` stops after the leaf files."""
+
+    def test_aggregate_writes_the_leaves_and_no_statistics(
+        self, weights_dir, tmp_path
+    ):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        result = run_pipeline(
+            _leaves_cfg(weights_dir, tree, out, write_reduced=True),
+            stage="aggregate",
+        )
+        assert result.stats is None
+        assert result.paths == {
+            "leaves_manifest": str(out / "leaves" / "statistics.leaves.manifest.json")
+        }
+        assert [p.name for p in out.iterdir()] == ["leaves"]
+        assert _leaves_manifest(out)["complete"] is True
+        assert len(result.leaf_reports) == 6
+        for report in result.leaf_reports:
+            assert report["rows_out"] == 8
+            assert report["rows_reduced"] is None
+            assert "frame" not in report and "leaf_file" not in report
+
+    def test_aggregate_writes_the_files_that_all_writes(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        run_pipeline(_leaves_cfg(weights_dir, tree, tmp_path / "all"))
+        run_pipeline(
+            _leaves_cfg(weights_dir, tree, tmp_path / "aggregate"), stage="aggregate"
+        )
+        one = _leaves_manifest(tmp_path / "all")
+        two = _leaves_manifest(tmp_path / "aggregate")
+        assert one["package_versions"] == two["package_versions"]
+        assert one == two
+
+    def test_aggregate_reads_nothing_from_the_statistics_settings(
+        self, weights_dir, tmp_path
+    ):
+        """The model weights file is not there and the leaves have no
+        column of the time column's name. Both stop a full run."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        raw = _leaves_cfg(weights_dir, tree, out).model_dump()
+        raw["stats"].update(
+            time_col="decade",
+            model_weights=str(tmp_path / "gone.tsv"),
+            model_weight_level="zeppelin",
+            quantile_method="lower_step",
+        )
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        run_pipeline(cfg, stage="aggregate")
+        assert _leaves_manifest(out)["complete"] is True
+        with pytest.raises(FileNotFoundError):
+            run_pipeline(cfg)
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_aggregate_needs_the_leaves_switched_on(
+        self, weights_dir, tmp_path, dry_run
+    ):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        cfg = _pipeline_cfg(weights_dir, tree, out, levels=_LEVELS)
+        with pytest.raises(ValueError, match="needs output.write_leaves = true"):
+            run_pipeline(cfg, stage="aggregate", dry_run=dry_run)
+        assert not out.exists()
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_aggregate_refuses_a_passthrough_run(self, weights_dir, tmp_path, dry_run):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        raw = _leaves_cfg(weights_dir, tree, out).model_dump()
+        del raw["weights"]
+        with pytest.raises(ValueError, match=r"stage 'aggregate' needs \[weights\]"):
+            run_pipeline(
+                MonteCarloPipelineConfig.model_validate(raw),
+                stage="aggregate",
+                dry_run=dry_run,
+            )
+        assert not out.exists()
+
+    def test_an_unknown_stage_is_refused(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        with pytest.raises(ValueError, match="unknown stage 'reduce'"):
+            run_pipeline(
+                _leaves_cfg(weights_dir, tree, tmp_path / "out"), stage="reduce"
+            )
+
+    def test_the_dry_run_names_the_leaves_manifest_and_touches_nothing(
+        self, weights_dir, tmp_path
+    ):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        cfg = _leaves_cfg(weights_dir, tree, out)
+        manifest = out / "leaves" / "statistics.leaves.manifest.json"
+
+        plan = run_pipeline(cfg, dry_run=True, stage="aggregate")
+        assert plan.summary().splitlines() == [
+            "pipeline plan: 6 declared leaves",
+            f"  leaves     -> {manifest}",
+        ]
+        plan = run_pipeline(cfg, dry_run=True)
+        assert plan.summary().splitlines() == [
+            "pipeline plan: 6 declared leaves",
+            f"  statistics -> {out / 'statistics.parquet'}",
+            f"  manifest   -> {out / 'statistics.manifest.json'}",
+            f"  leaves     -> {manifest}",
+        ]
+        plan = run_pipeline(
+            _pipeline_cfg(weights_dir, tree, out, levels=_LEVELS), dry_run=True
+        )
+        assert len(plan.summary().splitlines()) == 3
+        assert not out.exists()
+
+    @pytest.mark.parametrize("entry", ["module", "cilreg"])
+    def test_the_stage_flag_on_both_entry_points(
+        self, weights_dir, tmp_path, capsys, entry
+    ):
+        from cil_regionalization.cli import main as cilreg_main
+        from cil_regionalization.pipelines.montecarlo import main
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        cfg_path = tmp_path / "pipeline.toml"
+        cfg_path.write_text(
+            f"""
+[weights]
+dir = "{weights_dir}"
+weight = "area"
+
+[tree]
+root = "{tree}"
+levels = ["kumquat", "zeppelin"]
+filename = "damages.parquet"
+
+[tree.expect]
+kumquat = ["k0", "k1"]
+zeppelin = ["z0", "z1", "z2"]
+
+[data]
+kind = "extensive"
+version = "{SOURCE_VERSION}"
+
+[stats]
+sample_dims = ["kumquat", "zeppelin"]
+time_col = "year"
+quantile_method = "linear"
+summation = "fast"
+windows = [[2050, 2051]]
+
+[output]
+dir = "{out}"
+write_leaves = true
+"""
+        )
+
+        def run(*flags):
+            if entry == "module":
+                return main([str(cfg_path), *flags])
+            return cilreg_main(["pipeline", str(cfg_path), *flags])
+
+        assert run("--dry-run", "--stage", "aggregate") == 0
+        printed = capsys.readouterr().out
+        assert "statistics.leaves.manifest.json" in printed
+        assert "statistics ->" not in printed
+        assert not out.exists()
+
+        assert run("--stage", "aggregate") == 0
+        printed = capsys.readouterr().out
+        assert "6 leaves aggregated; no statistics at stage aggregate" in printed
+        assert "wrote leaves_manifest:" in printed
+        assert [p.name for p in out.iterdir()] == ["leaves"]
+
+        assert run() == 0
+        assert "statistics rows=2" in capsys.readouterr().out
+        assert (out / "statistics.parquet").exists()

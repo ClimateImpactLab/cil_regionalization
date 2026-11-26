@@ -58,6 +58,9 @@ include_mean = true
 
 [output]
 dir = "pipeline_out"
+# Keeps every aggregated leaf, with its years, under pipeline_out/leaves.
+# Off unless set, because the leaves take far more disk than the
+# statistics. `--stage aggregate` writes them and stops.
 write_leaves = true
 
 [run]

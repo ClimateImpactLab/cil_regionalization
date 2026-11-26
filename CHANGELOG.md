@@ -17,6 +17,9 @@ A model weights table with two rows for one model is now refused, and
 the pipeline manifest records the weights each run used.
 A tree level named like a column the pipeline writes itself is refused
 before any leaf is read.
+**`output.write_leaves` now defaults to false, and an aggregated leaf
+is written in a new layout under a new name.** Leaf files of the old
+layout are left where they are and are not read.
 
 - Changed: the pipeline sorts the statistics rows before writing them:
   by statistic in the order requested (the mean, then the quantiles as
@@ -168,6 +171,62 @@ before any leaf is read.
   leaf with an error that gave only the name. A level named `n_members`
   or `model_weight` ran when `stats.include_n_members` and the model
   weights were off, and its values sat in a column of that name.
+- Changed: `output.write_leaves` defaults to false. It defaulted to
+  true, so a config that did not set it wrote every aggregated leaf,
+  about 35 MB for the benchmark ADM2 leaf. A config that wants the
+  leaves has to say so. The four `mortality_adm{1,2}_rcp{45,85}` configs under
+  `examples/montecarlo/runs` set it to true and now write the new
+  layout.
+- Changed: an aggregated leaf is written as
+  `leaves/<level values>/<name>.aggregated.parquet`, where `<name>` is
+  `tree.filename` without its extension. Before, it was
+  `aggregated_<tree.filename>`, parquet whatever the extension said.
+  The new file is plain parquet with a fixed Arrow schema and no
+  pandas metadata:
+  - Its columns are an int32 `target_ordinal`, the id fields, the
+    leaf's own dimensions and the value. The tree level labels are no
+    longer columns. They are in the path and in the footer.
+  - Its rows are sorted by target and cut into row groups of 128
+    targets. A group holds the same targets in every leaf and is empty
+    where a leaf has none of them. `leaves/targets.<digest>.parquet`
+    gives the target of each ordinal, which is its rank among the
+    artifact's id tuples sorted ascending.
+  - Its footer holds, under the key `cil_regionalization.leaf`, the
+    layout and what made the leaf: weight, kind, data version, value
+    column, policies, file names, level names, the versions and the
+    SHA256 of the two files of the weights artifact, the leaf's level
+    values and its source files.
+  Files of the old layout are not deleted, rewritten or read. A
+  passthrough run keeps writing the file it wrote, labels included,
+  because without weights there are no targets to lay a leaf out by.
+- New: `leaves/<output.stem>.leaves.manifest.json`, written when
+  leaves are. It lists every leaf in the order the config declares
+  them, with its source files, rows, coverage, mass balance, size and
+  SHA256, the rows in each row group summed over the leaves, and the
+  rows at each value of each numeric dimension. It holds what made the
+  leaves and nothing from `[stats]`. It is written before the first
+  leaf with `"complete": false` and again when every leaf has
+  succeeded. A run that would write a leaf listed in the manifest of
+  another stem in the same directory is refused, whether that other
+  run finished or not. Before, two such runs wrote over each other's
+  leaves without a word.
+- New: `--stage aggregate` on `cilreg pipeline` and on
+  `python -m cil_regionalization.pipelines.montecarlo`, and `stage=` on
+  `run_pipeline`. It writes the leaves and their manifest and stops.
+  It needs `output.write_leaves = true` and `[weights]`, reads nothing
+  from `[stats]`, and returns a result whose `stats` is `None`. The
+  default, `all`, runs everything as before.
+- Changed: when leaves are written, a leaf's own dimension has to be
+  an integer, a float, a boolean or a plain string, and the id fields
+  have to be strings. A categorical, datetime or nullable dimension is
+  refused by name, because pandas 2 and pandas 3 write those
+  differently. A tree level named `target_ordinal` is refused like the
+  other names the pipeline uses.
+- New: the pipeline hashes the two files of the weights artifact when
+  it loads them, in the parent and in every worker. A worker that
+  loaded other bytes than the run started with fails its leaves. The
+  statistics manifest gains `artifact_sha256`, `stage` and
+  `leaves_manifest`.
 
 ## v0.5.0
 

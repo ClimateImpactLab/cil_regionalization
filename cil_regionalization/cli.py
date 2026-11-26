@@ -12,7 +12,7 @@ Subcommands:
         report status. `--test-mode` caps the local backend to the first
         three regions for fast smoke testing.
 
-    cilreg pipeline <pipeline.toml> [--dry-run]
+    cilreg pipeline <pipeline.toml> [--dry-run] [--stage all|aggregate]
         Run the Monte Carlo pipeline (apply weights per leaf, then
         statistics). Thin wrapper over
         `python -m cil_regionalization.pipelines.montecarlo`.
@@ -88,6 +88,13 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run",
         action="store_true",
         help="resolve the tree and print the plan; touch nothing",
+    )
+    pp.add_argument(
+        "--stage",
+        choices=["all", "aggregate"],
+        default="all",
+        help="aggregate writes the leaf files and stops; all (the default) "
+        "runs everything",
     )
 
     preg = sub.add_parser(
@@ -178,7 +185,11 @@ def main(argv: list[str] | None = None) -> int:
         # owns its argument handling and output.
         from cil_regionalization.pipelines.montecarlo import main as pipeline_main
 
-        argv_out = [args.config] + (["--dry-run"] if args.dry_run else [])
+        argv_out = (
+            [args.config]
+            + (["--dry-run"] if args.dry_run else [])
+            + ["--stage", args.stage]
+        )
         return pipeline_main(argv_out)
     if args.cmd == "regions":
         if args.regions_cmd == "find":
