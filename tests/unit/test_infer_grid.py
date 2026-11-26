@@ -1,4 +1,5 @@
 """infer_grid_version and cell_indices: derive the grid, then prove it."""
+
 from __future__ import annotations
 
 import numpy as np

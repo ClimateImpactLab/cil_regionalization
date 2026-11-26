@@ -20,6 +20,7 @@ Layout on the lon/lat plane (targets level 1 and 2, sources u1..u5):
 The committed synthetic pop raster holds value 10 inside [0, 2] x [0, 2],
 so u1 has population and u2, u3, u4 fall back per the configured policy.
 """
+
 from __future__ import annotations
 
 import json
@@ -138,7 +139,9 @@ def _run(cfg: Config):
 
 class TestPerSourceLevel1:
     def test_sums_to_one_per_source_unit(self, targets_level1, source_units):
-        result = _run(_cfg(targets_level1, source_units, target_id_fields=["target_id"]))
+        result = _run(
+            _cfg(targets_level1, source_units, target_id_fields=["target_id"])
+        )
         assert result.sum_report.ok, result.sum_report.summary()
         for name in ("popwt", "areawt"):
             sums = result.frame.groupby("unit_id")[name].sum()
@@ -149,13 +152,17 @@ class TestPerSourceLevel1:
     ):
         # u4 spans T1/T2 at lon 4 in two equal-width, same-latitude
         # halves; the geodesic areas are equal, so the split is 0.5/0.5.
-        result = _run(_cfg(targets_level1, source_units, target_id_fields=["target_id"]))
+        result = _run(
+            _cfg(targets_level1, source_units, target_id_fields=["target_id"])
+        )
         u4 = result.frame.loc[result.frame["unit_id"] == "u4"]
         assert set(u4["target_id"]) == {"T1", "T2"}
         assert u4["areawt"].to_numpy() == pytest.approx([0.5, 0.5], rel=1e-9)
 
     def test_nested_units_carry_full_weight(self, targets_level1, source_units):
-        result = _run(_cfg(targets_level1, source_units, target_id_fields=["target_id"]))
+        result = _run(
+            _cfg(targets_level1, source_units, target_id_fields=["target_id"])
+        )
         for unit, target in (("u1", "T1"), ("u2", "T1"), ("u3", "T2")):
             rows = result.frame.loc[result.frame["unit_id"] == unit]
             assert list(rows["target_id"]) == [target]
@@ -164,7 +171,9 @@ class TestPerSourceLevel1:
     def test_fallback_applies_per_source_unit(self, targets_level1, source_units):
         # Only u1 overlaps the raster's populated footprint; the others
         # fall back to their per-source area weights.
-        result = _run(_cfg(targets_level1, source_units, target_id_fields=["target_id"]))
+        result = _run(
+            _cfg(targets_level1, source_units, target_id_fields=["target_id"])
+        )
         methods = result.frame.groupby("unit_id")["pop_method"].first()
         assert methods.loc["u1"] == "native"
         assert (methods.drop("u1") == "area_fallback").all()
@@ -203,7 +212,9 @@ class TestZeroOverlapPolicy:
             _run(cfg)
 
     def test_skip_policy_records_in_manifest(self, targets_level1, source_units):
-        result = _run(_cfg(targets_level1, source_units, target_id_fields=["target_id"]))
+        result = _run(
+            _cfg(targets_level1, source_units, target_id_fields=["target_id"])
+        )
         assert "u5" not in set(result.frame["unit_id"])
         assert result.manifest.extra["zero_overlap_count"] == 1
         assert result.manifest.extra["zero_overlap_source_units"] == [["u5"]]
@@ -211,9 +222,7 @@ class TestZeroOverlapPolicy:
 
 class TestUnknownIds:
     def _cfg(self, targets_path, source_path, **regions) -> Config:
-        d = _cfg(
-            targets_path, source_path, target_id_fields=["target_id"]
-        ).model_dump()
+        d = _cfg(targets_path, source_path, target_id_fields=["target_id"]).model_dump()
         d["regions"].update(regions)
         return Config.model_validate(d)
 
@@ -221,14 +230,16 @@ class TestUnknownIds:
         cfg = self._cfg(
             targets_level1, source_units, keep={"target_id": ["T1", "NOT_REAL"]}
         )
-        with pytest.raises(ValueError, match=r"regions\.keep column 'target_id'.*NOT_REAL"):
+        with pytest.raises(
+            ValueError, match=r"regions\.keep column 'target_id'.*NOT_REAL"
+        ):
             _run(cfg)
 
     def test_unknown_drop_id_raises_by_default(self, targets_level1, source_units):
-        cfg = self._cfg(
-            targets_level1, source_units, drop={"target_id": ["NOT_REAL"]}
-        )
-        with pytest.raises(ValueError, match=r"regions\.drop column 'target_id'.*NOT_REAL"):
+        cfg = self._cfg(targets_level1, source_units, drop={"target_id": ["NOT_REAL"]})
+        with pytest.raises(
+            ValueError, match=r"regions\.drop column 'target_id'.*NOT_REAL"
+        ):
             _run(cfg)
 
     def test_skip_completes_and_records(self, targets_level1, source_units):
@@ -371,7 +382,9 @@ class TestDateline:
 
 class TestManifestAndProvenance:
     def test_manifest_records_mode_and_versions(self, targets_level1, source_units):
-        result = _run(_cfg(targets_level1, source_units, target_id_fields=["target_id"]))
+        result = _run(
+            _cfg(targets_level1, source_units, target_id_fields=["target_id"])
+        )
         m = result.manifest
         assert m.source_mode == "polygons"
         assert m.regions_version == "synthetic-targets-v1"
@@ -511,9 +524,7 @@ class TestDomainEdgeTolerance:
     a future tightening of the guard fails here instead of surprising a
     production run."""
 
-    def test_ata_scale_overshoot_tolerated_and_recorded(
-        self, targets_level1, tmp_path
-    ):
+    def test_ata_scale_overshoot_tolerated_and_recorded(self, targets_level1, tmp_path):
         units = gpd.GeoDataFrame(
             {
                 "unit_id": ["ata_like", "u_clean"],
@@ -572,9 +583,7 @@ class TestMixedGeometryNormalization:
         from cil_regionalization.backends.local import _as_multipolygons
 
         poly = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
-        mixed = GeometryCollection(
-            [poly, LineString([(1, 0), (1, 1)]), Point(2, 2)]
-        )
+        mixed = GeometryCollection([poly, LineString([(1, 0), (1, 1)]), Point(2, 2)])
         out = _as_multipolygons(np.array([poly, mixed], dtype=object))
         assert all(g.geom_type == "MultiPolygon" for g in out)
         assert out[1].area == pytest.approx(poly.area)
@@ -634,9 +643,7 @@ class TestPartialCoverageMarking:
         assert flagged["u4"] == pytest.approx(0.5, rel=1e-4)
         assert pc["count"] >= 1
 
-    def test_full_coverage_run_carries_no_marking(
-        self, targets_level1, source_units
-    ):
+    def test_full_coverage_run_carries_no_marking(self, targets_level1, source_units):
         result = _run(
             _cfg(targets_level1, source_units, target_id_fields=["target_id"])
         )

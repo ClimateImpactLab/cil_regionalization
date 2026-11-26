@@ -3,6 +3,7 @@
 Runs at full size whatever `BENCH_SCALE` says, so a change to
 `synthetic.py` that drifts from the real file fails here.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -60,7 +61,10 @@ def result():
 def test_rows_columns_and_order(frame):
     assert len(frame) == N_ROWS
     assert list(frame.columns) == ID_FIELDS + [
-        "hierid", "croparea_raw", WT, "croparea_method",
+        "hierid",
+        "croparea_raw",
+        WT,
+        "croparea_method",
     ]
     for column in ("ISO", "hierid", "croparea_method"):
         assert pd.api.types.is_string_dtype(frame[column]), column
@@ -78,7 +82,10 @@ def test_distinct_ids(frame, targets):
     # ID_1 has 93 values in the file. One country there numbers its
     # first-level units out of sequence, up to 94, and that is not copied.
     assert {c: frame[c].nunique() for c in ID_FIELDS + ["hierid"]} == {
-        "ISO": 253, "ID_1": 90, "ID_2": 5_505, "hierid": 24_378,
+        "ISO": 253,
+        "ID_1": 90,
+        "ID_2": 5_505,
+        "hierid": 24_378,
     }
     assert len(frame[["ISO", "ID_1"]].drop_duplicates()) == 3_428
     per_country = targets.groupby("ISO").size()
@@ -118,7 +125,8 @@ def test_targets_per_region(frame):
 def test_rows_without_crop_area(frame, targets):
     empty = frame["croparea_method"] == "nan"
     assert frame["croparea_method"].value_counts().to_dict() == {
-        "native": 43_024, "nan": 8_192,
+        "native": 43_024,
+        "nan": 8_192,
     }
     assert frame.loc[empty, [WT, "croparea_raw"]].isna().all(axis=None)
     assert frame.loc[~empty, [WT, "croparea_raw"]].gt(0).all(axis=None)
@@ -154,7 +162,9 @@ def test_skip_reports_regions_and_drops_targets(result, targets, caplog):
     warning. The targets left with nothing are not counted anywhere and
     are missing from the frame."""
     assert result.coverage.counts == {
-        "unmatched": 0, "zero_weight": N_EMPTY_REGIONS, "absent_from_data": 0,
+        "unmatched": 0,
+        "zero_weight": N_EMPTY_REGIONS,
+        "absent_from_data": 0,
     }
     out = result.frame
     assert len(out) == N_IN_OUTPUT * len(YEARS) == 4_258_266

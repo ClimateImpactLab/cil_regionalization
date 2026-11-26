@@ -18,6 +18,7 @@ rate crosses zero. Two impact regions (MEX.25.1309 and MEX.23.1234,
 together fewer than 150 people) hold no values anywhere in this tree
 and are dropped.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -26,7 +27,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-TREE = Path("/project/cil/gcp/outputs/mortality_new-socioeconomics/impacts-darwin/montecarlo")
+TREE = Path(
+    "/project/cil/gcp/outputs/mortality_new-socioeconomics/impacts-darwin/montecarlo"
+)
 SMME = Path("/project/cil/gcp/climate/BCSD/SMME/SMME-weights/rcp85_SMME_weights.tsv")
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
@@ -99,7 +102,8 @@ def main() -> int:
     popdf = popdf.drop(index=dropped)
     assert popdf.notna().all().all() and (popdf > 0).all().all()
     out = popdf.reset_index(names="hierid").melt(
-        id_vars="hierid", var_name="year", value_name="population")
+        id_vars="hierid", var_name="year", value_name="population"
+    )
     out["year"] = out["year"].astype(int)
     out.to_parquet(DATA / "population.parquet", index=False)
     print(f"wrote {len(out)} population rows for {popdf.shape[0]} regions")

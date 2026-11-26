@@ -24,6 +24,7 @@ RCC env (use exactly this in every invocation)::
     module load python
     source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -127,8 +128,14 @@ def compare_weights(
     by_region = joined["hierid"]
     region_class = pd.DataFrame(
         {
-            "ours_native": joined["wt_ours"].notna().groupby(by_region, sort=False).any(),
-            "legacy_native": joined["wt_legacy"].notna().groupby(by_region, sort=False).any(),
+            "ours_native": joined["wt_ours"]
+            .notna()
+            .groupby(by_region, sort=False)
+            .any(),
+            "legacy_native": joined["wt_legacy"]
+            .notna()
+            .groupby(by_region, sort=False)
+            .any(),
         }
     )
 

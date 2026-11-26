@@ -4,6 +4,7 @@ Cheap LIKE search against the configured regions source. Helps users
 resolve hierids in this impact region version's mixed naming patterns (bare ISO3,
 single-remainder-only suffixes, admin subdivisions) without guessing.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -128,8 +129,10 @@ class TestRegionsFindLocal:
         out = capsys.readouterr().out
         assert rc == 0
         lines = [
-            line for line in out.splitlines()
-            if line and not line.startswith("searching")
+            line
+            for line in out.splitlines()
+            if line
+            and not line.startswith("searching")
             and not line.startswith("3 matches")
         ]
         # Three id lines plus the summary line
@@ -161,7 +164,9 @@ class TestRegionsFindBigQuery:
         import sys
         import types
 
-        gcloud_pkg = sys.modules.setdefault("google.cloud", types.ModuleType("google.cloud"))
+        gcloud_pkg = sys.modules.setdefault(
+            "google.cloud", types.ModuleType("google.cloud")
+        )
         monkeypatch.setattr(gcloud_pkg, "bigquery", fake_bq, raising=False)
         monkeypatch.setitem(sys.modules, "google.cloud.bigquery", fake_bq)
 

@@ -17,6 +17,7 @@ pollutes normalization and hides missing coverage, where a marked
 Apply at the END of a backend's pipeline so the synthesized rows are not
 re-processed by `apply_fallback`.
 """
+
 from __future__ import annotations
 
 from typing import Iterable

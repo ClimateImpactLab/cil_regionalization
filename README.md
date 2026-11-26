@@ -145,9 +145,7 @@ w = pd.read_csv(
     sep="\t",
 )[["model", "weight"]]
 w["key"] = w["model"].str.replace("*", "", regex=False).str.lower()
-draws["key"] = (
-    draws["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-)
+draws["key"] = draws["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
 draws = draws.merge(w[["key", "weight"]], on="key").drop(columns="key")
 stats = cilreg.summarize_samples(
     draws,
@@ -538,9 +536,9 @@ coordinates, becomes a cell table in one call:
 
 ```python
 cells, grid = cilreg.read_netcdf_grid("tas.nc", ["tas"])
-out = cilreg.apply_weights(weights, cells, kind="intensive",
-                           weight="pop", value_col="tas",
-                           data_version=grid)
+out = cilreg.apply_weights(
+    weights, cells, kind="intensive", weight="pop", value_col="tas", data_version=grid
+)
 ```
 
 The grid identity comes from the coordinates (resolution, cell centres

@@ -25,6 +25,7 @@ committed wage pair. Regional GDP is the factor divided by 0.00487,
 so the loss as a share of GDP is the ratio route again: value and GDP
 aggregate separately and divide at the state.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -78,8 +79,9 @@ def load_draw(batch: str, gcm: str) -> pd.DataFrame:
     df["minutes_pop"] = df["minutes"] * df["population"]
     df["value"] = df["minutes"] * df["factor"]
     df["gdp"] = df["factor"] / WAGE_CONSTANT
-    return df[["hierid", "year", "minutes", "population", "minutes_pop",
-               "value", "gdp"]]
+    return df[
+        ["hierid", "year", "minutes", "population", "minutes_pop", "value", "gdp"]
+    ]
 
 
 def load_weights() -> "cilreg.WeightsArtifact":

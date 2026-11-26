@@ -5,6 +5,7 @@ module exists for is pinned directly: the variance of a sum through
 the quadratic form differs from the sum of variances whenever the
 covariance matrix has off-diagonal mass.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -81,14 +82,14 @@ class TestAggregateGradient:
     def test_region_without_weight_rows_raises(self):
         art, regions, gradient = _two_region_setup()
         with pytest.raises(ValueError, match="no weight rows"):
-            aggregate_gradient(art, regions + ["c"],
-                               np.hstack([gradient, [[5.0], [6.0]]]))
+            aggregate_gradient(
+                art, regions + ["c"], np.hstack([gradient, [[5.0], [6.0]]])
+            )
 
     def test_wrong_scale_shape_raises(self):
         art, regions, gradient = _two_region_setup()
         with pytest.raises(ValueError, match="scale has shape"):
-            aggregate_gradient(art, regions, gradient, scale=np.ones(3),
-                               normalize=True)
+            aggregate_gradient(art, regions, gradient, scale=np.ones(3), normalize=True)
 
 
 class TestWindowGradient:
@@ -96,8 +97,7 @@ class TestWindowGradient:
         years = np.array([2040, 2041, 2042, 2043])
         # year x coefficient x region, value = year offset * 10 + c + r
         g = np.array(
-            [[[10 * k + c + r for r in range(3)] for c in range(2)]
-             for k in range(4)],
+            [[[10 * k + c + r for r in range(3)] for c in range(2)] for k in range(4)],
             dtype=float,
         )
         return years, g
@@ -117,7 +117,9 @@ class TestWindowGradient:
         years = np.array([2000, 2001, 2002])
         rng = np.random.default_rng(0)
         g = rng.normal(size=(3, 2, 2))
-        first = aggregate_gradient(art, regions, window_gradient(g, years, (2000, 2002)))[1]
+        first = aggregate_gradient(
+            art, regions, window_gradient(g, years, (2000, 2002))
+        )[1]
         stacked = np.stack([aggregate_gradient(art, regions, gy)[1] for gy in g])
         after = window_gradient(stacked, years, (2000, 2002))
         assert np.allclose(first, after)
@@ -224,9 +226,9 @@ class TestReader:
             regions = ds.createVariable("regions", str, ("region",))
             regions[0] = "r1"
             ds.createVariable("year", "i4", ("year",))[:] = [2000]
-            ds.createVariable("rebased_bcde", "f4",
-                              ("coefficient", "year", "region"))[:] = [[[1.0]]]
-            ds.createVariable("vcv", "f8",
-                              ("coefficient", "coefficient"))[:] = [[1.0]]
+            ds.createVariable("rebased_bcde", "f4", ("coefficient", "year", "region"))[
+                :
+            ] = [[[1.0]]]
+            ds.createVariable("vcv", "f8", ("coefficient", "coefficient"))[:] = [[1.0]]
         with pytest.raises(ValueError, match="no year"):
             read_gradient_leaf(p, year=1999)

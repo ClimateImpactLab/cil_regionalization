@@ -10,6 +10,7 @@ Geometry: two targets T1, T2; two source units, u1 nested in T1 and u2
 straddling T1/T2 half and half, so every leaf's target values are
 hand-derivable from the leaf's unit values.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -184,7 +185,9 @@ class TestEndToEnd:
 
         # No leaf is kept unless the config asks for it.
         assert not (tmp_path / "out" / "leaves").exists()
-        manifest = json.loads((tmp_path / "out" / "statistics.manifest.json").read_text())
+        manifest = json.loads(
+            (tmp_path / "out" / "statistics.manifest.json").read_text()
+        )
         assert manifest["n_leaves"] == 6
         assert manifest["artifact_source_version"] == SOURCE_VERSION
 
@@ -198,7 +201,11 @@ class TestEndToEnd:
         result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
 
         assert set(result.stats.columns) == {
-            "target_id", "statistic", "value", "window", "n_members",
+            "target_id",
+            "statistic",
+            "value",
+            "window",
+            "n_members",
         }
         # 2 kumquat x 3 zeppelin leaves, one member each.
         written = pd.read_parquet(result.paths["statistics"])
@@ -250,20 +257,31 @@ class TestStatisticMethods:
         assert manifest["quantile_method"] == "linear"
         assert manifest["summation"] == "fast"
 
-        weighted = run_pipeline(self._cfg(
-            weights_dir, tree, tmp_path / "weighted", quantiles=[0.5, 0.95],
-            quantile_method="lower_step", summation="exact",
-            **self._table(tmp_path),
-        ))
+        weighted = run_pipeline(
+            self._cfg(
+                weights_dir,
+                tree,
+                tmp_path / "weighted",
+                quantiles=[0.5, 0.95],
+                quantile_method="lower_step",
+                summation="exact",
+                **self._table(tmp_path),
+            )
+        )
         manifest = json.loads(Path(weighted.paths["manifest"]).read_text())
         assert manifest["quantile_method"] == "lower_step"
         assert manifest["summation"] == "exact"
 
         for name in ("linear", "lower_step", "inverted_cdf"):
-            named = run_pipeline(self._cfg(
-                weights_dir, tree, tmp_path / name, quantile_method=name,
-                quantiles=[0.5, 0.95],
-            ))
+            named = run_pipeline(
+                self._cfg(
+                    weights_dir,
+                    tree,
+                    tmp_path / name,
+                    quantile_method=name,
+                    quantiles=[0.5, 0.95],
+                )
+            )
             manifest = json.loads(Path(named.paths["manifest"]).read_text())
             assert manifest["quantile_method"] == name
 
@@ -276,23 +294,39 @@ class TestStatisticMethods:
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
         quantiles = dict(quantiles=[0.5, 0.75, 0.95])
-        step = run_pipeline(self._cfg(
-            weights_dir, tree, tmp_path / "step", quantile_method="lower_step",
-            **quantiles,
-        ))
-        ones = run_pipeline(self._cfg(
-            weights_dir, tree, tmp_path / "ones", quantile_method="lower_step",
-            **quantiles, **self._table(tmp_path, weights=(1, 1, 1)),
-        ))
+        step = run_pipeline(
+            self._cfg(
+                weights_dir,
+                tree,
+                tmp_path / "step",
+                quantile_method="lower_step",
+                **quantiles,
+            )
+        )
+        ones = run_pipeline(
+            self._cfg(
+                weights_dir,
+                tree,
+                tmp_path / "ones",
+                quantile_method="lower_step",
+                **quantiles,
+                **self._table(tmp_path, weights=(1, 1, 1)),
+            )
+        )
         pd.testing.assert_frame_equal(step.stats, ones.stats, check_exact=True)
         assert (
             step.stats["value"].to_numpy().tobytes()
             == ones.stats["value"].to_numpy().tobytes()
         )
-        linear = run_pipeline(self._cfg(
-            weights_dir, tree, tmp_path / "linear", quantile_method="linear",
-            **quantiles,
-        ))
+        linear = run_pipeline(
+            self._cfg(
+                weights_dir,
+                tree,
+                tmp_path / "linear",
+                quantile_method="linear",
+                **quantiles,
+            )
+        )
         high = step.stats["statistic"].isin(["q75", "q95"]).to_numpy()
         assert (step.stats.loc[high, "value"] < linear.stats.loc[high, "value"]).all()
 
@@ -323,8 +357,11 @@ class TestStatisticMethods:
     ):
         with pytest.raises(ValueError, match="has no weighted form"):
             self._cfg(
-                weights_dir, tmp_path / "t", tmp_path / "o",
-                quantile_method="linear", **self._table(tmp_path),
+                weights_dir,
+                tmp_path / "t",
+                tmp_path / "o",
+                quantile_method="linear",
+                **self._table(tmp_path),
             )
 
     def test_the_options_reach_both_stages_and_the_manifest(
@@ -346,10 +383,15 @@ class TestStatisticMethods:
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
         out = tmp_path / "out"
-        result = run_pipeline(self._cfg(
-            weights_dir, tree, out,
-            quantile_method="inverted_cdf", summation="exact",
-        ))
+        result = run_pipeline(
+            self._cfg(
+                weights_dir,
+                tree,
+                out,
+                quantile_method="inverted_cdf",
+                summation="exact",
+            )
+        )
         assert asked == ["exact"] * 6
         monkeypatch.undo()
         manifest = json.loads(Path(result.paths["manifest"]).read_text())
@@ -367,15 +409,14 @@ class TestStatisticMethods:
 
         linear = run_pipeline(self._cfg(weights_dir, tree, tmp_path / "out_l"))
         both = result.stats.merge(
-            linear.stats, on=["target_id", "window", "statistic"],
+            linear.stats,
+            on=["target_id", "window", "statistic"],
             suffixes=("", "_linear"),
         )
         quantiles = both[both["statistic"] != "mean"]
         assert (quantiles["value"] != quantiles["value_linear"]).all()
 
-    def test_serial_and_parallel_runs_agree_to_the_bit(
-        self, weights_dir, tmp_path
-    ):
+    def test_serial_and_parallel_runs_agree_to_the_bit(self, weights_dir, tmp_path):
         """Compared without sorting. This can pass by luck without the
         options. The tests that fail without them are in
         tests/unit/test_stats_methods.py and in TestRowOrder."""
@@ -388,9 +429,7 @@ class TestStatisticMethods:
         parallel = run_pipeline(
             self._cfg(weights_dir, tree, tmp_path / "out_p", n_workers=2, **options)
         )
-        pd.testing.assert_frame_equal(
-            serial.stats, parallel.stats, check_exact=True
-        )
+        pd.testing.assert_frame_equal(serial.stats, parallel.stats, check_exact=True)
         pd.testing.assert_frame_equal(
             pd.read_parquet(serial.paths["statistics"]),
             pd.read_parquet(parallel.paths["statistics"]),
@@ -426,8 +465,10 @@ class TestRowOrder:
         ).model_dump()
         # zeppelin is not pooled, so it stays a column of the statistics
         raw["stats"].update(
-            sample_dims=["kumquat"], windows=self._WINDOWS,
-            quantiles=self._QUANTILES, **stats,
+            sample_dims=["kumquat"],
+            windows=self._WINDOWS,
+            quantiles=self._QUANTILES,
+            **stats,
         )
         return MonteCarloPipelineConfig.model_validate(raw)
 
@@ -457,9 +498,7 @@ class TestRowOrder:
             def imap_unordered(self, func, tasks, chunksize=1):
                 return [func(task) for task in reversed(list(tasks))]
 
-        monkeypatch.setattr(
-            montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool)
-        )
+        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
         tree = tmp_path / "tree"
         _build_tree(tree, self._ORDER_LEVELS)
         raw = self._cfg(
@@ -470,18 +509,20 @@ class TestRowOrder:
         result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
 
         windows, targets = ["2080-2081", "2050-2051"], ["T1", "T2"]
-        expected = list(itertools.product(
-            ["mean", "q95", "q05"], ["z2", "z0", "z1"], windows, targets
-        ))
+        expected = list(
+            itertools.product(
+                ["mean", "q95", "q05"], ["z2", "z0", "z1"], windows, targets
+            )
+        )
         columns = ["statistic", "zeppelin", "window", "target_id"]
         for frame in (result.stats, pd.read_parquet(result.paths["statistics"])):
             assert list(frame[columns].itertuples(index=False, name=None)) == expected
             assert list(frame.index) == list(range(len(expected)))
 
         reduced = pd.read_parquet(tmp_path / "out" / "statistics.reduced.parquet")
-        expected = list(itertools.product(
-            ["k1", "k0"], ["z2", "z0", "z1"], windows, targets
-        ))
+        expected = list(
+            itertools.product(["k1", "k0"], ["z2", "z0", "z1"], windows, targets)
+        )
         columns = ["kumquat", "zeppelin", "window", "target_id"]
         assert list(reduced[columns].itertuples(index=False, name=None)) == expected
 
@@ -597,18 +638,27 @@ class TestLabelPlacement:
             ).frame
             reduced.append(
                 window_means(
-                    applied, time_col="year", windows=self._WINDOWS,
+                    applied,
+                    time_col="year",
+                    windows=self._WINDOWS,
                     value_col="value",
                     summation="fast",
                 )
             )
         combined = pd.concat(reduced, ignore_index=True)
         assert list(combined.columns) == [
-            "target_id", "band", "kumquat", "zeppelin", "window", "value",
+            "target_id",
+            "band",
+            "kumquat",
+            "zeppelin",
+            "window",
+            "value",
         ]
         statistics = _ordered(
             pooled_statistics(
-                combined, sample_dims=["zeppelin"], value_col="value",
+                combined,
+                sample_dims=["zeppelin"],
+                value_col="value",
                 quantiles=[0.05, 0.95],
                 quantile_method="linear",
                 summation="fast",
@@ -616,7 +666,12 @@ class TestLabelPlacement:
             cfg,
         )
         assert list(statistics.columns) == [
-            "target_id", "band", "kumquat", "window", "statistic", "value",
+            "target_id",
+            "band",
+            "kumquat",
+            "window",
+            "statistic",
+            "value",
         ]
 
         pd.testing.assert_frame_equal(result.stats, statistics, check_exact=True)
@@ -627,9 +682,7 @@ class TestLabelPlacement:
         )
         pd.testing.assert_frame_equal(
             pd.read_parquet(out / "statistics.reduced.parquet"),
-            _through_parquet(
-                _ordered(combined, cfg), tmp_path / "expected.parquet"
-            ),
+            _through_parquet(_ordered(combined, cfg), tmp_path / "expected.parquet"),
             check_exact=True,
         )
 
@@ -652,7 +705,12 @@ class TestLabelPlacement:
                 out / "leaves" / kumquat / zeppelin / "aggregated_damages.parquet"
             )
             assert list(on_disk.columns) == [
-                "unit_id", "band", "year", "value", "kumquat", "zeppelin",
+                "unit_id",
+                "band",
+                "year",
+                "value",
+                "kumquat",
+                "zeppelin",
             ]
             pd.testing.assert_frame_equal(
                 on_disk,
@@ -664,14 +722,26 @@ class TestLabelPlacement:
             )
         reduced = pd.read_parquet(out / "statistics.reduced.parquet")
         assert list(reduced.columns) == [
-            "unit_id", "band", "kumquat", "zeppelin", "window", "value",
+            "unit_id",
+            "band",
+            "kumquat",
+            "zeppelin",
+            "window",
+            "value",
         ]
 
     @pytest.mark.parametrize(
         "name",
         [
-            "window", "statistic", "n_members", "n_sample", "model_weight",
-            "target_id", "target_ordinal", "warming_level", "n_bin_members",
+            "window",
+            "statistic",
+            "n_members",
+            "n_sample",
+            "model_weight",
+            "target_id",
+            "target_ordinal",
+            "warming_level",
+            "n_bin_members",
         ],
     )
     def test_a_level_named_like_an_output_column_is_refused_before_any_leaf(
@@ -694,9 +764,7 @@ class TestLabelPlacement:
         assert read == []
         assert not out.exists()
 
-    def test_a_level_named_like_a_leaf_column_is_refused(
-        self, weights_dir, tmp_path
-    ):
+    def test_a_level_named_like_a_leaf_column_is_refused(self, weights_dir, tmp_path):
         """Cannot go red by reverting, because the old code refused it
         too. It failed with the check taken out. No leaf file is
         written here, and the year is gone from the reduced rows by the
@@ -709,9 +777,7 @@ class TestLabelPlacement:
             weights_dir, tree, tmp_path / "out", levels=levels
         ).model_dump()
         raw["output"]["write_leaves"] = False
-        with pytest.raises(
-            ValueError, match="leaf already has a column named 'year'"
-        ):
+        with pytest.raises(ValueError, match="leaf already has a column named 'year'"):
             run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
 
     def test_a_passthrough_leaf_of_the_year_and_the_value_alone_still_runs(
@@ -829,9 +895,7 @@ class TestConfigurableTree:
 
 
 class TestMissingLeaf:
-    def test_missing_declared_leaf_fails_before_processing(
-        self, weights_dir, tmp_path
-    ):
+    def test_missing_declared_leaf_fails_before_processing(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
         removed = tree / "k1" / "z2" / "damages.parquet"
@@ -921,7 +985,7 @@ windows = [[2050, 2051]]
 quantiles = [0.5]
 
 [output]
-dir = "{tmp_path / 'out'}"
+dir = "{tmp_path / "out"}"
 """
         )
         rc = main([str(cfg_path), "--dry-run"])
@@ -1104,7 +1168,7 @@ windows = [[2050, 2051]]
 quantiles = [0.5]
 
 [output]
-dir = "{tmp_path / 'out'}"
+dir = "{tmp_path / "out"}"
 """
         )
         rc = cilreg_main(["pipeline", str(cfg_path), "--dry-run"])
@@ -1191,6 +1255,7 @@ class TestExclude:
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
         import shutil
+
         shutil.rmtree(tree / "k1" / "z2")  # absent on disk
         cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
         raw = cfg.model_dump()
@@ -1205,7 +1270,9 @@ class TestExclude:
         import shutil
 
         levels = {
-            "batch": ["b0", "b1", "b2"], "rcp": ["r45", "r85"], "model": ["m0", "m1"],
+            "batch": ["b0", "b1", "b2"],
+            "rcp": ["r45", "r85"],
+            "model": ["m0", "m1"],
         }
         tree = tmp_path / "tree"
         _build_tree(tree, levels)
@@ -1232,8 +1299,11 @@ class TestExclude:
         raw["tree"]["exclude"] = [["*", "*", "m1"], ["b0", "r45", "m0"]]
         plan = run_pipeline(MonteCarloPipelineConfig.model_validate(raw), dry_run=True)
         assert sorted(leaf.values for leaf in plan.leaves) == [
-            ("b0", "r85", "m0"), ("b1", "r45", "m0"), ("b1", "r85", "m0"),
-            ("b2", "r45", "m0"), ("b2", "r85", "m0"),
+            ("b0", "r85", "m0"),
+            ("b1", "r45", "m0"),
+            ("b1", "r85", "m0"),
+            ("b2", "r45", "m0"),
+            ("b2", "r85", "m0"),
         ]
 
     def test_a_cell_of_stars_alone_is_refused(self, weights_dir, tmp_path):
@@ -1258,9 +1328,9 @@ class TestExclude:
 class TestModelWeights:
     def _weights_file(self, tmp_path: Path) -> Path:
         p = tmp_path / "weights.tsv"
-        pd.DataFrame(
-            {"model": ["Z0*", "z1", "z2"], "weight": [0.6, 0.3, 0.1]}
-        ).to_csv(p, sep="\t", index=False)
+        pd.DataFrame({"model": ["Z0*", "z1", "z2"], "weight": [0.6, 0.3, 0.1]}).to_csv(
+            p, sep="\t", index=False
+        )
         return p
 
     def test_weighted_mean_uses_the_weights(self, weights_dir, tmp_path):
@@ -1285,16 +1355,16 @@ class TestModelWeights:
         )
         means = merged[merged["statistic"] == "mean"]
         assert (means["value_w"] != means["value_u"]).any()
-        manifest = json.loads(
-            (Path(result.paths["manifest"])).read_text()
-        )
+        manifest = json.loads((Path(result.paths["manifest"])).read_text())
         assert manifest["model_weight_level"] == "zeppelin"
 
     def test_unmatched_model_is_rejected(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
         p = tmp_path / "weights.tsv"
-        pd.DataFrame({"model": ["z0"], "weight": [1.0]}).to_csv(p, sep="\t", index=False)
+        pd.DataFrame({"model": ["z0"], "weight": [1.0]}).to_csv(
+            p, sep="\t", index=False
+        )
         cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
         raw = cfg.model_dump()
         raw["stats"]["model_weights"] = str(p)
@@ -1316,9 +1386,7 @@ class TestModelWeights:
     def _weighted_cfg(
         self, weights_dir, tree, out, weights_file, *, n_workers=1, exclude=()
     ) -> MonteCarloPipelineConfig:
-        cfg = _pipeline_cfg(
-            weights_dir, tree, out, levels=_LEVELS, n_workers=n_workers
-        )
+        cfg = _pipeline_cfg(weights_dir, tree, out, levels=_LEVELS, n_workers=n_workers)
         raw = cfg.model_dump()
         raw["stats"]["model_weights"] = str(weights_file)
         raw["stats"]["quantile_method"] = "lower_step"
@@ -1395,7 +1463,10 @@ class TestModelWeights:
             {"model": ["Z0*", "z1", "z2", "ghost"], "weight": [0.6, 0.3, 0.1, 0.25]}
         ).to_csv(p, sep="\t", index=False)
         cfg = self._weighted_cfg(
-            weights_dir, tree, tmp_path / "out", p,
+            weights_dir,
+            tree,
+            tmp_path / "out",
+            p,
             exclude=[("k0", "z2"), ("k1", "z2")],
         )
         result = run_pipeline(cfg)
@@ -1680,7 +1751,10 @@ class TestLeafFiles:
             path = folder / "damages.aggregated.parquet"
             on_disk = pq.read_table(path).to_pandas()
             assert list(on_disk.columns) == [
-                "target_ordinal", "target_id", "year", "value",
+                "target_ordinal",
+                "target_id",
+                "year",
+                "value",
             ]
             assert on_disk["target_ordinal"].tolist() == [0] * 4 + [1] * 4
             assert on_disk["target_id"].tolist() == applied["target_id"].tolist()
@@ -1724,18 +1798,27 @@ class TestLeafFiles:
             def imap_unordered(self, func, tasks, chunksize=1):
                 return [func(task) for task in reversed(list(tasks))]
 
-        monkeypatch.setattr(
-            montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool)
-        )
+        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         run_pipeline(_leaves_cfg(weights_dir, tree, out, n_workers=2))
         manifest = _leaves_manifest(out)
 
         assert sorted(manifest) == [
-            "aggregation", "aggregation_digest", "complete", "format_version",
-            "group_col", "leaves", "package_versions", "paths", "profiles",
-            "rows_per_group", "schema", "stem", "targets", "targets_per_group",
+            "aggregation",
+            "aggregation_digest",
+            "complete",
+            "format_version",
+            "group_col",
+            "leaves",
+            "package_versions",
+            "paths",
+            "profiles",
+            "rows_per_group",
+            "schema",
+            "stem",
+            "targets",
+            "targets_per_group",
         ]
         assert manifest["complete"] is True
         assert manifest["stem"] == "statistics"
@@ -1822,7 +1905,8 @@ class TestLeafFiles:
                         (weights_dir / f"weights.{suffix}").read_bytes()
                     ).hexdigest()
                     for name, suffix in (
-                        ("table", "parquet"), ("manifest", "manifest.json"),
+                        ("table", "parquet"),
+                        ("manifest", "manifest.json"),
                     )
                 },
             },
@@ -1840,9 +1924,7 @@ class TestLeafFiles:
         for word in ("window", "quantile", "sample_dims", "summation", "model_weight"):
             assert word not in text
 
-    def test_the_statistics_manifest_points_at_the_leaves(
-        self, weights_dir, tmp_path
-    ):
+    def test_the_statistics_manifest_points_at_the_leaves(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
         hashes = {
@@ -1890,7 +1972,9 @@ class TestLeafFiles:
         ).model_dump()
         raw["output"]["write_reduced"] = True
         without = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
-        pd.testing.assert_frame_equal(with_leaves.stats, without.stats, check_exact=True)
+        pd.testing.assert_frame_equal(
+            with_leaves.stats, without.stats, check_exact=True
+        )
         pd.testing.assert_frame_equal(
             pd.read_parquet(tmp_path / "with" / "statistics.reduced.parquet"),
             pd.read_parquet(tmp_path / "without" / "statistics.reduced.parquet"),
@@ -1929,9 +2013,7 @@ class TestLeafFiles:
         assert seen == [(False, files, True, ["file", "leaf"])] * 6
         assert _leaves_manifest(out)["complete"] is True
 
-    def test_a_failed_leaf_leaves_the_manifest_incomplete(
-        self, weights_dir, tmp_path
-    ):
+    def test_a_failed_leaf_leaves_the_manifest_incomplete(self, weights_dir, tmp_path):
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         good = _poison(tree)
@@ -1966,17 +2048,11 @@ class TestLeafFiles:
             with pytest.raises(ValueError, match="partial run"):
                 run_pipeline(first)
             good.to_parquet(tree / "k0" / "z1" / "damages.parquet", index=False)
-        before = {
-            p: p.read_bytes() for p in (out / "leaves").rglob("*") if p.is_file()
-        }
+        before = {p: p.read_bytes() for p in (out / "leaves").rglob("*") if p.is_file()}
 
-        with pytest.raises(
-            ValueError, match="6 leaf files .* output stem 'first'"
-        ):
+        with pytest.raises(ValueError, match="6 leaf files .* output stem 'first'"):
             run_pipeline(_leaves_cfg(weights_dir, tree, out, stem="second"))
-        after = {
-            p: p.read_bytes() for p in (out / "leaves").rglob("*") if p.is_file()
-        }
+        after = {p: p.read_bytes() for p in (out / "leaves").rglob("*") if p.is_file()}
         assert after == before
         assert not (out / "second.parquet").exists()
 
@@ -1989,7 +2065,9 @@ class TestLeafFiles:
         for kumquat in _LEVELS["kumquat"]:
             run_pipeline(
                 _leaves_cfg(
-                    weights_dir, tree, out,
+                    weights_dir,
+                    tree,
+                    out,
                     levels={"kumquat": [kumquat], "zeppelin": _LEVELS["zeppelin"]},
                     stem=kumquat,
                 )
@@ -2005,13 +2083,14 @@ class TestLeafFiles:
         assert k0["targets"] == k1["targets"]
         assert k0["aggregation_digest"] == k1["aggregation_digest"]
         assert sorted(p.name for p in (out / "leaves").iterdir()) == [
-            "k0", "k0.leaves.manifest.json", "k1", "k1.leaves.manifest.json",
+            "k0",
+            "k0.leaves.manifest.json",
+            "k1",
+            "k1.leaves.manifest.json",
             k0["targets"]["file"],
         ]
 
-    def test_the_group_size_reaches_the_workers_of_a_pool(
-        self, weights_dir, tmp_path
-    ):
+    def test_the_group_size_reaches_the_workers_of_a_pool(self, weights_dir, tmp_path):
         """A spawned worker imports the module afresh, so the size goes
         along with the task."""
         import pyarrow.parquet as pq
@@ -2096,9 +2175,7 @@ class TestLeafFiles:
             leaf = pd.read_parquet(path)
             leaf["when"] = pd.to_datetime(leaf["year"].astype(str) + "-07-01")
             leaf[["unit_id", "when", "year", "value"]].to_parquet(path, index=False)
-        with pytest.raises(
-            ValueError, match="leaf column 'when' has dtype datetime64"
-        ):
+        with pytest.raises(ValueError, match="leaf column 'when' has dtype datetime64"):
             run_pipeline(_leaves_cfg(weights_dir, tree, out))
         assert _leaves_manifest(out)["complete"] is False
         assert not (out / "statistics.parquet").exists()
@@ -2149,9 +2226,7 @@ class TestLeafFiles:
             def imap_unordered(self, func, tasks, chunksize=1):
                 return (func(task) for task in reversed(list(tasks)))
 
-        monkeypatch.setattr(
-            montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool)
-        )
+        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         path = tree / "k1" / "z0" / "damages.parquet"
@@ -2232,7 +2307,8 @@ class TestLeafFiles:
         run_pipeline(_leaves_cfg(weights_dir, tree, out))
         assert old.read_bytes() == before
         assert sorted(p.name for p in old.parent.iterdir()) == [
-            "aggregated_damages.parquet", "damages.aggregated.parquet",
+            "aggregated_damages.parquet",
+            "damages.aggregated.parquet",
         ]
 
 
@@ -2240,9 +2316,7 @@ class TestLeafFiles:
 class TestStages:
     """`aggregate` stops after the leaf files."""
 
-    def test_aggregate_writes_the_leaves_and_no_statistics(
-        self, weights_dir, tmp_path
-    ):
+    def test_aggregate_writes_the_leaves_and_no_statistics(self, weights_dir, tmp_path):
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         result = run_pipeline(
@@ -2322,9 +2396,7 @@ class TestStages:
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
         with pytest.raises(ValueError, match="unknown stage 'pool'"):
-            run_pipeline(
-                _leaves_cfg(weights_dir, tree, tmp_path / "out"), stage="pool"
-            )
+            run_pipeline(_leaves_cfg(weights_dir, tree, tmp_path / "out"), stage="pool")
 
     def test_the_dry_run_names_the_leaves_manifest_and_touches_nothing(
         self, weights_dir, tmp_path
@@ -2430,8 +2502,11 @@ _METHODS_AND_WEIGHTS = pytest.mark.parametrize(
         if not (weighted and methods[0] == "linear")
     ],
     ids=lambda value: (
-        "-".join(value) if isinstance(value, tuple)
-        else "weighted" if value else "unweighted"
+        "-".join(value)
+        if isinstance(value, tuple)
+        else "weighted"
+        if value
+        else "unweighted"
     ),
 )
 # One row group of the tree below, at 280 bytes a row with half its
@@ -2442,9 +2517,7 @@ _ONE_GROUP_GB = 7000e-9
 def _same_frames(one: pd.DataFrame, two: pd.DataFrame) -> None:
     """Equal with their dtypes and row order, and to the bit."""
     pd.testing.assert_frame_equal(one, two, check_exact=True)
-    assert (
-        one["value"].to_numpy().tobytes() == two["value"].to_numpy().tobytes()
-    )
+    assert one["value"].to_numpy().tobytes() == two["value"].to_numpy().tobytes()
 
 
 @pytest.mark.usefixtures("one_target_a_group")
@@ -2459,23 +2532,24 @@ class TestReduce:
         gives a number and not minus infinity. A config that names no
         method gets the step with weights and interpolation without."""
         raw = _leaves_cfg(weights_dir, tree, out).model_dump()
-        raw["stats"].update(
-            sample_dims=["zeppelin"], quantiles=[0.75, 0.95], **stats
-        )
+        raw["stats"].update(sample_dims=["zeppelin"], quantiles=[0.75, 0.95], **stats)
         if methods is None:
             methods = ("lower_step" if weighted else "linear", "fast")
         raw["stats"].update(quantile_method=methods[0], summation=methods[1])
         if weighted:
             table = Path(tree).parent / "model_weights.tsv"
             table.write_text("model\tweight\nz0\t0.6\nz1\t0.3\nz2\t0.0\n")
-            raw["stats"].update(
-                model_weights=str(table), model_weight_level="zeppelin"
-            )
+            raw["stats"].update(model_weights=str(table), model_weight_level="zeppelin")
         return raw
 
     @staticmethod
     def _reduce(
-        raw: dict, *, stem="again", memory_gb=1.0, n_workers=None, stats=None,
+        raw: dict,
+        *,
+        stem="again",
+        memory_gb=1.0,
+        n_workers=None,
+        stats=None,
         **kwargs,
     ):
         raw = json.loads(json.dumps(raw))
@@ -2500,11 +2574,19 @@ class TestReduce:
         """The file and the frame, with dtypes and row order, to the
         bit, in one block and in one block a row group."""
         raw, whole, out = self._aggregated(
-            weights_dir, tmp_path, weighted=weighted, methods=methods,
+            weights_dir,
+            tmp_path,
+            weighted=weighted,
+            methods=methods,
             include_n_members=True,
         )
         assert list(whole.stats.columns) == [
-            "target_id", "band", "kumquat", "window", "statistic", "value",
+            "target_id",
+            "band",
+            "kumquat",
+            "window",
+            "statistic",
+            "value",
             "n_members",
         ]
         for stem, memory_gb, blocks in (("one", 1.0, 1), ("two", _ONE_GROUP_GB, 2)):
@@ -2524,7 +2606,8 @@ class TestReduce:
         manifest = json.loads((out / "again.manifest.json").read_text())
         assert manifest["reduce"]["blocks"] == 2
         assert manifest["reduce"]["options"] == {
-            "memory_gb": 2 * _ONE_GROUP_GB, "n_workers": 2,
+            "memory_gb": 2 * _ONE_GROUP_GB,
+            "n_workers": 2,
         }
 
     def test_other_windows_need_neither_the_tree_nor_the_weights(
@@ -2558,9 +2641,10 @@ class TestReduce:
         leaves = out / "leaves" / "statistics.leaves.manifest.json"
         assert manifest["stage"] == "reduce"
         assert manifest["leaves_manifest"] == str(leaves)
-        assert manifest["leaves_manifest_sha256"] == hashlib.sha256(
-            leaves.read_bytes()
-        ).hexdigest()
+        assert (
+            manifest["leaves_manifest_sha256"]
+            == hashlib.sha256(leaves.read_bytes()).hexdigest()
+        )
         assert manifest["leaves_left_out"] == []
         assert manifest["leaves_verified"] is False
         assert manifest["n_members_forced"] == []
@@ -2570,18 +2654,25 @@ class TestReduce:
         assert reduce["kind"] == "pandas"
         assert sorted(reduce["engine"]) == ["numpy", "pandas", "pyarrow"]
         assert reduce["engine"]["pandas"] == pd.__version__
-        assert (reduce["blocks"], reduce["opens_per_leaf"], reduce["opens"]) == (2, 2, 12)
+        assert (reduce["blocks"], reduce["opens_per_leaf"], reduce["opens"]) == (
+            2,
+            2,
+            12,
+        )
         assert reduce["failed_opens"] == 0
         assert reduce["rows_pooled"] == 48
         # 240, and 40 for the band
         assert reduce["bytes_per_row"] == 280
         assert reduce["kept_share"] == 0.5
-        assert manifest["artifact_sha256"] == _leaves_manifest(out)["aggregation"][
-            "artifact"
-        ]["sha256"]
+        assert (
+            manifest["artifact_sha256"]
+            == _leaves_manifest(out)["aggregation"]["artifact"]["sha256"]
+        )
         assert manifest["n_leaves"] == 6 and len(manifest["leaves"]) == 6
         assert manifest["model_weights_record"]["members"]["z0"] == {
-            "row": "z0", "weight": 0.6, "n_leaves": 2,
+            "row": "z0",
+            "weight": 0.6,
+            "n_leaves": 2,
         }
         assert result.paths == {
             "statistics": str(out / "again.parquet"),
@@ -2662,9 +2753,7 @@ class TestReduce:
         notes = json.loads((out / "again.manifest.json").read_text())["notes"]
         assert len(notes) == 1 and str(moved) in notes[0]
 
-    def test_other_weights_under_the_same_name_are_refused(
-        self, weights_dir, tmp_path
-    ):
+    def test_other_weights_under_the_same_name_are_refused(self, weights_dir, tmp_path):
         raw, _, out = self._aggregated(weights_dir, tmp_path)
         table = pd.read_parquet(weights_dir / "weights.parquet")
         table["areawt"] = table["areawt"] * 0.5
@@ -2751,7 +2840,9 @@ class TestReduce:
         import pyarrow.parquet as pq
 
         from cil_regionalization.leaves import (
-            TargetTable, read_leaf_footer, write_leaf,
+            TargetTable,
+            read_leaf_footer,
+            write_leaf,
         )
 
         raw, whole, out = self._aggregated(weights_dir, tmp_path)
@@ -2761,7 +2852,8 @@ class TestReduce:
         frame.loc[3, "value"] = frame.loc[3, "value"] + 0.125
         document = _leaves_manifest(out)
         write_leaf(
-            frame, path,
+            frame,
+            path,
             targets=TargetTable.read(out / "leaves" / document["targets"]["file"]),
             value_col="value",
             identity={
@@ -2788,7 +2880,9 @@ class TestReduce:
         raw, whole, out = self._aggregated(weights_dir, tmp_path)
         got = self._reduce(raw, verify_leaves=True)
         _same_frames(got.stats, whole.stats)
-        assert "leaves: 6 files hash to what the manifest has" in capsys.readouterr().out
+        assert (
+            "leaves: 6 files hash to what the manifest has" in capsys.readouterr().out
+        )
         manifest = json.loads((out / "again.manifest.json").read_text())
         assert manifest["leaves_verified"] is True
 
@@ -2800,9 +2894,7 @@ class TestReduce:
                 _leaves_cfg(weights_dir, tree, tmp_path / "out"), verify_leaves=True
             )
 
-    def test_a_budget_is_needed_and_has_to_fit_a_row_group(
-        self, weights_dir, tmp_path
-    ):
+    def test_a_budget_is_needed_and_has_to_fit_a_row_group(self, weights_dir, tmp_path):
         raw, _, out = self._aggregated(weights_dir, tmp_path)
         with pytest.raises(ValueError, match=r"Set \[reduce.pandas\] memory_gb"):
             self._reduce(raw, memory_gb=None)
@@ -2898,7 +2990,9 @@ class TestReduce:
             run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
         with pytest.warns(UnweightedModelWeightsWarning) as caught:
             self._reduce(raw, memory_gb=2900e-9)
-        assert len([w for w in caught if w.category is UnweightedModelWeightsWarning]) == 1
+        assert (
+            len([w for w in caught if w.category is UnweightedModelWeightsWarning]) == 1
+        )
         manifest = json.loads((out / "again.manifest.json").read_text())
         assert manifest["reduce"]["blocks"] == 2
 
@@ -3006,7 +3100,8 @@ class TestPooledYears:
             for lo, hi in cfg.stats.windows:
                 pieces.append(
                     leaf[leaf["year"].between(lo, hi)].assign(
-                        kumquat=kumquat, zeppelin=zeppelin,
+                        kumquat=kumquat,
+                        zeppelin=zeppelin,
                         window=f"{int(lo)}-{int(hi)}",
                     )
                 )
@@ -3044,14 +3139,23 @@ class TestPooledYears:
         self, weights_dir, tmp_path, methods, weighted
     ):
         raw, out = self._raw(
-            weights_dir, tmp_path, weighted=weighted, methods=methods,
+            weights_dir,
+            tmp_path,
+            weighted=weighted,
+            methods=methods,
             include_n_members=True,
         )
         cfg = MonteCarloPipelineConfig.model_validate(raw)
         result = run_pipeline(cfg)
         assert list(result.stats.columns) == [
-            "target_id", "band", "kumquat", "window", "statistic", "value",
-            "n_members", "n_sample",
+            "target_id",
+            "band",
+            "kumquat",
+            "window",
+            "statistic",
+            "value",
+            "n_members",
+            "n_sample",
         ]
         assert _leaves_manifest(out)["complete"] is True
         _same_frames(result.stats, self._by_hand(cfg, out))
@@ -3065,7 +3169,12 @@ class TestPooledYears:
         raw, _ = self._raw(weights_dir, tmp_path)
         stats = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
         assert list(stats.columns) == [
-            "target_id", "band", "kumquat", "window", "statistic", "value",
+            "target_id",
+            "band",
+            "kumquat",
+            "window",
+            "statistic",
+            "value",
         ]
 
     def test_the_mean_stays_and_the_quantiles_move(self, weights_dir, tmp_path):
@@ -3083,8 +3192,10 @@ class TestPooledYears:
         pd.testing.assert_frame_equal(years[keys], means[keys])
         is_mean = (years["statistic"] == "mean").to_numpy()
         pd.testing.assert_series_equal(
-            years.loc[is_mean, "value"], means.loc[is_mean, "value"],
-            check_exact=False, rtol=1e-13,
+            years.loc[is_mean, "value"],
+            means.loc[is_mean, "value"],
+            check_exact=False,
+            rtol=1e-13,
         )
         assert (years.loc[~is_mean, "value"] != means.loc[~is_mean, "value"]).all()
         assert (years["n_members"] == means["n_members"]).all()
@@ -3115,7 +3226,10 @@ class TestPooledYears:
         raw, _ = self._raw(weights_dir, tmp_path, weighted=True)
         one = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
         raw, out = self._raw(
-            weights_dir, tmp_path, weighted=True, n_workers=2,
+            weights_dir,
+            tmp_path,
+            weighted=True,
+            n_workers=2,
             memory_gb=2 * _ONE_POOLED_GROUP_GB,
         )
         raw["output"]["dir"] = str(tmp_path / "pool")
@@ -3135,9 +3249,10 @@ class TestPooledYears:
         assert manifest["stage"] == "all"
         assert manifest["time_reduction"] == "pooled"
         assert manifest["leaves_manifest"] == str(leaves)
-        assert manifest["leaves_manifest_sha256"] == hashlib.sha256(
-            leaves.read_bytes()
-        ).hexdigest()
+        assert (
+            manifest["leaves_manifest_sha256"]
+            == hashlib.sha256(leaves.read_bytes()).hexdigest()
+        )
         assert manifest["reduced"] is None
         assert manifest["reduce"]["kind"] == "pandas"
         assert manifest["reduce"]["kept_share"] == 1.0
@@ -3174,13 +3289,19 @@ class TestPooledYears:
 
         monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
         for change, message in (
-            ({"reduce": {"pandas": {"memory_gb": None}}},
-             r"Set \[reduce.pandas\] memory_gb"),
-            ({"output": {"write_leaves": False}},
-             "stage 'all' needs output.write_leaves = true"),
-            ({"output": {"write_reduced": True}},
-             "stats.time_reduction = 'pooled' cannot write the reduced file.*"
-             "output.write_reduced = false"),
+            (
+                {"reduce": {"pandas": {"memory_gb": None}}},
+                r"Set \[reduce.pandas\] memory_gb",
+            ),
+            (
+                {"output": {"write_leaves": False}},
+                "stage 'all' needs output.write_leaves = true",
+            ),
+            (
+                {"output": {"write_reduced": True}},
+                "stats.time_reduction = 'pooled' cannot write the reduced file.*"
+                "output.write_reduced = false",
+            ),
         ):
             raw, out = self._raw(weights_dir, tmp_path)
             for section, values in change.items():
@@ -3230,9 +3351,7 @@ class TestPooledYears:
                 raise AssertionError("a block was reduced")
 
         raw, out = self._raw(weights_dir, tmp_path)
-        run_pipeline(
-            MonteCarloPipelineConfig.model_validate(raw), stage="aggregate"
-        )
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw), stage="aggregate")
         monkeypatch.setattr(
             montecarlo, "get_backend", lambda config: ExactOnly(config.pandas)
         )
@@ -3487,7 +3606,12 @@ class TestPerYear:
 
     @staticmethod
     def _raw(
-        weights_dir, tmp_path, *, years=(2050, 2081), memory_gb=1.0, n_workers=1,
+        weights_dir,
+        tmp_path,
+        *,
+        years=(2050, 2081),
+        memory_gb=1.0,
+        n_workers=1,
         **kwargs,
     ):
         tree, out = tmp_path / "tree", tmp_path / "out"
@@ -3541,13 +3665,21 @@ class TestPerYear:
         self, weights_dir, tmp_path, methods, weighted
     ):
         raw, out = self._raw(
-            weights_dir, tmp_path, weighted=weighted, methods=methods,
+            weights_dir,
+            tmp_path,
+            weighted=weighted,
+            methods=methods,
             include_n_members=True,
         )
         cfg = MonteCarloPipelineConfig.model_validate(raw)
         result = run_pipeline(cfg)
         assert list(result.stats.columns) == [
-            "target_id", "band", "kumquat", "year", "statistic", "value",
+            "target_id",
+            "band",
+            "kumquat",
+            "year",
+            "statistic",
+            "value",
             "n_members",
         ]
         assert result.stats["year"].dtype == np.int64
@@ -3652,7 +3784,8 @@ class TestPerYear:
         refused(
             "stats.years is for stats.time_reduction = 'per_year', and this "
             "config has 'pooled'",
-            time_reduction="pooled", windows=[[2050, 2051]],
+            time_reduction="pooled",
+            windows=[[2050, 2051]],
         )
         refused("stats.time_reduction", time_reduction=None)
         refused("stats.time_reduction", time_reduction="yearly")
@@ -3672,7 +3805,9 @@ class TestPerYear:
         ):
             MonteCarloPipelineConfig.model_validate(passthrough)
 
-    @pytest.mark.parametrize("value, replacement", [(True, "pooled"), (False, "window_mean")])
+    @pytest.mark.parametrize(
+        "value, replacement", [(True, "pooled"), (False, "window_mean")]
+    )
     def test_a_config_with_the_former_key_is_told_what_to_write(
         self, weights_dir, tmp_path, value, replacement
     ):
@@ -3695,13 +3830,19 @@ class TestPerYear:
 
         monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
         for change, message in (
-            ({"reduce": {"pandas": {"memory_gb": None}}},
-             r"Set \[reduce.pandas\] memory_gb"),
-            ({"output": {"write_leaves": False}},
-             "'per_year' takes the statistics from the leaf files, so stage "
-             "'all' needs output.write_leaves = true"),
-            ({"output": {"write_reduced": True}},
-             "stats.time_reduction = 'per_year' cannot write the reduced file"),
+            (
+                {"reduce": {"pandas": {"memory_gb": None}}},
+                r"Set \[reduce.pandas\] memory_gb",
+            ),
+            (
+                {"output": {"write_leaves": False}},
+                "'per_year' takes the statistics from the leaf files, so stage "
+                "'all' needs output.write_leaves = true",
+            ),
+            (
+                {"output": {"write_reduced": True}},
+                "stats.time_reduction = 'per_year' cannot write the reduced file",
+            ),
         ):
             raw, out = self._raw(weights_dir, tmp_path)
             for section, values in change.items():
@@ -3715,9 +3856,11 @@ class TestPerYear:
 
     def test_the_dry_run_says_when_the_blocks_are_sized(self, weights_dir, tmp_path):
         raw, out = self._raw(weights_dir, tmp_path)
-        lines = run_pipeline(
-            MonteCarloPipelineConfig.model_validate(raw), dry_run=True
-        ).summary().splitlines()
+        lines = (
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw), dry_run=True)
+            .summary()
+            .splitlines()
+        )
         assert lines[-2:] == [
             "  reduce: stats.time_reduction = 'per_year' takes the statistics "
             "from the leaf files, by blocks, after every leaf is written",
@@ -3768,8 +3911,11 @@ def _build_gwl_tree(root: Path) -> None:
         leaf_dir = root.joinpath(*combo)
         leaf_dir.mkdir(parents=True, exist_ok=True)
         rows = [
-            {"unit_id": unit, "year": year,
-             "value": base + 2.0 * i + 0.5 * (_GWL_YEARS.index(year) % 4) ** 2}
+            {
+                "unit_id": unit,
+                "year": year,
+                "value": base + 2.0 * i + 0.5 * (_GWL_YEARS.index(year) % 4) ** 2,
+            }
             for unit, base in (("u1", 8.0), ("u2", 4.0))
             for year in _GWL_YEARS
         ]
@@ -3789,9 +3935,7 @@ class TestWarmingLevels:
         gmst = tmp_path / "gmst.csv"
         if not gmst.exists():
             _write_gmst(gmst)
-        raw = _pipeline_cfg(
-            weights_dir, tree, out, levels=_GWL_LEVELS
-        ).model_dump()
+        raw = _pipeline_cfg(weights_dir, tree, out, levels=_GWL_LEVELS).model_dump()
         del raw["stats"]["windows"]
         raw["stats"].update(
             sample_dims=["batch", "rcp", "gcm"],
@@ -3831,8 +3975,11 @@ class TestWarmingLevels:
         level_of = {
             member: tuple(
                 next(
-                    (level for level in cfg.stats.warming_levels.levels
-                     if abs(value + 0.5 - level) <= 0.25),
+                    (
+                        level
+                        for level in cfg.stats.warming_levels.levels
+                        if abs(value + 0.5 - level) <= 0.25
+                    ),
                     None,
                 )
                 for value in temperatures
@@ -3852,19 +3999,24 @@ class TestWarmingLevels:
                 if not cfg.stats.time_reduction == "pooled":
                     inside = (
                         inside.groupby("target_id", sort=False)["value"]
-                        .mean().reset_index()
+                        .mean()
+                        .reset_index()
                     )
                 pieces.append(
                     inside.assign(
-                        warming_level=level, window=f"{lo}-{hi}", batch=batch,
-                        rcp=rcp, gcm=gcm,
+                        warming_level=level,
+                        window=f"{lo}-{hi}",
+                        batch=batch,
+                        rcp=rcp,
+                        gcm=gcm,
                     )
                 )
         members = pd.concat(pieces, ignore_index=True)
         years = ["year"] if cfg.stats.time_reduction == "pooled" else []
         members = members[
             ["target_id", "warming_level", "window", "batch", "rcp", "gcm"]
-            + years + ["value"]
+            + years
+            + ["value"]
         ]
         with warnings.catch_warnings():
             # the members at a level count equally by design
@@ -3887,7 +4039,8 @@ class TestWarmingLevels:
         if cfg.stats.time_reduction == "pooled":
             stats = stats.rename(columns={"n_members": "n_sample"})
             stats.insert(
-                list(stats.columns).index("n_sample"), "n_members",
+                list(stats.columns).index("n_sample"),
+                "n_members",
                 counted["draw"].nunique().reindex(index).to_numpy(),
             )
         stats["n_bin_members"] = counted["model"].nunique().reindex(index).to_numpy()
@@ -3903,14 +4056,15 @@ class TestWarmingLevels:
         """Collapsing the window first and pooling its years, each
         under the three quantile definitions."""
         raw, out = self._raw(
-            weights_dir, tmp_path, quantile_method=quantile_method,
+            weights_dir,
+            tmp_path,
+            quantile_method=quantile_method,
             time_reduction="pooled" if pooled else "window_mean",
         )
         cfg = MonteCarloPipelineConfig.model_validate(raw)
         result = run_pipeline(cfg)
         assert list(result.stats.columns) == (
-            ["target_id", "warming_level", "window", "statistic", "value",
-             "n_members"]
+            ["target_id", "warming_level", "window", "statistic", "value", "n_members"]
             + (["n_sample"] if pooled else [])
             + ["n_bin_members"]
         )
@@ -3925,8 +4079,10 @@ class TestWarmingLevels:
         )
         # two batches of each member, and three years of the first period
         assert counts["n_bin_members"].to_dict() == {
-            ("2040-2042", 1.5): 3, ("2040-2042", 2.0): 2,
-            ("2080-2083", 2.0): 1, ("2080-2083", 3.0): 3,
+            ("2040-2042", 1.5): 3,
+            ("2040-2042", 2.0): 2,
+            ("2080-2083", 2.0): 1,
+            ("2080-2083", 3.0): 3,
         }
         assert (counts["n_members"] == 2 * counts["n_bin_members"]).all()
         if pooled:
@@ -3948,8 +4104,10 @@ class TestWarmingLevels:
             raw["output"]["dir"] = str(tmp_path / method)
             stats = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
             row = stats[
-                (stats["target_id"] == "T1") & (stats["warming_level"] == 2.0)
-                & (stats["window"] == "2040-2042") & (stats["statistic"] == "q95")
+                (stats["target_id"] == "T1")
+                & (stats["warming_level"] == 2.0)
+                & (stats["window"] == "2040-2042")
+                & (stats["statistic"] == "q95")
             ]
             assert row["n_members"].item() == 4 and row["n_bin_members"].item() == 2
             got[method] = row["value"].item()
@@ -3968,9 +4126,10 @@ class TestWarmingLevels:
         assert manifest["model_weights"] is None
         record = manifest["warming_levels"]
         assert record["path"] == str(tmp_path / "gmst.csv")
-        assert record["sha256"] == hashlib.sha256(
-            (tmp_path / "gmst.csv").read_bytes()
-        ).hexdigest()
+        assert (
+            record["sha256"]
+            == hashlib.sha256((tmp_path / "gmst.csv").read_bytes()).hexdigest()
+        )
         assert record["member_cols"] == ["gcm", "rcp"]
         assert record["reference_period"] == [1986, 2005]
         assert record["offset"] == 0.5
@@ -3978,10 +4137,16 @@ class TestWarmingLevels:
         assert record["smoothing"] == "unknown"
         assert record["levels"] == [1.5, 2.0, 3.0, 4.0]
         assert record["periods"] == [
-            {"window": "2040-2042", "gmst_span": [2040, 2043],
-             "impact_span": [2040, 2042]},
-            {"window": "2080-2083", "gmst_span": [2080, 2083],
-             "impact_span": [2080, 2083]},
+            {
+                "window": "2040-2042",
+                "gmst_span": [2040, 2043],
+                "impact_span": [2040, 2042],
+            },
+            {
+                "window": "2080-2083",
+                "gmst_span": [2080, 2083],
+                "impact_span": [2080, 2083],
+            },
         ]
         # a level nobody is at is recorded and has no row in the file
         assert record["n_members"] == {
@@ -3990,7 +4155,8 @@ class TestWarmingLevels:
         }
         assert record["in_no_bin"] == [{"gcm": "m1", "rcp": "r85"}]
         assert record["unassigned"]["2080-2083"] == [
-            {"gcm": "m1", "rcp": "r45"}, {"gcm": "m1", "rcp": "r85"},
+            {"gcm": "m1", "rcp": "r45"},
+            {"gcm": "m1", "rcp": "r85"},
         ]
         assert record["unused_members"] == [{"gcm": "m9", "rcp": "r45"}]
         assert len(record["members"]) == 6
@@ -4003,7 +4169,9 @@ class TestWarmingLevels:
         assert sorted(stats["warming_level"].unique()) == [1.5, 2.0, 3.0]
         # the members at a level count equally by design, so the warning
         # for a level named gcm without weights is not for this run
-        assert not [w for w in recwarn if "weights every climate model" in str(w.message)]
+        assert not [
+            w for w in recwarn if "weights every climate model" in str(w.message)
+        ]
 
     def test_other_periods_and_the_other_reduction_come_from_the_same_leaves(
         self, weights_dir, tmp_path, monkeypatch
@@ -4035,8 +4203,16 @@ class TestWarmingLevels:
 
     @pytest.mark.parametrize(
         "left_out",
-        ["reference_period", "offset", "levels", "half_width", "smoothing",
-         "periods", "gmst", "member"],
+        [
+            "reference_period",
+            "offset",
+            "levels",
+            "half_width",
+            "smoothing",
+            "periods",
+            "gmst",
+            "member",
+        ],
     )
     def test_a_config_that_leaves_out_what_decides_a_level_is_refused(
         self, weights_dir, tmp_path, left_out
@@ -4070,7 +4246,8 @@ class TestWarmingLevels:
         refused(
             "stats.model_weights and \\[stats.warming_levels\\] are both set",
             stats={
-                "model_weights": str(table), "model_weight_level": "gcm",
+                "model_weights": str(table),
+                "model_weight_level": "gcm",
                 "quantile_method": "lower_step",
             },
         )
@@ -4121,9 +4298,13 @@ class TestWarmingLevels:
             "\\[stats.warming_levels\\] cannot write the reduced file",
             output={"write_reduced": True},
         )
-        refused("Set \\[reduce.pandas\\] memory_gb", reduce={"pandas": {"memory_gb": None}})
+        refused(
+            "Set \\[reduce.pandas\\] memory_gb", reduce={"pandas": {"memory_gb": None}}
+        )
         # a surrogate is not the model it was made from
-        only_m0 = {k: v for k, v in _GWL_TEMPERATURES.items() if "surrogate" not in k[0]}
+        only_m0 = {
+            k: v for k, v in _GWL_TEMPERATURES.items() if "surrogate" not in k[0]
+        }
         _write_gmst(tmp_path / "gmst.csv", temperatures=only_m0)
         refused(
             "2 of the 6 members the tree declares have no row in the temperature "
@@ -4158,9 +4339,7 @@ class TestWarmingLevels:
         run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
         assert len(reads) == 1
 
-    def test_aggregate_does_not_read_the_temperature_table(
-        self, weights_dir, tmp_path
-    ):
+    def test_aggregate_does_not_read_the_temperature_table(self, weights_dir, tmp_path):
         raw, out = self._raw(weights_dir, tmp_path)
         (tmp_path / "gmst.csv").unlink()
         run_pipeline(MonteCarloPipelineConfig.model_validate(raw), stage="aggregate")
@@ -4222,7 +4401,9 @@ class TestWarmingLevels:
         cfg = MonteCarloPipelineConfig.model_validate(raw)
         run_pipeline(cfg, stage="aggregate")
         entry = next(
-            e for e in _leaves_manifest(out)["leaves"] if e["leaf"] == ["b0", "r45", "m0"]
+            e
+            for e in _leaves_manifest(out)["leaves"]
+            if e["leaf"] == ["b0", "r45", "m0"]
         )
         path = out / "leaves" / entry["file"]
         table = pq.read_table(path)

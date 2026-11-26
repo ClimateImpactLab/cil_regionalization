@@ -1,4 +1,5 @@
 """GDPCIR reader contract checks."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -14,10 +15,16 @@ def _store(tmp_path, lon=None, years=1, calendar="noleap"):
     lon = np.array([-179.875, 0.125]) if lon is None else lon
     lat = np.array([-0.125, 0.125])
     ndays = 365 * years if calendar == "noleap" else None
-    time = xr.date_range("2050-01-01", periods=ndays or (365 * years + 1),
-                         freq="D", calendar=calendar, use_cftime=True)
+    time = xr.date_range(
+        "2050-01-01",
+        periods=ndays or (365 * years + 1),
+        freq="D",
+        calendar=calendar,
+        use_cftime=True,
+    )
     data = np.arange(len(time) * 2 * len(lon), dtype="f4").reshape(
-        len(time), 2, len(lon))
+        len(time), 2, len(lon)
+    )
     ds = xr.Dataset(
         {"tasmax": (("time", "lat", "lon"), data)},
         coords={"time": time, "lat": lat, "lon": lon},

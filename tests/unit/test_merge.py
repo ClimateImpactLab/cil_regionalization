@@ -1,4 +1,5 @@
 """Merge invariants: disjoint hierid sets, coverage, sum-to-1, source col."""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -57,9 +58,7 @@ def _manifest(**extra) -> dict:
 
 
 def _schema() -> OutputSchema:
-    return OutputSchema(
-        id_fields=("hierid",), weight_names=("pop", "area")
-    )
+    return OutputSchema(id_fields=("hierid",), weight_names=("pop", "area"))
 
 
 class TestHappyPath:
@@ -121,10 +120,7 @@ class TestHappyPath:
         assert mf["row_counts"] == {"canonical": 3, "supplement": 3, "total": 6}
         assert mf["sources"]["canonical"]["config_hash"] == "abc123"
         assert mf["sources"]["canonical"]["extra"]["null_geometry_count"] == 17
-        assert (
-            mf["sources"]["canonical"]["extra"]["bq_dry_run_bytes"]
-            == 5_257_870_075
-        )
+        assert mf["sources"]["canonical"]["extra"]["bq_dry_run_bytes"] == 5_257_870_075
         assert mf["sources"]["supplement"]["config_hash"] == "abc123"
         assert mf["sources"]["supplement"]["extra"]["repaired_geometry_count"] == 0
 
@@ -132,9 +128,7 @@ class TestHappyPath:
 class TestDisjoint:
     def test_overlap_raises_with_ids_named(self):
         # ABW is in both frames.
-        supp = pd.DataFrame(
-            [_row("ABW", 109, 104, 1.0, 1.0)]
-        )
+        supp = pd.DataFrame([_row("ABW", 109, 104, 1.0, 1.0)])
         with pytest.raises(ValueError, match="overlap") as exc:
             merge_weights(
                 canonical_frame=_canonical_frame(),

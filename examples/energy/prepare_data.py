@@ -24,6 +24,7 @@ constant within five-year spans, exactly. The raw dollar values
 understate by 0.0036 (a GJ quantity was multiplied by a per-kWh
 price); the repair is applied in compute.py, not here.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -37,10 +38,18 @@ import pandas as pd
 
 import cil_regionalization as cilreg
 
-TREE = Path("/project/cil/battuta-shares-S3-archive/gcp/outputs/energy_pixel_interaction/impacts-blueghost/median_OTHERIND_other_energy_TINV_clim_GMFD_dm/median")
-CSVV = Path("/project/cil/home_dirs/egrenier/repos/energy-code-release-2020/projection_inputs/csvv/TINV_clim/FD_FGLS_inter_OTHERIND_other_energy_TINV_clim.csvv")
-POPULATION = Path("/project/cil/gcp/social/baselines/population/merged/population-merged.SSP3.csv")
-IR_SHAPES = Path("/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp")
+TREE = Path(
+    "/project/cil/battuta-shares-S3-archive/gcp/outputs/energy_pixel_interaction/impacts-blueghost/median_OTHERIND_other_energy_TINV_clim_GMFD_dm/median"
+)
+CSVV = Path(
+    "/project/cil/home_dirs/egrenier/repos/energy-code-release-2020/projection_inputs/csvv/TINV_clim/FD_FGLS_inter_OTHERIND_other_energy_TINV_clim.csvv"
+)
+POPULATION = Path(
+    "/project/cil/gcp/social/baselines/population/merged/population-merged.SSP3.csv"
+)
+IR_SHAPES = Path(
+    "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
+)
 SMME = Path("/project/cil/gcp/climate/BCSD/SMME/SMME-weights/rcp85_SMME_weights.tsv")
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
@@ -88,11 +97,15 @@ def read_slice(gcm: str, suffix: str, keep_idx, want_value=False):
     with netCDF4.Dataset(p) as ds:
         years = ds.variables["year"][:]
         yi = int(np.where(years == YEAR)[0][0])
-        g = np.asarray(ds.variables["rebased_bcde"][:, yi, :], dtype="float64")[:, keep_idx]
+        g = np.asarray(ds.variables["rebased_bcde"][:, yi, :], dtype="float64")[
+            :, keep_idx
+        ]
         vcv = np.asarray(ds.variables["vcv"][:], dtype="float64")
         value = None
         if want_value:
-            value = np.asarray(ds.variables["rebased"][yi, :], dtype="float64")[keep_idx]
+            value = np.asarray(ds.variables["rebased"][yi, :], dtype="float64")[
+                keep_idx
+            ]
     return g, vcv, value
 
 
@@ -122,29 +135,37 @@ def build_population_and_factor(keep: list[str]) -> None:
     g_priced, _, _ = read_slice(PAIR_GCM, "-price014-levels", idx)
     strongest = np.abs(g_lev).argmax(axis=0)
     sel = np.arange(len(keep))
-    implied_pop = g_lev[strongest, sel] / read_slice(PAIR_GCM, "", idx)[0][strongest, sel]
-    assert np.nanmax(np.abs(implied_pop / held.values - 1)) < 1e-5, \
+    implied_pop = (
+        g_lev[strongest, sel] / read_slice(PAIR_GCM, "", idx)[0][strongest, sel]
+    )
+    assert np.nanmax(np.abs(implied_pop / held.values - 1)) < 1e-5, (
         "population in the run differs from the span-held SSP series"
+    )
     implied_price = g_priced[strongest, sel] / g_lev[strongest, sel]
     countries = pd.Series([r[:3] for r in keep])
     price_by_country = pd.Series(implied_price).groupby(countries).median()
     spread = pd.Series(implied_price).groupby(countries).std()
     assert spread.max() < 1e-6, f"price varies within a country: {spread.to_dict()}"
     price_vec = price_by_country.reindex(countries).values
-    factor = pd.DataFrame({
-        "hierid": keep,
-        "factor": held.values * price_vec,
-    })
+    factor = pd.DataFrame(
+        {
+            "hierid": keep,
+            "factor": held.values * price_vec,
+        }
+    )
     factor.to_parquet(DATA / "wage_price_factor.parquet", index=False)
-    print(f"population and factor: {len(keep)} regions; "
-          f"prices {price_by_country.round(5).to_dict()}")
+    print(
+        f"population and factor: {len(keep)} regions; "
+        f"prices {price_by_country.round(5).to_dict()}"
+    )
 
 
 def build_gradients(keep: list[str]) -> None:
     idx = region_index(keep)
     tree = TREE
-    gcms = sorted(p.name for p in (tree / RCP).iterdir()
-                  if p.is_dir() and (p / IAM).exists())
+    gcms = sorted(
+        p.name for p in (tree / RCP).iterdir() if p.is_dir() and (p / IAM).exists()
+    )
     print(f"gcms: {len(gcms)}")
 
     vcv_ref = None
@@ -154,8 +175,9 @@ def build_gradients(keep: list[str]) -> None:
         g_hist, vcv2, _ = read_slice(gcm, "-histclim", idx)
         if vcv_ref is None:
             vcv_ref = vcv
-        assert np.array_equal(vcv, vcv_ref) and np.array_equal(vcv2, vcv_ref), \
+        assert np.array_equal(vcv, vcv_ref) and np.array_equal(vcv2, vcv_ref), (
             "covariance matrix differs between files"
+        )
         effects[i] = (g_full - g_hist).astype("float32")
         print(gcm, flush=True)
 
@@ -180,13 +202,19 @@ def build_gradients(keep: list[str]) -> None:
         rv = ds.createVariable("regions", str, ("region",))
         for i, r in enumerate(keep):
             rv[i] = r
-        ev = ds.createVariable("effect_bcde", "f4",
-                               ("gcm", "coefficient", "region"),
-                               zlib=True, complevel=4)
+        ev = ds.createVariable(
+            "effect_bcde",
+            "f4",
+            ("gcm", "coefficient", "region"),
+            zlib=True,
+            complevel=4,
+        )
         ev[:] = effects
-        ev.description = ("gradient of the effect of climate change "
-                          "(full adaptation minus histclim) with respect "
-                          f"to the regression coefficients, year {YEAR}")
+        ev.description = (
+            "gradient of the effect of climate change "
+            "(full adaptation minus histclim) with respect "
+            f"to the regression coefficients, year {YEAR}"
+        )
         vv = ds.createVariable("vcv", "f8", ("coefficient", "coefficient"))
         vv[:] = vcv_ref
     print(f"gradients: {out.stat().st_size / 1e6:.1f} MB")
@@ -202,11 +230,14 @@ def build_gradients(keep: list[str]) -> None:
         for i, r in enumerate(keep):
             rv[i] = r
         for name, arr in (("fulladapt_bcde", g_full), ("histclim_bcde", g_hist)):
-            v = ds.createVariable(name, "f4", ("coefficient", "region"),
-                                  zlib=True, complevel=4)
+            v = ds.createVariable(
+                name, "f4", ("coefficient", "region"), zlib=True, complevel=4
+            )
             v[:] = arr.astype("float32")
-        for name, arr in (("fulladapt_variance", var_full),
-                          ("histclim_variance", var_hist)):
+        for name, arr in (
+            ("fulladapt_variance", var_full),
+            ("histclim_variance", var_hist),
+        ):
             v = ds.createVariable(name, "f8", ("region",), zlib=True)
             v[:] = arr
         vv = ds.createVariable("vcv", "f8", ("coefficient", "coefficient"))

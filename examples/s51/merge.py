@@ -12,6 +12,7 @@ reproduces it.
 
     python examples/s51/merge.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,7 +69,9 @@ def main(argv: list[str] | None = None) -> int:
     (out / "weights.manifest.json").write_text(
         json.dumps(merged.merged_manifest, indent=2, sort_keys=True, default=str)
     )
-    print(f"s51: {len(merged.frame):,} rows, {merged.n_regions:,} hierids, written to {out}")
+    print(
+        f"s51: {len(merged.frame):,} rows, {merged.n_regions:,} hierids, written to {out}"
+    )
     return 0
 
 

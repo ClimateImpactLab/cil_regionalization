@@ -11,6 +11,7 @@ remainder (AND, BMU), and a dotted subdivision (BHR.5). The list is a
 measured fact about that version, inlined here so the test suite is
 self contained.
 """
+
 from __future__ import annotations
 
 import os
@@ -65,9 +66,7 @@ def three_region_gdf() -> gpd.GeoDataFrame:
 
 
 @pytest.fixture
-def three_region_geoparquet(
-    tmp_path: Path, three_region_gdf: gpd.GeoDataFrame
-) -> Path:
+def three_region_geoparquet(tmp_path: Path, three_region_gdf: gpd.GeoDataFrame) -> Path:
     p = tmp_path / "regions.parquet"
     three_region_gdf.to_parquet(p)
     return p
@@ -204,9 +203,10 @@ def synthetic_fraction_raster(tmp_path: Path) -> Path:
 def _git_repo_missing() -> bool:
     """True when git is not installed or this is not a git checkout (an
     sdist, a zip), so the examples data check cannot run."""
-    return shutil.which("git") is None or not (
-        Path(__file__).resolve().parents[1] / ".git"
-    ).exists()
+    return (
+        shutil.which("git") is None
+        or not (Path(__file__).resolve().parents[1] / ".git").exists()
+    )
 
 
 def _extra_missing(module_name: str) -> bool:

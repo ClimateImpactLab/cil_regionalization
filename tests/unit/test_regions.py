@@ -1,4 +1,5 @@
 """Region loading: GeoParquet path, filters, invalid-geometry policy, BQ ref."""
+
 from __future__ import annotations
 
 import logging
@@ -14,9 +15,7 @@ from cil_regionalization.regions import RegionSet
 
 class TestLocalLoad:
     def test_load_geoparquet(self, three_region_geoparquet: Path):
-        cfg = RegionsConfig(
-            path=str(three_region_geoparquet), id_fields=["region_id"]
-        )
+        cfg = RegionsConfig(path=str(three_region_geoparquet), id_fields=["region_id"])
         rs = RegionSet.from_config(cfg)
         assert rs.is_local
         assert len(rs) == 3
@@ -66,9 +65,7 @@ class TestFilters:
         with pytest.raises(ValueError, match="no_such_col"):
             RegionSet.from_config(cfg)
 
-    def test_unknown_keep_and_drop_values_reported(
-        self, three_region_geoparquet: Path
-    ):
+    def test_unknown_keep_and_drop_values_reported(self, three_region_geoparquet: Path):
         cfg = RegionsConfig(
             path=str(three_region_geoparquet),
             id_fields=["region_id"],
@@ -119,7 +116,9 @@ class TestInvalidGeometry:
             rs = RegionSet.from_config(cfg)
         assert len(rs) == 2  # both kept
         assert rs.gdf.geometry.is_valid.all()
-        assert any("repairing" in r.message and "bad" in r.message for r in caplog.records)
+        assert any(
+            "repairing" in r.message and "bad" in r.message for r in caplog.records
+        )
 
     def test_skip_policy_drops_and_logs(self, tmp_path: Path, caplog):
         path = _invalid_gdf(tmp_path)
@@ -133,7 +132,9 @@ class TestInvalidGeometry:
         assert len(rs) == 1
         kept = next(rs.iter_regions())[0]["region_id"]
         assert kept == "good"
-        assert any("skipping" in r.message and "bad" in r.message for r in caplog.records)
+        assert any(
+            "skipping" in r.message and "bad" in r.message for r in caplog.records
+        )
 
     def test_error_policy_raises(self, tmp_path: Path):
         path = _invalid_gdf(tmp_path)

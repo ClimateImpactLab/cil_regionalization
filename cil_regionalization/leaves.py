@@ -10,6 +10,7 @@ The file is plain parquet with a fixed Arrow schema and no pandas
 metadata. Its footer says which aggregation produced it, under the key
 ``cil_regionalization.leaf``.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -52,9 +53,10 @@ def file_sha256(path: str | Path) -> str:
 def _is_string(column: pd.Series) -> bool:
     if isinstance(column.dtype, pd.StringDtype):
         return True
-    return column.dtype == object and pd.api.types.infer_dtype(
-        column, skipna=True
-    ) in ("string", "empty")
+    return column.dtype == object and pd.api.types.infer_dtype(column, skipna=True) in (
+        "string",
+        "empty",
+    )
 
 
 def _is_nullable_string(column: pd.Series) -> bool:
@@ -155,9 +157,11 @@ class TargetTable:
         keys = frame[list(self.id_fields)]
         if len(keys) == 0:
             return np.zeros(0, dtype=np.int32)
-        codes = keys.groupby(
-            list(self.id_fields), sort=False, dropna=False
-        ).ngroup().to_numpy()
+        codes = (
+            keys.groupby(list(self.id_fields), sort=False, dropna=False)
+            .ngroup()
+            .to_numpy()
+        )
         # one lookup per distinct target, in the order the codes number them
         distinct = keys.drop_duplicates()
         position = {row: i for i, row in enumerate(self.ids)}
@@ -186,9 +190,7 @@ class TargetTable:
         if path.exists():
             found = TargetTable.read(path)
             if found != self:
-                raise ValueError(
-                    f"{path} does not hold the targets its name says"
-                )
+                raise ValueError(f"{path} does not hold the targets its name says")
             return path
         schema = pa.schema(
             [(ORDINAL_COLUMN, pa.int32())]

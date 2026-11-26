@@ -4,6 +4,7 @@ The criterion is "polygon touches both +/-180 boundaries", NOT "bbox
 wider than 180deg". A region wider than 180deg but not touching the
 boundaries must NOT be split.
 """
+
 from __future__ import annotations
 
 import shapely

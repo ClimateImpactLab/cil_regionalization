@@ -18,6 +18,7 @@ draws and the time window. The values are the effect of climate change
 on the mortality rate, deaths per 100,000 people per year, full
 adaptation minus histclim, from the ratio route in compute.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -75,20 +76,22 @@ def _crosswalk_pairs(locs20, locs41):
 def _map_figure(locs, gj, series, names, title, lon, lat, zmax, default):
     import plotly.graph_objects as go
 
-    fig = go.Figure(go.Choropleth(
-        geojson=gj,
-        locations=locs,
-        z=series[default],
-        text=names,
-        hovertemplate="%{text}<br>%{z:.1f} per 100,000<extra>" + title + "</extra>",
-        colorscale="RdBu_r",
-        zmid=0.0,
-        zmin=-zmax,
-        zmax=zmax,
-        marker_line_width=0.1,
-        marker_line_color="#888",
-        showscale=False,
-    ))
+    fig = go.Figure(
+        go.Choropleth(
+            geojson=gj,
+            locations=locs,
+            z=series[default],
+            text=names,
+            hovertemplate="%{text}<br>%{z:.1f} per 100,000<extra>" + title + "</extra>",
+            colorscale="RdBu_r",
+            zmid=0.0,
+            zmin=-zmax,
+            zmax=zmax,
+            marker_line_width=0.1,
+            marker_line_color="#888",
+            showscale=False,
+        )
+    )
     fig.update_layout(
         geo=dict(
             visible=False,
@@ -107,25 +110,37 @@ def _map_figure(locs, gj, series, names, title, lon, lat, zmax, default):
 def _colorbar_figure(zmax):
     import plotly.graph_objects as go
 
-    fig = go.Figure(go.Scatter(
-        x=[None], y=[None], mode="markers",
-        marker=dict(
-            colorscale="RdBu_r", cmin=-zmax, cmax=zmax, showscale=True,
-            colorbar=dict(
-                title=dict(text="deaths per 100,000", side="top"),
-                orientation="h",
-                x=0.5, xanchor="center",
-                y=1.0, yanchor="top",
-                len=0.5, thickness=12,
+    fig = go.Figure(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="markers",
+            marker=dict(
+                colorscale="RdBu_r",
+                cmin=-zmax,
+                cmax=zmax,
+                showscale=True,
+                colorbar=dict(
+                    title=dict(text="deaths per 100,000", side="top"),
+                    orientation="h",
+                    x=0.5,
+                    xanchor="center",
+                    y=1.0,
+                    yanchor="top",
+                    len=0.5,
+                    thickness=12,
+                ),
             ),
-        ),
-        hoverinfo="none",
-    ))
+            hoverinfo="none",
+        )
+    )
     fig.update_layout(
         height=90,
         margin=dict(l=0, r=0, t=0, b=0),
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
     )
     return fig
 
@@ -135,7 +150,10 @@ def main() -> int:
     locs41, gj41, series41, names41, b41 = _panel("4.1", "mex_adm2_gadm41_plot.parquet")
     pairs = _crosswalk_pairs(locs20, locs41)
     zmax = max(
-        abs(v) for s in (series20, series41) for arr in s.values() for v in arr
+        abs(v)
+        for s in (series20, series41)
+        for arr in s.values()
+        for v in arr
         if v == v
     )
     pad = 0.5
@@ -143,10 +161,12 @@ def main() -> int:
     lat = (min(b20[1], b41[1]) - pad, max(b20[3], b41[3]) + pad)
 
     default = "2080-2099|q50"
-    fig20 = _map_figure(locs20, gj20, series20, names20, "GADM 2.0",
-                        lon, lat, zmax, default)
-    fig41 = _map_figure(locs41, gj41, series41, names41, "GADM 4.1",
-                        lon, lat, zmax, default)
+    fig20 = _map_figure(
+        locs20, gj20, series20, names20, "GADM 2.0", lon, lat, zmax, default
+    )
+    fig41 = _map_figure(
+        locs41, gj41, series41, names41, "GADM 4.1", lon, lat, zmax, default
+    )
     figbar = _colorbar_figure(zmax)
 
     div20 = fig20.to_html(include_plotlyjs=True, full_html=False, div_id="map20")

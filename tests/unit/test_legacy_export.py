@@ -1,4 +1,5 @@
 """Legacy 13-column CSV exporter: schema, totals, NaN, shpid, errors."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,20 +29,115 @@ def _three_region_frame() -> pd.DataFrame:
     """Three regions A, B, C with area/pop/crop columns and one NaN region."""
     rows = []
     # Region B: native (3 cells, fractions of total)
-    rows.append(("B", 0, 0, 0.5, 0.5, 0.6, 60.0, "native", 0.7, 70.0, "native", 0.5, 6e9, "native"))
-    rows.append(("B", 0, 1, 0.5, 1.5, 0.4, 40.0, "native", 0.3, 30.0, "native", 0.5, 6e9, "native"))
+    rows.append(
+        (
+            "B",
+            0,
+            0,
+            0.5,
+            0.5,
+            0.6,
+            60.0,
+            "native",
+            0.7,
+            70.0,
+            "native",
+            0.5,
+            6e9,
+            "native",
+        )
+    )
+    rows.append(
+        (
+            "B",
+            0,
+            1,
+            0.5,
+            1.5,
+            0.4,
+            40.0,
+            "native",
+            0.3,
+            30.0,
+            "native",
+            0.5,
+            6e9,
+            "native",
+        )
+    )
     # Region A: a single cell with all three weights present
-    rows.append(("A", 5, 5, 5.5, 5.5, 1.0, 100.0, "native", 1.0, 200.0, "native", 1.0, 1e10, "native"))
+    rows.append(
+        (
+            "A",
+            5,
+            5,
+            5.5,
+            5.5,
+            1.0,
+            100.0,
+            "native",
+            1.0,
+            200.0,
+            "native",
+            1.0,
+            1e10,
+            "native",
+        )
+    )
     # Region C: zero crop -> NaN cropwt under 'nan' policy
-    rows.append(("C", 10, 10, 10.5, 10.5, 0.5, 50.0, "native", 0.5, 100.0, "native", float("nan"), 0.0, "nan"))
-    rows.append(("C", 10, 11, 10.5, 11.5, 0.5, 50.0, "native", 0.5, 100.0, "native", float("nan"), 0.0, "nan"))
+    rows.append(
+        (
+            "C",
+            10,
+            10,
+            10.5,
+            10.5,
+            0.5,
+            50.0,
+            "native",
+            0.5,
+            100.0,
+            "native",
+            float("nan"),
+            0.0,
+            "nan",
+        )
+    )
+    rows.append(
+        (
+            "C",
+            10,
+            11,
+            10.5,
+            11.5,
+            0.5,
+            50.0,
+            "native",
+            0.5,
+            100.0,
+            "native",
+            float("nan"),
+            0.0,
+            "nan",
+        )
+    )
     df = pd.DataFrame(
         rows,
         columns=[
-            "hierid", "cell_ix", "cell_iy", "cell_lon", "cell_lat",
-            "areawt", "area_raw", "area_method",
-            "popwt", "pop_raw", "pop_method",
-            "cropwt", "crop_raw", "crop_method",
+            "hierid",
+            "cell_ix",
+            "cell_iy",
+            "cell_lon",
+            "cell_lat",
+            "areawt",
+            "area_raw",
+            "area_method",
+            "popwt",
+            "pop_raw",
+            "pop_method",
+            "cropwt",
+            "crop_raw",
+            "crop_method",
         ],
     )
     return df

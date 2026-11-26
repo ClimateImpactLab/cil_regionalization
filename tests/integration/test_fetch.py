@@ -6,6 +6,7 @@ download links). The artifact served is a real parquet and manifest pair
 with a recorded output checksum, so the content verification path is the
 same one a Zenodo download will take. No network access is required.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -51,9 +52,7 @@ def _artifact_bytes(tmp_path: Path) -> tuple[bytes, bytes]:
         "source_mode": "polygons",
         "regions_version": "targets-v1",
         "source_version": "units-v1",
-        "outputs": {
-            "weights.parquet": hashlib.sha256(parquet_bytes).hexdigest()
-        },
+        "outputs": {"weights.parquet": hashlib.sha256(parquet_bytes).hexdigest()},
     }
     return parquet_bytes, json.dumps(manifest).encode()
 
@@ -67,9 +66,7 @@ class _Server:
         # Sizes and checksums as declared in record metadata; tests
         # override these to simulate truncation and corruption.
         self.declared_sizes = {k: len(v) for k, v in files.items()}
-        self.declared_md5 = {
-            k: hashlib.md5(v).hexdigest() for k, v in files.items()
-        }
+        self.declared_md5 = {k: hashlib.md5(v).hexdigest() for k, v in files.items()}
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -94,9 +91,7 @@ class _Server:
                 self.end_headers()
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.thread = threading.Thread(
-            target=self.httpd.serve_forever, daemon=True
-        )
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
 
     @property
@@ -126,9 +121,7 @@ class _Server:
 @pytest.fixture()
 def served(tmp_path):
     parquet, manifest = _artifact_bytes(tmp_path)
-    server = _Server(
-        {"weights.parquet": parquet, "weights.manifest.json": manifest}
-    )
+    server = _Server({"weights.parquet": parquet, "weights.manifest.json": manifest})
     yield server
     server.stop()
 
@@ -200,9 +193,7 @@ class TestFailurePaths:
         with pytest.raises(UnknownArtifactError, match="registry knows"):
             fetch_weights("no-such-artifact", cache_dir=tmp_path / "cache")
 
-    def test_truncated_download_raises_and_leaves_no_cache(
-        self, served, tmp_path
-    ):
+    def test_truncated_download_raises_and_leaves_no_cache(self, served, tmp_path):
         served.declared_sizes["weights.parquet"] += 100
         cache = tmp_path / "cache"
         with pytest.raises(IncompleteDownloadError, match="incomplete"):
@@ -244,17 +235,13 @@ class TestFailurePaths:
             )
         assert list_cached(cache) == []
 
-    def test_manifest_without_outputs_fails_before_parquet(
-        self, served, tmp_path
-    ):
+    def test_manifest_without_outputs_fails_before_parquet(self, served, tmp_path):
         doc = json.loads(served.files["weights.manifest.json"])
         del doc["outputs"]
         body = json.dumps(doc).encode()
         served.files["weights.manifest.json"] = body
         served.declared_sizes["weights.manifest.json"] = len(body)
-        served.declared_md5["weights.manifest.json"] = hashlib.md5(
-            body
-        ).hexdigest()
+        served.declared_md5["weights.manifest.json"] = hashlib.md5(body).hexdigest()
         with pytest.raises(FetchError, match="no output checksum"):
             fetch_weights(
                 "test-artifact",

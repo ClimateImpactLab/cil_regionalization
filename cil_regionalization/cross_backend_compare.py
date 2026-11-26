@@ -30,6 +30,7 @@ Run instructions for the RCC use the three-line env::
     module load python
     source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -105,8 +106,7 @@ def compare_outputs(
         missing -= set(f.columns)
         if missing:
             raise ValueError(
-                f"compare_outputs: {label} frame missing columns "
-                f"{sorted(missing)}"
+                f"compare_outputs: {label} frame missing columns {sorted(missing)}"
             )
 
     cols = list(_JOIN_KEYS) + [weight]
@@ -118,7 +118,10 @@ def compare_outputs(
     by_region = joined["hierid"]
     region_class = pd.DataFrame(
         {
-            "local_native": joined["wt_local"].notna().groupby(by_region, sort=False).any(),
+            "local_native": joined["wt_local"]
+            .notna()
+            .groupby(by_region, sort=False)
+            .any(),
             "bq_native": joined["wt_bq"].notna().groupby(by_region, sort=False).any(),
         }
     )
@@ -127,26 +130,20 @@ def compare_outputs(
     n_both_native = int(
         (region_class["local_native"] & region_class["bq_native"]).sum()
     )
-    n_both_nan = int(
-        (~region_class["local_native"] & ~region_class["bq_native"]).sum()
-    )
+    n_both_nan = int((~region_class["local_native"] & ~region_class["bq_native"]).sum())
     # "local_only" = present in local, absent (NaN-everywhere) in BQ.
     # The frames may not even cover the same hierid set, hence the
     # outer-join semantics.
     n_local_only = int(
         (region_class["local_native"] & ~region_class["bq_native"]).sum()
     )
-    n_bq_only = int(
-        (~region_class["local_native"] & region_class["bq_native"]).sum()
-    )
+    n_bq_only = int((~region_class["local_native"] & region_class["bq_native"]).sum())
 
     both_native_ids = region_class.index[
         region_class["local_native"] & region_class["bq_native"]
     ]
     sub = joined.loc[joined["hierid"].isin(both_native_ids)].copy()
-    sub["delta"] = (
-        sub["wt_local"].fillna(0.0) - sub["wt_bq"].fillna(0.0)
-    ).abs()
+    sub["delta"] = (sub["wt_local"].fillna(0.0) - sub["wt_bq"].fillna(0.0)).abs()
     per_region_delta = sub.groupby("hierid", sort=False)["delta"].max()
     if len(per_region_delta) > 0:
         delta_median = float(per_region_delta.median())

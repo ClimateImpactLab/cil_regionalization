@@ -1,6 +1,7 @@
 """The data scripts of the examples run on the cluster, against files
 this suite does not have. The parts that need no cluster file run here
 on synthetic ones."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -28,7 +29,9 @@ def test_the_smme_weights_are_copied_from_the_file_named(tmp_path, monkeypatch, 
     with the mount fallback."""
     script = _script(name)
     table = tmp_path / "smme.tsv"
-    table.write_text("quantile\tmodel\tweight\textra\n1\tccsm4\t0.25\tx\n2\tgfdl-cm3\t0.75\ty\n")
+    table.write_text(
+        "quantile\tmodel\tweight\textra\n1\tccsm4\t0.25\tx\n2\tgfdl-cm3\t0.75\ty\n"
+    )
     monkeypatch.setattr(script, "SMME", table)
     monkeypatch.setattr(script, "DATA", tmp_path)
     script.write_smme()

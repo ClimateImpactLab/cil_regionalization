@@ -45,6 +45,7 @@ log naming the applied default and the alternatives. The threshold is
 deliberate: a single fallback group is rarely worth interrupting for;
 a dozen is.
 """
+
 from __future__ import annotations
 
 import logging
@@ -116,17 +117,17 @@ def compute_native_weights(
     out[raw_column(weight_name)] = out[raw_col]
     out[method_column(weight_name)] = "native"
     out = out.drop(columns=["_total"])
-    cols = keys + source_cols + [
-        weight_column(weight_name),
-        raw_column(weight_name),
-        method_column(weight_name),
-    ]
-    sort_keys = keys + list(source_units.key_columns)
-    return (
-        out[cols]
-        .sort_values(sort_keys)
-        .reset_index(drop=True)
+    cols = (
+        keys
+        + source_cols
+        + [
+            weight_column(weight_name),
+            raw_column(weight_name),
+            method_column(weight_name),
+        ]
     )
+    sort_keys = keys + list(source_units.key_columns)
+    return out[cols].sort_values(sort_keys).reset_index(drop=True)
 
 
 def apply_fallback(
@@ -152,11 +153,17 @@ def apply_fallback(
     keys = list(id_fields)
     source_cols = list(source_units.columns)
     source_keys = list(source_units.key_columns)
-    if not set(keys + source_cols + ["areawt", "area_raw"]).issubset(area_weights.columns):
-        missing = sorted(set(keys + source_cols + ["areawt", "area_raw"]) - set(area_weights.columns))
+    if not set(keys + source_cols + ["areawt", "area_raw"]).issubset(
+        area_weights.columns
+    ):
+        missing = sorted(
+            set(keys + source_cols + ["areawt", "area_raw"]) - set(area_weights.columns)
+        )
         raise ValueError(f"apply_fallback: area_weights missing columns {missing}")
     if not set(keys + source_keys + [raw_col]).issubset(raw_per_cell.columns):
-        missing = sorted(set(keys + source_keys + [raw_col]) - set(raw_per_cell.columns))
+        missing = sorted(
+            set(keys + source_keys + [raw_col]) - set(raw_per_cell.columns)
+        )
         raise ValueError(f"apply_fallback: raw_per_cell missing columns {missing}")
 
     join_keys = keys + source_keys
@@ -164,11 +171,15 @@ def apply_fallback(
 
     raw_group_set = {
         tuple(row)
-        for row in raw_per_cell[group].drop_duplicates().itertuples(index=False, name=None)
+        for row in raw_per_cell[group]
+        .drop_duplicates()
+        .itertuples(index=False, name=None)
     }
     area_group_set = {
         tuple(row)
-        for row in area_weights[group].drop_duplicates().itertuples(index=False, name=None)
+        for row in area_weights[group]
+        .drop_duplicates()
+        .itertuples(index=False, name=None)
     }
     missing = sorted(raw_group_set - area_group_set)
     if missing:
@@ -251,16 +262,16 @@ def apply_fallback(
             "_method": method_column(weight_name),
         }
     )
-    cols = keys + source_cols + [
-        weight_column(weight_name),
-        raw_column(weight_name),
-        method_column(weight_name),
-    ]
-    return (
-        out[cols]
-        .sort_values(keys + source_keys)
-        .reset_index(drop=True)
+    cols = (
+        keys
+        + source_cols
+        + [
+            weight_column(weight_name),
+            raw_column(weight_name),
+            method_column(weight_name),
+        ]
     )
+    return out[cols].sort_values(keys + source_keys).reset_index(drop=True)
 
 
 def count_methods(
@@ -279,9 +290,7 @@ def count_methods(
         return {}
     if id_fields is None:
         id_fields = _infer_id_columns(weights_frame, weight_name)
-    method_per_region = (
-        weights_frame.groupby(list(id_fields), sort=False)[col].first()
-    )
+    method_per_region = weights_frame.groupby(list(id_fields), sort=False)[col].first()
     return method_per_region.value_counts().to_dict()
 
 

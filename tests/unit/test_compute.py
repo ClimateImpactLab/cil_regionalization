@@ -1,4 +1,5 @@
 """Dask cluster context: off mode is a no-op; local mode yields a real Client."""
+
 from __future__ import annotations
 
 import pytest
@@ -23,7 +24,11 @@ class TestDaskOff:
 
         monkeypatch.setattr(
             "builtins.__import__",
-            lambda name, *a, **k: boom() if name.startswith(("dask", "distributed")) else __import__(name, *a, **k),
+            lambda name, *a, **k: (
+                boom()
+                if name.startswith(("dask", "distributed"))
+                else __import__(name, *a, **k)
+            ),
         )
 
         opts = LocalBackendOptions(dask="off")

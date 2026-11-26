@@ -112,6 +112,7 @@ Entry point: ``python -m cil_regionalization.pipelines.montecarlo
 out of scope; a scheduler template that calls this entry point lives
 under ``examples/``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -219,9 +220,7 @@ class TreeConfig(_Strict):
                     f"level {self.levels}"
                 )
             if all(value == EVERY_VALUE for value in cell):
-                raise ValueError(
-                    f"tree.exclude entry {cell} leaves out every leaf"
-                )
+                raise ValueError(f"tree.exclude entry {cell} leaves out every leaf")
             for level, value in zip(self.levels, cell):
                 if value != EVERY_VALUE and value not in self.expect[level]:
                     raise ValueError(
@@ -268,8 +267,7 @@ class DataConfig(_Strict):
             )
         if self.format != "netcdf" and self.region_labels is not None:
             raise ValueError(
-                "data.region_labels is only meaningful for "
-                "data.format='netcdf'"
+                "data.region_labels is only meaningful for data.format='netcdf'"
             )
         if self.format != "netcdf" and self.region_col is not None:
             raise ValueError(
@@ -395,8 +393,10 @@ class StatsConfig(_Strict):
         check_quantile_method(
             self.quantile_method, weighted=self.model_weights is not None
         )
-        if (self.model_weight_level is not None
-                and self.model_weight_level not in self.sample_dims):
+        if (
+            self.model_weight_level is not None
+            and self.model_weight_level not in self.sample_dims
+        ):
             raise ValueError(
                 f"stats.model_weight_level {self.model_weight_level!r} must "
                 f"be one of stats.sample_dims {self.sample_dims}"
@@ -458,8 +458,7 @@ class StatsConfig(_Strict):
                 "equally."
             )
         unpooled = [
-            name for name in self.warming_levels.member
-            if name not in self.sample_dims
+            name for name in self.warming_levels.member if name not in self.sample_dims
         ]
         if unpooled:
             raise ValueError(
@@ -551,22 +550,27 @@ class MonteCarloPipelineConfig(_Strict):
 
     @model_validator(mode="after")
     def _subtract_has_no_denominator(self) -> "MonteCarloPipelineConfig":
-        if (self.tree.subtract_filename is not None
-                and self.data.denominator_col is not None):
+        if (
+            self.tree.subtract_filename is not None
+            and self.data.denominator_col is not None
+        ):
             raise ValueError(
                 "tree.subtract_filename with data.denominator_col is not "
                 "supported: differencing a ratio's numerator and denominator "
                 "is a different operation from differencing a value"
             )
-        if (self.stats.model_weight_level is not None
-                and self.stats.model_weight_level not in self.tree.levels):
+        if (
+            self.stats.model_weight_level is not None
+            and self.stats.model_weight_level not in self.tree.levels
+        ):
             raise ValueError(
                 f"stats.model_weight_level {self.stats.model_weight_level!r} "
                 f"must be a tree level {self.tree.levels}"
             )
         if self.stats.warming_levels is not None:
             strangers = [
-                name for name in self.stats.warming_levels.member
+                name
+                for name in self.stats.warming_levels.member
                 if name not in self.tree.levels
             ]
             if strangers:
@@ -658,9 +662,7 @@ class PipelineResult:
     paths: dict[str, str] = field(default_factory=dict)
 
 
-def resolve_plan(
-    cfg: MonteCarloPipelineConfig, stage: Stage = "all"
-) -> PipelinePlan:
+def resolve_plan(cfg: MonteCarloPipelineConfig, stage: Stage = "all") -> PipelinePlan:
     """Expand the declared tree into leaves; report missing ones.
 
     Touches nothing: no directories are created and no files written.
@@ -689,16 +691,20 @@ def resolve_plan(
         elif cfg.weights is None:
             # passthrough has no targets to lay a leaf out by, and keeps
             # the file it always wrote
-            output_path = (
-                out_root / "leaves" / rel / f"aggregated_{cfg.tree.filename}"
-            )
+            output_path = out_root / "leaves" / rel / f"aggregated_{cfg.tree.filename}"
         else:
             output_path = (
-                out_root / "leaves" / rel
+                out_root
+                / "leaves"
+                / rel
                 / f"{Path(cfg.tree.filename).stem}.aggregated.parquet"
             )
-        leaf = Leaf(values=tuple(combo), path=path, output_path=output_path,
-                    subtract_path=subtract_path)
+        leaf = Leaf(
+            values=tuple(combo),
+            path=path,
+            output_path=output_path,
+            subtract_path=subtract_path,
+        )
         leaves.append(leaf)
         if stage == "reduce":
             # the source tree is not opened, only the leaf files
@@ -761,9 +767,7 @@ def run_pipeline(
         warming = _warming_levels(cfg, plan)
     if dry_run:
         if by_blocks:
-            return _with_notes(
-                plan, _blocks_before_aggregation(cfg, plan, warming)
-            )
+            return _with_notes(plan, _blocks_before_aggregation(cfg, plan, warming))
         return plan
     if plan.missing:
         shown = [str(m.path) for m in plan.missing[:10]]
@@ -827,9 +831,11 @@ def run_pipeline(
     # the log states which code ran: an editable install picks up
     # whatever is on disk at launch, so the file path plus this marker
     # ties a run to a pipeline build
-    print(f"pipeline code: {Path(__file__).resolve()} "
-          f"(worker-init, per-leaf weights, memory instrumentation)",
-          flush=True)
+    print(
+        f"pipeline code: {Path(__file__).resolve()} "
+        f"(worker-init, per-leaf weights, memory instrumentation)",
+        flush=True,
+    )
     _log_memory("start")
 
     outcomes: list[dict] = []
@@ -872,11 +878,9 @@ def run_pipeline(
             initargs=initargs,
             maxtasksperchild=16,
         ) as pool:
-            for outcome in pool.imap_unordered(_process_leaf, tasks,
-                                               chunksize=1):
+            for outcome in pool.imap_unordered(_process_leaf, tasks, chunksize=1):
                 collect(outcome)
-                worker_peak = max(worker_peak,
-                                  outcome.get("worker_peak_gb") or 0.0)
+                worker_peak = max(worker_peak, outcome.get("worker_peak_gb") or 0.0)
                 if len(outcomes) % 250 == 0 or len(outcomes) == len(tasks):
                     _log_memory(
                         f"leaves {len(outcomes)}/{len(tasks)}, "
@@ -921,8 +925,13 @@ def run_pipeline(
         del outcomes
         try:
             return _run_reduce(
-                cfg, plan, dry_run=False, verify_leaves=False,
-                model_weights=model_weights, warming=warming, stage="all",
+                cfg,
+                plan,
+                dry_run=False,
+                verify_leaves=False,
+                model_weights=model_weights,
+                warming=warming,
+                stage="all",
             )
         except (ValueError, RuntimeError) as error:
             # a subclass may not take a message alone
@@ -983,7 +992,8 @@ def run_pipeline(
         "artifact_sha256": artifact_sha256,
         "weight": cfg.weights.weight if cfg.weights is not None else None,
         "spatial_aggregation": (
-            "weighted" if cfg.weights is not None
+            "weighted"
+            if cfg.weights is not None
             else "none: passthrough per source region"
         ),
         "kind": cfg.data.kind,
@@ -1079,16 +1089,22 @@ def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
         raise ValueError(
             f"unknown stage {stage!r}; expected 'all', 'aggregate' or 'reduce'"
         )
-    if (cfg.stats.time_reduction != "window_mean" and stage != "aggregate"
-            and cfg.output.write_reduced):
+    if (
+        cfg.stats.time_reduction != "window_mean"
+        and stage != "aggregate"
+        and cfg.output.write_reduced
+    ):
         raise ValueError(
             f"stats.time_reduction = {cfg.stats.time_reduction!r} cannot "
             f"write the reduced file. Its rows are the leaves' own rows, one "
             f"block of targets at a time, and the leaf files already hold "
             f"them. Set output.write_reduced = false."
         )
-    if (cfg.stats.warming_levels is not None and stage != "aggregate"
-            and cfg.output.write_reduced):
+    if (
+        cfg.stats.warming_levels is not None
+        and stage != "aggregate"
+        and cfg.output.write_reduced
+    ):
         raise ValueError(
             "[stats.warming_levels] cannot write the reduced file. Its "
             "statistics come from the leaf files, one block of targets at "
@@ -1202,9 +1218,7 @@ def _claimed_elsewhere(leaves_dir: Path, own: Path, files: list[str]) -> None:
         if other == own:
             continue
         document = json.loads(other.read_text())
-        taken = sorted(
-            {entry["file"] for entry in document["leaves"]} & set(files)
-        )
+        taken = sorted({entry["file"] for entry in document["leaves"]} & set(files))
         if taken:
             raise ValueError(
                 f"{len(taken)} leaf files this run would write belong to the "
@@ -1508,9 +1522,7 @@ def _reduce_request(
     if warming is None:
         labels = list(dict.fromkeys(label for label, _, _ in common))
         for leaf in leaves:
-            labels += [
-                label for label, _, _ in leaf.windows if label not in labels
-            ]
+            labels += [label for label, _, _ in leaf.windows if label not in labels]
     else:
         labels = list(_level_windows(cfg))
     request = ReduceRequest(
@@ -1564,9 +1576,7 @@ def _from_leaf_files(cfg: MonteCarloPipelineConfig) -> list[str]:
     """The options set that take the statistics from the leaf files
     under every stage."""
     shape = cfg.stats.time_reduction
-    return (
-        [f"stats.time_reduction = {shape!r}"] if shape != "window_mean" else []
-    ) + (
+    return ([f"stats.time_reduction = {shape!r}"] if shape != "window_mean" else []) + (
         ["[stats.warming_levels]"] if cfg.stats.warming_levels is not None else []
     )
 
@@ -1575,8 +1585,7 @@ def _bin_member(cfg: MonteCarloPipelineConfig, values) -> tuple[str, ...]:
     """The member of the temperature table a leaf belongs to, read off
     its level values."""
     return tuple(
-        values[cfg.tree.levels.index(name)]
-        for name in cfg.stats.warming_levels.member
+        values[cfg.tree.levels.index(name)] for name in cfg.stats.warming_levels.member
     )
 
 
@@ -1591,7 +1600,8 @@ def _level_windows(cfg: MonteCarloPipelineConfig) -> dict[str, tuple[float, str]
     warming = cfg.stats.warming_levels
     return {
         _level_window(level, _window_label(*period.impact_span)): (
-            float(level), _window_label(*period.impact_span),
+            float(level),
+            _window_label(*period.impact_span),
         )
         for period in warming.periods
         for level in sorted(warming.levels)
@@ -1661,8 +1671,7 @@ def _verify_leaves(leaves_dir: Path, entries: list[dict], n_workers: int) -> Non
             f"the leaves manifest has (first: {bad[:5]}). They were changed "
             f"after they were written. No statistics were written."
         )
-    print(f"leaves: {len(entries)} files hash to what the manifest has",
-          flush=True)
+    print(f"leaves: {len(entries)} files hash to what the manifest has", flush=True)
 
 
 # the model weights are still to be read
@@ -1716,8 +1725,7 @@ def _blocks_before_aggregation(
     except (ValueError, OSError) as error:
         return [
             after,
-            f"the leaves on disk now do not say how the blocks will be "
-            f"sized: {error}",
+            f"the leaves on disk now do not say how the blocks will be sized: {error}",
         ]
     return [after, "with the leaves on disk now, which this run writes again:"] + lines
 
@@ -1797,8 +1805,9 @@ def _run_reduce(
         stats.insert(
             list(stats.columns).index("window"),
             "warming_level",
-            labels.map({label: level for label, (level, _) in of_label.items()})
-            .astype(np.float64),
+            labels.map({label: level for label, (level, _) in of_label.items()}).astype(
+                np.float64
+            ),
         )
         stats["window"] = labels.map(
             {label: window for label, (_, window) in of_label.items()}
@@ -1842,7 +1851,8 @@ def _run_reduce(
         ],
         "sample_dims": cfg.stats.sample_dims,
         "windows": (
-            [] if cfg.stats.time_reduction == "per_year"
+            []
+            if cfg.stats.time_reduction == "per_year"
             else [_window_label(lo, hi) for lo, hi in _windows(cfg)]
         ),
         "quantiles": cfg.stats.quantiles,
@@ -1893,8 +1903,7 @@ def _unlisted_report(leaves_dir: Path) -> str:
     unlisted = sorted(
         path
         for path in leaves_dir.rglob("*")
-        if path.is_file()
-        and path.relative_to(leaves_dir).as_posix() not in listed
+        if path.is_file() and path.relative_to(leaves_dir).as_posix() not in listed
     )
     if not unlisted:
         return f"leaves: every file under {leaves_dir} is in a leaves manifest"
@@ -1984,7 +1993,10 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
             )
     for column in frame.columns:
         if column in declared or column in (
-            cfg.data.value_col, "n_members", "n_sample", "n_bin_members",
+            cfg.data.value_col,
+            "n_members",
+            "n_sample",
+            "n_bin_members",
             "model_weight",
         ):
             continue
@@ -2019,8 +2031,10 @@ def _current_rss_gb() -> Optional[float]:
 def _cgroup_gb() -> Optional[float]:
     """The job cgroup's memory charge in GB, the number the OOM killer
     compares against the limit; includes every worker and page cache."""
-    for path in ("/sys/fs/cgroup/memory.current",
-                 "/sys/fs/cgroup/memory/memory.usage_in_bytes"):
+    for path in (
+        "/sys/fs/cgroup/memory.current",
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    ):
         try:
             with open(path) as f:
                 return int(f.read()) / 1e9
@@ -2121,10 +2135,9 @@ def _subtract_leaf(
             f"subtract file {path} covers {len(merged)} of {len(frame)} "
             f"rows; the two files must cover the same regions and years"
         )
-    merged[data_cfg.value_col] = (
-        merged[data_cfg.value_col].astype("float64")
-        - merged[f"{data_cfg.value_col}_subtract"].astype("float64")
-    )
+    merged[data_cfg.value_col] = merged[data_cfg.value_col].astype("float64") - merged[
+        f"{data_cfg.value_col}_subtract"
+    ].astype("float64")
     return merged.drop(columns=[f"{data_cfg.value_col}_subtract"])
 
 
@@ -2229,8 +2242,7 @@ def _process_leaf(task: tuple) -> dict:
         # leaf of the time and the value alone has nothing else to
         # group by, and keeps its labels first.
         labels_first = all(
-            c in (stats_cfg.time_col, data_cfg.value_col)
-            for c in out_frame.columns
+            c in (stats_cfg.time_col, data_cfg.value_col) for c in out_frame.columns
         )
         reduced = window_means(
             _labelled(out_frame, labels) if labels_first else out_frame,
@@ -2246,10 +2258,12 @@ def _process_leaf(task: tuple) -> dict:
             # columns before thousands of reduced leaves concatenate in
             # the parent. Categories come out sorted, so every leaf of
             # one tree shares the same dtype and concat keeps it.
-            if (data_cfg.region_col is not None
-                    and data_cfg.region_col in reduced.columns):
-                reduced[data_cfg.region_col] = (
-                    reduced[data_cfg.region_col].astype("category")
+            if (
+                data_cfg.region_col is not None
+                and data_cfg.region_col in reduced.columns
+            ):
+                reduced[data_cfg.region_col] = reduced[data_cfg.region_col].astype(
+                    "category"
                 )
             reduced["window"] = reduced["window"].astype("category")
         if _WORKER_STATE.get("model_weights") is not None:
@@ -2257,9 +2271,7 @@ def _process_leaf(task: tuple) -> dict:
             # column here; attaching it per leaf replaces a merge over
             # the full combined frame that dominated end-of-run memory
             value = labels[stats_cfg.model_weight_level]
-            reduced["model_weight"] = _WORKER_STATE["model_weights"].weight_of(
-                value
-            )
+            reduced["model_weight"] = _WORKER_STATE["model_weights"].weight_of(value)
 
         return {
             "leaf": list(leaf.values),

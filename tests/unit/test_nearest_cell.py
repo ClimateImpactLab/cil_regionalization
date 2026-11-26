@@ -1,4 +1,5 @@
 """Nearest-cell synthesis: representative-point binning, schema, lookup."""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -29,9 +30,7 @@ class TestSynthesizeRows:
     def test_single_region_one_row(self):
         grid = _grid_1deg_180()
         geom = box(0.1, 0.1, 0.3, 0.3)
-        out = synthesize_rows(
-            {("A",): geom}, grid, ["region_id"], ["pop", "area"]
-        )
+        out = synthesize_rows({("A",): geom}, grid, ["region_id"], ["pop", "area"])
         assert len(out) == 1
         row = out.iloc[0]
         # representative_point of a unit box is its centroid (0.2, 0.2)
@@ -55,9 +54,7 @@ class TestSynthesizeRows:
             ("X",): box(10.1, 10.1, 10.3, 10.3),
             ("Y",): box(20.5, -30.5, 21.0, -30.0),
         }
-        out = synthesize_rows(
-            geoms, grid, ["region_id"], ["pop", "area"]
-        )
+        out = synthesize_rows(geoms, grid, ["region_id"], ["pop", "area"])
         assert sorted(out["region_id"]) == ["X", "Y"]
 
     def test_empty_geometry_skipped(self):
@@ -94,9 +91,7 @@ class TestSynthesizeRows:
     def test_multi_id_fields(self):
         grid = _grid_1deg_180()
         geoms = {("US", "1"): box(0, 0, 1, 1)}
-        out = synthesize_rows(
-            geoms, grid, ["country", "admin1"], ["pop", "area"]
-        )
+        out = synthesize_rows(geoms, grid, ["country", "admin1"], ["pop", "area"])
         assert len(out) == 1
         assert out.iloc[0]["country"] == "US"
         assert out.iloc[0]["admin1"] == "1"
@@ -143,9 +138,7 @@ class TestFindMissingRegions:
         assert find_missing_regions(df, requested, ["region_id"]) == set()
 
     def test_multi_id_fields(self):
-        df = pd.DataFrame(
-            {"country": ["US", "US"], "admin1": ["1", "2"]}
-        )
+        df = pd.DataFrame({"country": ["US", "US"], "admin1": ["1", "2"]})
         requested = {("US", "1"), ("US", "2"), ("CA", "5")}
         missing = find_missing_regions(df, requested, ["country", "admin1"])
         assert missing == {("CA", "5")}

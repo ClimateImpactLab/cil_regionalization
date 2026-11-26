@@ -20,6 +20,7 @@ tree's own priced gradient files. Means need no separate files: the
 response is linear in the coefficients, so the mean is the gradient
 times the coefficient vector from the release's csvv.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,11 +50,15 @@ def load_static():
     gammas = pd.read_parquet(DATA / "gammas.parquet")["gamma"].values
     factor = (
         pd.read_parquet(DATA / "wage_price_factor.parquet")
-        .set_index("hierid")["factor"].reindex(regions).values
+        .set_index("hierid")["factor"]
+        .reindex(regions)
+        .values
     )
     population = (
         pd.read_parquet(DATA / "population.parquet")
-        .set_index("hierid")["population"].reindex(regions).values
+        .set_index("hierid")["population"]
+        .reindex(regions)
+        .values
     )
     return regions, gcms, effects, vcv, gammas, factor, population
 
@@ -64,9 +69,7 @@ def load_weights() -> "cilreg.WeightsArtifact":
 
 def valued_states(weights, regions, gradient, vcv, gammas, factor):
     """Mean and sd of the valued effect per state, repaired dollars."""
-    targets, G = cilreg.aggregate_gradient(
-        weights, regions, gradient * factor[None, :]
-    )
+    targets, G = cilreg.aggregate_gradient(weights, regions, gradient * factor[None, :])
     stats = cilreg.delta_method(G, vcv, coefficients=gammas)
     out = pd.concat([targets, stats * DOLLARS_2019 / GJ_PER_KWH], axis=1)
     return out
@@ -90,9 +93,16 @@ def naive_valued_sd(weights, regions, gradient, vcv, factor):
     frame = weights.frame
     idx = {r: i for i, r in enumerate(regions)}
     rows = frame[frame["hierid"].isin(idx)]
-    var = rows.assign(
-        v=[per_region_var[idx[h]] * w ** 2
-           for h, w in zip(rows["hierid"], rows["popwt"])]
-    ).groupby(KEYS)["v"].sum().reset_index()
+    var = (
+        rows.assign(
+            v=[
+                per_region_var[idx[h]] * w**2
+                for h, w in zip(rows["hierid"], rows["popwt"])
+            ]
+        )
+        .groupby(KEYS)["v"]
+        .sum()
+        .reset_index()
+    )
     var["sd"] = np.sqrt(var["v"]) * DOLLARS_2019 / GJ_PER_KWH
     return var[KEYS + ["sd"]]

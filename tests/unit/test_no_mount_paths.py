@@ -11,6 +11,7 @@ Binary files count too: a stored manifest that recorded a Mac path
 leaks the same way. The needle is built from two pieces so this file
 does not match itself.
 """
+
 from __future__ import annotations
 
 import subprocess

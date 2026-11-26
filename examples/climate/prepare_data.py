@@ -32,6 +32,7 @@ It then redoes the work on the global files and checks that both
 countries come out exactly as they do from the crops: each cell's
 mean daily high and low, its days above 35 C, and its January mean.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -63,13 +64,14 @@ DATA = data.DATA
 KEYS = ["ISO", "ID_1"]
 WEIGHT_COLUMNS = {"pop": "popwt", "area": "areawt"}
 POLICIES = cilreg.SourceUnitPolicies(on_zero_weight="skip", on_unmatched="skip")
-FIELDS = ("tasmax_mean", "tasmin_mean", "tasmax_days_over_35c",
-          "tasmax_january_mean")
+FIELDS = ("tasmax_mean", "tasmin_mean", "tasmax_days_over_35c", "tasmax_january_mean")
 TARGETS = Path("/project/cil/gcp/impact_map_inputs/targets/gadm20/adm1.parquet")
 # display layer simplification, in degrees (about 1 km at the equator):
 # coarse enough to keep the file small, fine enough for province maps
 SIMPLIFY_DEG = 0.01
-IR_SHAPES = Path("/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp")
+IR_SHAPES = Path(
+    "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
+)
 ISOS = list(data.COUNTRIES)
 
 
@@ -108,21 +110,25 @@ def crop_weights() -> pd.DataFrame:
     (out / "weights.manifest.json").write_text(json.dumps(manifest, indent=1))
     for iso in ISOS:
         r = rows[rows["ISO"] == iso]
-        print(f"weights, {iso}: {len(r)} rows, "
-              f"{r[KEYS].drop_duplicates().shape[0]} units, "
-              f"{r[['cell_ix', 'cell_iy']].drop_duplicates().shape[0]} cells")
+        print(
+            f"weights, {iso}: {len(r)} rows, "
+            f"{r[KEYS].drop_duplicates().shape[0]} units, "
+            f"{r[['cell_ix', 'cell_iy']].drop_duplicates().shape[0]} cells"
+        )
     return rows
 
 
 def export_csv(rows: pd.DataFrame) -> None:
-    table = pd.DataFrame({
-        "ISO": rows["ISO"],
-        "ID_1": rows["ID_1"],
-        "pix_cent_x": rows["cell_lon"],
-        "pix_cent_y": rows["cell_lat"],
-        "popwt": rows["popwt"],
-        "areawt": rows["areawt"],
-    })
+    table = pd.DataFrame(
+        {
+            "ISO": rows["ISO"],
+            "ID_1": rows["ID_1"],
+            "pix_cent_x": rows["cell_lon"],
+            "pix_cent_y": rows["cell_lat"],
+            "popwt": rows["popwt"],
+            "areawt": rows["areawt"],
+        }
+    )
     table.to_csv(data.WEIGHTS_CSV, index=False)
     # the CSV holds every value exactly; pandas' default reader, which
     # from_table uses, can be off in the last digit, which never
@@ -131,16 +137,20 @@ def export_csv(rows: pd.DataFrame) -> None:
     fast = pd.read_csv(data.WEIGHTS_CSV)
     drift = 0.0
     for c in ("pix_cent_x", "pix_cent_y", "popwt", "areawt"):
-        assert np.array_equal(exact[c].to_numpy(), table[c].to_numpy()), \
+        assert np.array_equal(exact[c].to_numpy(), table[c].to_numpy()), (
             f"{c} does not round-trip through the CSV"
+        )
         drift = max(drift, float(np.abs(fast[c] - table[c]).max()))
-    print(f"csv: {len(table)} rows, exact on a round-trip parse; "
-          f"default parse within {drift:.1e}")
+    print(
+        f"csv: {len(table)} rows, exact on a round-trip parse; "
+        f"default parse within {drift:.1e}"
+    )
 
 
 def _ir_weights(table):
     return cilreg.WeightsArtifact.from_table(
-        table, id_fields=["hierid"], weights=WEIGHT_COLUMNS, source=BCSD_GRID)
+        table, id_fields=["hierid"], weights=WEIGHT_COLUMNS, source=BCSD_GRID
+    )
 
 
 def _check_fields(tasmax, tasmin) -> dict:
@@ -153,32 +163,41 @@ def _check_fields(tasmax, tasmin) -> dict:
     """
     january = tasmax.dates.astype("datetime64[M]") == np.datetime64(f"{data.YEAR}-01")
     assert january.sum() == 31
-    return {"tasmax_mean": tasmax.values.mean(axis=0, dtype="float64"),
-            "tasmin_mean": tasmin.values.mean(axis=0, dtype="float64"),
-            "tasmax_days_over_35c": (tasmax.values > 308.15).sum(axis=0).astype("float64"),
-            "tasmax_january_mean": tasmax.values[january].mean(axis=0, dtype="float64")}
+    return {
+        "tasmax_mean": tasmax.values.mean(axis=0, dtype="float64"),
+        "tasmin_mean": tasmin.values.mean(axis=0, dtype="float64"),
+        "tasmax_days_over_35c": (tasmax.values > 308.15).sum(axis=0).astype("float64"),
+        "tasmax_january_mean": tasmax.values[january].mean(axis=0, dtype="float64"),
+    }
 
 
 def _cropped_cells() -> pd.DataFrame:
     frames = []
     for iso in ISOS:
         tasmax, tasmin = (
-            read_bcsd_daily(str(data.daily_path(v, iso)), v,
-                            require_full_year=True)
-            for v in ("tasmax", "tasmin"))
-        frames.append(tasmax.to_cells(_check_fields(tasmax, tasmin),
-                                      grid=BCSD_GRID))
+            read_bcsd_daily(str(data.daily_path(v, iso)), v, require_full_year=True)
+            for v in ("tasmax", "tasmin")
+        )
+        frames.append(tasmax.to_cells(_check_fields(tasmax, tasmin), grid=BCSD_GRID))
     return pd.concat(frames, ignore_index=True)
 
 
 def _aggregate(weights, cells: pd.DataFrame, weight: str) -> pd.DataFrame:
     long = cells.melt(id_vars=["cell_ix", "cell_iy"], var_name="field")
     out = cilreg.apply_weights(
-        weights, long, kind="intensive", weight=weight,
-        data_version=BCSD_GRID, policies=POLICIES).frame
+        weights,
+        long,
+        kind="intensive",
+        weight=weight,
+        data_version=BCSD_GRID,
+        policies=POLICIES,
+    ).frame
     ids = list(weights.schema.id_fields)
-    return (out.pivot(index=ids, columns="field", values="value")
-            .reset_index().rename_axis(columns=None))
+    return (
+        out.pivot(index=ids, columns="field", values="value")
+        .reset_index()
+        .rename_axis(columns=None)
+    )
 
 
 def generate_ir_weights() -> pd.DataFrame:
@@ -189,9 +208,13 @@ def generate_ir_weights() -> pd.DataFrame:
     """
     start = time.perf_counter()
     subprocess.run(
-        [sys.executable, "-c",
-         "import sys; from cil_regionalization.cli import main; "
-         "sys.exit(main(['run', sys.argv[1]]))", str(data.IR_WEIGHTS_CONFIG)],
+        [
+            sys.executable,
+            "-c",
+            "import sys; from cil_regionalization.cli import main; "
+            "sys.exit(main(['run', sys.argv[1]]))",
+            str(data.IR_WEIGHTS_CONFIG),
+        ],
         check=True,
     )
     seconds = time.perf_counter() - start
@@ -202,14 +225,19 @@ def generate_ir_weights() -> pd.DataFrame:
     generated = set(frame["hierid"])
     assert generated == segment, (
         f"{len(generated - segment)} regions only in the generated weights, "
-        f"{len(segment - generated)} only in the segment weights")
+        f"{len(segment - generated)} only in the segment weights"
+    )
     for iso in ISOS:
         r = frame[frame["hierid"].str[:3] == iso]
-        print(f"generated impact region weights, {iso}: {len(r)} rows, "
-              f"{r['hierid'].nunique()} regions, "
-              f"{r[['cell_ix', 'cell_iy']].drop_duplicates().shape[0]} cells")
-    print(f"generated impact region weights: {seconds:.0f} s, "
-          f"peak memory {peak_gb:.2f} GB")
+        print(
+            f"generated impact region weights, {iso}: {len(r)} rows, "
+            f"{r['hierid'].nunique()} regions, "
+            f"{r[['cell_ix', 'cell_iy']].drop_duplicates().shape[0]} cells"
+        )
+    print(
+        f"generated impact region weights: {seconds:.0f} s, "
+        f"peak memory {peak_gb:.2f} GB"
+    )
     return frame
 
 
@@ -223,9 +251,11 @@ def crop_ir_table(path: Path) -> pd.DataFrame:
     frame = _ir_weights(data.IR_TABLE).frame
     for iso in ISOS:
         r = frame[frame["hierid"].str[:3] == iso]
-        print(f"impact region table, {iso}: {len(r)} rows, "
-              f"{r['hierid'].nunique()} regions, "
-              f"{r[['cell_ix', 'cell_iy']].drop_duplicates().shape[0]} cells")
+        print(
+            f"impact region table, {iso}: {len(r)} rows, "
+            f"{r['hierid'].nunique()} regions, "
+            f"{r[['cell_ix', 'cell_iy']].drop_duplicates().shape[0]} cells"
+        )
     print(f"impact region table: {data.IR_TABLE.stat().st_size / 1e6:.2f} MB")
     return frame
 
@@ -251,13 +281,16 @@ def crop_climate(rows: pd.DataFrame, iso: str) -> None:
             sl_lon = slice(ilon[0], ilon[-1] + 1)
             v = ds.variables[var]
             block = np.ma.filled(v[:, sl_lat, sl_lon], np.nan).astype("float32")
-            mask = np.array([[(la, lo) not in keep for lo in lon[sl_lon]]
-                             for la in lat[sl_lat]])
-            assert int((~mask).sum()) == len(keep), \
+            mask = np.array(
+                [[(la, lo) not in keep for lo in lon[sl_lon]] for la in lat[sl_lat]]
+            )
+            assert int((~mask).sum()) == len(keep), (
                 f"{iso}: some weighted cells fall outside the crop"
+            )
             block[:, mask] = np.nan
-            assert np.isfinite(block[:, ~mask]).all(), \
+            assert np.isfinite(block[:, ~mask]).all(), (
                 f"{iso} {var}: a weighted cell is missing in the source"
+            )
             tvar = ds.variables["time"]
             n_days = len(tvar)
             with netCDF4.Dataset(dst, "w", format=ds.file_format) as out:
@@ -271,8 +304,9 @@ def crop_climate(rows: pd.DataFrame, iso: str) -> None:
                 out.createDimension("lat", sl_lat.stop - sl_lat.start)
                 out.createDimension("lon", sl_lon.stop - sl_lon.start)
                 t = out.createVariable("time", tvar.dtype, ("time",))
-                t.setncatts({k: tvar.getncattr(k) for k in tvar.ncattrs()
-                             if k != "bounds"})
+                t.setncatts(
+                    {k: tvar.getncattr(k) for k in tvar.ncattrs() if k != "bounds"}
+                )
                 t[:] = tvar[:]
                 for name, sl in (("lat", sl_lat), ("lon", sl_lon)):
                     src_v = ds.variables[name]
@@ -280,33 +314,53 @@ def crop_climate(rows: pd.DataFrame, iso: str) -> None:
                     c.setncatts({k: src_v.getncattr(k) for k in src_v.ncattrs()})
                     c[:] = src_v[sl]
                 fill = v.getncattr("_FillValue")
-                d = out.createVariable(var, "f4", ("time", "lat", "lon"),
-                                       zlib=True, complevel=9, shuffle=True,
-                                       fill_value=fill)
-                d.setncatts({k: v.getncattr(k) for k in v.ncattrs()
-                             if k not in ("_FillValue", "missing_value")})
+                d = out.createVariable(
+                    var,
+                    "f4",
+                    ("time", "lat", "lon"),
+                    zlib=True,
+                    complevel=9,
+                    shuffle=True,
+                    fill_value=fill,
+                )
+                d.setncatts(
+                    {
+                        k: v.getncattr(k)
+                        for k in v.ncattrs()
+                        if k not in ("_FillValue", "missing_value")
+                    }
+                )
                 d.missing_value = fill
                 d[:] = np.ma.masked_invalid(block)
-        print(f"{iso} {var}: {n_days} days, {block.shape[1]} x "
-              f"{block.shape[2]} cells, {int((~mask).sum())} kept, "
-              f"{dst.stat().st_size / 1e6:.1f} MB")
+        print(
+            f"{iso} {var}: {n_days} days, {block.shape[1]} x "
+            f"{block.shape[2]} cells, {int((~mask).sum())} kept, "
+            f"{dst.stat().st_size / 1e6:.1f} MB"
+        )
 
 
 def build_display_layer(targets: Path) -> None:
     """The two countries' province outlines, simplified, for the maps."""
     shapes = gpd.read_parquet(targets)
     shapes = shapes[shapes["ISO"].isin(ISOS)][["ISO", "ID_1", "NAME_1", "geometry"]]
-    units = set(map(tuple, pd.read_parquet(
-        data.WEIGHTS / "weights.parquet", columns=KEYS
-    ).drop_duplicates().to_numpy()))
+    units = set(
+        map(
+            tuple,
+            pd.read_parquet(data.WEIGHTS / "weights.parquet", columns=KEYS)
+            .drop_duplicates()
+            .to_numpy(),
+        )
+    )
     found = set(zip(shapes["ISO"], shapes["ID_1"]))
     assert found == units, "display layer and weights disagree on the units"
     shapes["geometry"] = shapes.geometry.simplify(SIMPLIFY_DEG)
     shapes = shapes.reset_index(drop=True)
     shapes.to_parquet(data.PROVINCE_OUTLINES)
     counts = shapes.groupby("ISO").size().to_dict()
-    print(f"display layer: {counts}, simplified at {SIMPLIFY_DEG} degrees, "
-          f"{data.PROVINCE_OUTLINES.stat().st_size / 1e6:.2f} MB")
+    print(
+        f"display layer: {counts}, simplified at {SIMPLIFY_DEG} degrees, "
+        f"{data.PROVINCE_OUTLINES.stat().st_size / 1e6:.2f} MB"
+    )
 
 
 def build_ir_display_layer(shapes_path: Path) -> None:
@@ -321,17 +375,22 @@ def build_ir_display_layer(shapes_path: Path) -> None:
     shapes = shapes[shapes["hierid"].str[:3].isin(ISOS)][["hierid", "geometry"]]
     regions = set(pd.read_parquet(data.IR_TABLE, columns=["hierid"])["hierid"])
     found = set(shapes["hierid"])
-    assert regions <= found, \
+    assert regions <= found, (
         f"{len(regions - found)} regions in the table have no outline"
-    print(f"impact region outlines: {len(found - regions)} outlines with no "
-          f"rows in the table: {sorted(found - regions)}")
+    )
+    print(
+        f"impact region outlines: {len(found - regions)} outlines with no "
+        f"rows in the table: {sorted(found - regions)}"
+    )
     shapes["geometry"] = shapes.geometry.simplify(SIMPLIFY_DEG)
     assert not shapes.geometry.is_empty.any(), "simplifying emptied a region"
     shapes = shapes.reset_index(drop=True)
     shapes.to_parquet(data.IR_OUTLINES)
     counts = shapes.groupby(shapes["hierid"].str[:3]).size().to_dict()
-    print(f"impact region layer: {counts}, simplified at {SIMPLIFY_DEG} "
-          f"degrees, {data.IR_OUTLINES.stat().st_size / 1e6:.2f} MB")
+    print(
+        f"impact region layer: {counts}, simplified at {SIMPLIFY_DEG} "
+        f"degrees, {data.IR_OUTLINES.stat().st_size / 1e6:.2f} MB"
+    )
 
 
 def _collapse_wrapped_segments(path: Path) -> pd.DataFrame:
@@ -351,12 +410,14 @@ def _collapse_wrapped_segments(path: Path) -> pd.DataFrame:
     key = ["hierid", "pix_cent_x", "pix_cent_y"]
     dup = t.duplicated(subset=key, keep=False)
     regions = sorted(t.loc[dup, "hierid"].unique())
-    assert not any(r[:3] in ISOS for r in regions), \
+    assert not any(r[:3] in ISOS for r in regions), (
         "a cropped country has wrapped segments"
-    out = (t.groupby(key, sort=False)[["popwt", "areawt"]]
-           .sum(min_count=1).reset_index())
-    print(f"segment weights: {len(t) - len(out)} rows collapsed from "
-          f"{int(dup.sum())} duplicated (hierid, cell) rows, in {regions}")
+    )
+    out = t.groupby(key, sort=False)[["popwt", "areawt"]].sum(min_count=1).reset_index()
+    print(
+        f"segment weights: {len(t) - len(out)} rows collapsed from "
+        f"{int(dup.sum())} duplicated (hierid, cell) rows, in {regions}"
+    )
     return out
 
 
@@ -369,10 +430,11 @@ def _restrict(weights, cells: pd.DataFrame, country):
     frame = weights.frame
     present = frame.set_index(key).index.isin(cells.set_index(key).index)
     lost = frame.loc[~present]
-    assert not country(lost).isin(ISOS).any(), \
-        "a cropped country's cell has no data"
-    print(f"global file: {lost[key].drop_duplicates().shape[0]} weighted "
-          f"cells without data, none in {ISOS}")
+    assert not country(lost).isin(ISOS).any(), "a cropped country's cell has no data"
+    print(
+        f"global file: {lost[key].drop_duplicates().shape[0]} weighted "
+        f"cells without data, none in {ISOS}"
+    )
     return dataclasses.replace(weights, frame=frame.loc[present])
 
 
@@ -382,8 +444,7 @@ def _compare(full, cropped, cells, c_cells, ids, country, label) -> None:
         a = _aggregate(full, cells, weight)
         a = a[country(a).isin(ISOS)]
         b = _aggregate(cropped, c_cells, weight)
-        both = a.merge(b, on=ids, suffixes=("_full", "_crop"),
-                       validate="one_to_one")
+        both = a.merge(b, on=ids, suffixes=("_full", "_crop"), validate="one_to_one")
         assert len(both) == len(b)
         if len(both) < n_units:
             # a unit with no usable weight under this weighting (all its
@@ -391,23 +452,25 @@ def _compare(full, cropped, cells, c_cells, ids, country, label) -> None:
             known = cropped.frame[ids].drop_duplicates()
             absent = known.merge(both[ids], on=ids, how="left", indicator=True)
             absent = absent.loc[absent["_merge"] == "left_only", ids]
-            print(f"{label}, {weight} weights: {len(absent)} units carry no "
-                  f"{weight} weight: {absent.to_dict('records')}")
+            print(
+                f"{label}, {weight} weights: {len(absent)} units carry no "
+                f"{weight} weight: {absent.to_dict('records')}"
+            )
         for col in FIELDS:
             diff = float((both[f"{col}_full"] - both[f"{col}_crop"]).abs().max())
-            print(f"{label}, full product vs crop, {weight} weights, {col}: "
-                  f"largest difference {diff:.1e} over {len(both)} of "
-                  f"{n_units} units")
+            print(
+                f"{label}, full product vs crop, {weight} weights, {col}: "
+                f"largest difference {diff:.1e} over {len(both)} of "
+                f"{n_units} units"
+            )
             assert diff < 1e-9
 
 
 def check_against_full(ir_table: Path) -> None:
     """Redo the work on the full global data and check the crops give the same numbers."""
     full_weights = cilreg.WeightsArtifact.load(WEIGHTS_SOURCE)
-    gmax = read_bcsd_daily(str(source_path("tasmax")), "tasmax",
-                           require_full_year=True)
-    gmin = read_bcsd_daily(str(source_path("tasmin")), "tasmin",
-                           require_full_year=True)
+    gmax = read_bcsd_daily(str(source_path("tasmax")), "tasmax", require_full_year=True)
+    gmin = read_bcsd_daily(str(source_path("tasmin")), "tasmin", require_full_year=True)
     fields = _check_fields(gmax, gmin)
     del gmin
     cells = gmax.to_cells(fields, grid=BCSD_GRID)
@@ -426,21 +489,46 @@ def check_against_full(ir_table: Path) -> None:
     full_ir = _restrict(full_ir, cells, by_hierid)
 
     c_cells = _cropped_cells()
-    _compare(full_weights, cilreg.WeightsArtifact.load(data.WEIGHTS), cells,
-             c_cells, KEYS, by_iso, "ADM1")
-    _compare(full_ir, _ir_weights(data.IR_TABLE), cells, c_cells,
-             ["hierid"], by_hierid, "impact regions")
+    _compare(
+        full_weights,
+        cilreg.WeightsArtifact.load(data.WEIGHTS),
+        cells,
+        c_cells,
+        KEYS,
+        by_iso,
+        "ADM1",
+    )
+    _compare(
+        full_ir,
+        _ir_weights(data.IR_TABLE),
+        cells,
+        c_cells,
+        ["hierid"],
+        by_hierid,
+        "impact regions",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--targets", type=Path, default=TARGETS,
-                        help="GADM 2.0 ADM1 target layer (GeoParquet)")
-    parser.add_argument("--ir-table", type=Path, required=True,
-                        help="impact region segment weights (CSV); "
-                             "read only")
-    parser.add_argument("--ir-shapes", type=Path, default=IR_SHAPES,
-                        help="impact region shapefile; read only")
+    parser.add_argument(
+        "--targets",
+        type=Path,
+        default=TARGETS,
+        help="GADM 2.0 ADM1 target layer (GeoParquet)",
+    )
+    parser.add_argument(
+        "--ir-table",
+        type=Path,
+        required=True,
+        help="impact region segment weights (CSV); read only",
+    )
+    parser.add_argument(
+        "--ir-shapes",
+        type=Path,
+        default=IR_SHAPES,
+        help="impact region shapefile; read only",
+    )
     args = parser.parse_args(argv)
     DATA.mkdir(exist_ok=True)
     rows = crop_weights()
@@ -448,12 +536,15 @@ def main(argv: list[str] | None = None) -> int:
     ir = crop_ir_table(args.ir_table)
     generated = generate_ir_weights()
     for iso in ISOS:
-        keep = pd.concat([
-            rows.loc[rows["ISO"] == iso, ["cell_lat", "cell_lon"]],
-            ir.loc[ir["hierid"].str[:3] == iso, ["cell_lat", "cell_lon"]],
-            generated.loc[generated["hierid"].str[:3] == iso,
-                          ["cell_lat", "cell_lon"]],
-        ]).drop_duplicates()
+        keep = pd.concat(
+            [
+                rows.loc[rows["ISO"] == iso, ["cell_lat", "cell_lon"]],
+                ir.loc[ir["hierid"].str[:3] == iso, ["cell_lat", "cell_lon"]],
+                generated.loc[
+                    generated["hierid"].str[:3] == iso, ["cell_lat", "cell_lon"]
+                ],
+            ]
+        ).drop_duplicates()
         crop_climate(keep, iso)
     build_display_layer(args.targets)
     build_ir_display_layer(args.ir_shapes)

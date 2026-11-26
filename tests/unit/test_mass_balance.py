@@ -9,6 +9,7 @@ from production outputs. A conserving aggregation must pass; the
 reproduced drop pattern must fail, and the coverage check must name the
 constructed units exactly.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -103,9 +104,7 @@ class TestMassBalance:
         ~0.8% of global mass, far beyond tolerance, and must be caught
         globally and in the affected countries."""
         source = _source_units_frame()
-        broken = _weights(
-            source, drop=N_DROPPED_ADM1 + N_DROPPED_ADM2, zero=N_ZEROED
-        )
+        broken = _weights(source, drop=N_DROPPED_ADM1 + N_DROPPED_ADM2, zero=N_ZEROED)
         target = _aggregate(source, broken)
         report = check_mass_balance(
             source, target, value_col="value", group_col="country", tolerance=1e-6
@@ -252,9 +251,7 @@ class TestEnforceSourcePolicies:
             python_version="3",
         )
         with pytest.raises(ValueError):
-            enforce_source_policies(
-                self._coverage(), SourceUnitPolicies(), manifest
-            )
+            enforce_source_policies(self._coverage(), SourceUnitPolicies(), manifest)
         assert manifest.source_coverage["unmatched"]["count"] == 3
 
     def test_clean_coverage_passes_under_error_policies(self):

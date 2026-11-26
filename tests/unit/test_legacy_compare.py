@@ -1,4 +1,5 @@
 """Characterization comparison vs legacy CSV: distribution + class counts."""
+
 from __future__ import annotations
 
 import pandas as pd

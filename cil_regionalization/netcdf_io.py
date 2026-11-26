@@ -17,6 +17,7 @@ Non-dimension coordinates on the selected variables (a scalar scenario
 label, for example) come along as columns and behave downstream like any
 other passthrough dimension.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,6 +28,7 @@ import pandas as pd
 
 if TYPE_CHECKING:
     from cil_regionalization.grid import GridSpec
+
 
 def _import_xarray():
     try:
@@ -235,8 +237,7 @@ def read_netcdf_grid(
                 grid = infer_grid_version(lat_vals, lon_vals)
             except AmbiguousLongitudeConvention as e:
                 extra = "".join(
-                    f", {k}={v!r}" for k, v in (("lat", lat), ("lon", lon))
-                    if v != k
+                    f", {k}={v!r}" for k, v in (("lat", lat), ("lon", lon)) if v != k
                 )
                 calls = "\n".join(
                     f"    read_netcdf_grid({str(path)!r}, {variables!r}{extra}, "
@@ -251,8 +252,10 @@ def read_netcdf_grid(
                     f"compares it with the weights' source_version."
                 ) from None
         spec = GridSpec.from_source_version(grid)
-        tol = max(coordinate_tolerance(lat_vals, spec.resolution),
-                  coordinate_tolerance(lon_vals, spec.resolution))
+        tol = max(
+            coordinate_tolerance(lat_vals, spec.resolution),
+            coordinate_tolerance(lon_vals, spec.resolution),
+        )
         iy = cell_indices(spec, lat_vals, "lat", tol=tol)
         ix = cell_indices(spec, lon_vals, "lon", tol=tol)
         for axis, idx, vals in (("lat", iy, lat_vals), ("lon", ix, lon_vals)):

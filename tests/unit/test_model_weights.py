@@ -4,6 +4,7 @@ The tables are synthetic. Every test here fails without the module,
 because the import fails. The tests that name a mutation in their
 docstring were also seen to fail under it.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -18,13 +19,20 @@ import cil_regionalization as cilreg
 from cil_regionalization.model_weights import ModelWeights, read_model_weights
 
 MODELS = [
-    "mri-cgcm3_01", "gfdl-esm2g", "gfdl-esm2g_01", "inmcm4*", "access1-0*",
+    "mri-cgcm3_01",
+    "gfdl-esm2g",
+    "gfdl-esm2g_01",
+    "inmcm4*",
+    "access1-0*",
     "mri-cgcm3*",
 ]
 WEIGHTS = [0.1, 1 / 3, 0.036, 0.2, 0.0, 0.3306666666666667]
 # the tree has no leaf of the last model but one
 MEMBERS = [
-    "surrogate_MRI-CGCM3_01", "GFDL-ESM2G", "surrogate_GFDL-ESM2G_01", "inmcm4",
+    "surrogate_MRI-CGCM3_01",
+    "GFDL-ESM2G",
+    "surrogate_GFDL-ESM2G_01",
+    "inmcm4",
     "MRI-CGCM3",
 ]
 
@@ -55,7 +63,11 @@ class TestRead:
         assert got.path == str(path)
         assert got.names == tuple(MODELS)
         assert got.keys == (
-            "mri-cgcm3_01", "gfdl-esm2g", "gfdl-esm2g_01", "inmcm4", "access1-0",
+            "mri-cgcm3_01",
+            "gfdl-esm2g",
+            "gfdl-esm2g_01",
+            "inmcm4",
+            "access1-0",
             "mri-cgcm3",
         )
         assert got.weights == tuple(WEIGHTS)
@@ -121,9 +133,7 @@ class TestRead:
 
     def test_a_table_without_the_two_columns_is_refused(self, tmp_path):
         path = tmp_path / "weights.tsv"
-        pd.DataFrame({"model": ["a"], "w": [1.0]}).to_csv(
-            path, sep="\t", index=False
-        )
+        pd.DataFrame({"model": ["a"], "w": [1.0]}).to_csv(path, sep="\t", index=False)
         with pytest.raises(ValueError, match="needs 'model' and 'weight'"):
             read_model_weights(path)
 
@@ -145,7 +155,8 @@ class TestMatching:
             expected = before[member.replace("surrogate_", "").lower()]
             assert got.weight_of(member) == expected
         assert got.missing(MEMBERS + ["ACCESS1-3", "surrogate_CCSM4_01"]) == [
-            "ACCESS1-3", "surrogate_CCSM4_01",
+            "ACCESS1-3",
+            "surrogate_CCSM4_01",
         ]
 
     @pytest.mark.parametrize("dtype", ["object", "category"])
@@ -195,14 +206,20 @@ class TestRecord:
         assert record["members"] == {
             "GFDL-ESM2G": {"row": "gfdl-esm2g", "weight": 1 / 3, "n_leaves": 15},
             "MRI-CGCM3": {
-                "row": "mri-cgcm3*", "weight": 0.3306666666666667, "n_leaves": 15,
+                "row": "mri-cgcm3*",
+                "weight": 0.3306666666666667,
+                "n_leaves": 15,
             },
             "inmcm4": {"row": "inmcm4*", "weight": 0.2, "n_leaves": 16},
             "surrogate_GFDL-ESM2G_01": {
-                "row": "gfdl-esm2g_01", "weight": 0.036, "n_leaves": 15,
+                "row": "gfdl-esm2g_01",
+                "weight": 0.036,
+                "n_leaves": 15,
             },
             "surrogate_MRI-CGCM3_01": {
-                "row": "mri-cgcm3_01", "weight": 0.1, "n_leaves": 15,
+                "row": "mri-cgcm3_01",
+                "weight": 0.1,
+                "n_leaves": 15,
             },
         }
         assert record["unmatched_rows"] == {"access1-0*": 0.0}

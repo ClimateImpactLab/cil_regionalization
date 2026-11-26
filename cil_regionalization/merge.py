@@ -19,6 +19,7 @@ hard invariants:
 Used by `examples/s51/merge.py`; the function below is the unit-testable
 core.
 """
+
 from __future__ import annotations
 
 import json
@@ -87,13 +88,9 @@ def merge_weights(
     for piece, name in ((canon, "canonical"), (supp, "supplement")):
         missing = [c for c in schema.columns if c not in piece.columns]
         if missing:
-            raise ValueError(
-                f"merge: {name} frame missing columns {missing}"
-            )
+            raise ValueError(f"merge: {name} frame missing columns {missing}")
 
-    combined = pd.concat(
-        [canon[expected_cols], supp[expected_cols]], ignore_index=True
-    )
+    combined = pd.concat([canon[expected_cols], supp[expected_cols]], ignore_index=True)
     combined = combined.sort_values(id_fields + ["cell_ix", "cell_iy"]).reset_index(
         drop=True
     )

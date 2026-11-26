@@ -38,13 +38,22 @@ under `data/weights/`. Both modes produce identical output.
 import cil_regionalization as cilreg
 
 weights = cilreg.fetch_weights("gadm20-adm1-per-source")
-data = cilreg.read_netcdf_leaf(leaf_path, variables=["total_damages"],
-                               region_dim="region", region_col="hierid",
-                               kind="extensive")
-result = cilreg.apply_weights(weights, data, kind="extensive", weight="pop",
-                              value_col="total_damages",
-                              data_version="world-combo-201710",
-                              restrict_to_sources={(h,) for h in data["hierid"].unique()})
+data = cilreg.read_netcdf_leaf(
+    leaf_path,
+    variables=["total_damages"],
+    region_dim="region",
+    region_col="hierid",
+    kind="extensive",
+)
+result = cilreg.apply_weights(
+    weights,
+    data,
+    kind="extensive",
+    weight="pop",
+    value_col="total_damages",
+    data_version="world-combo-201710",
+    restrict_to_sources={(h,) for h in data["hierid"].unique()},
+)
 ```
 
 The weight file covers the whole world, while this example only uses

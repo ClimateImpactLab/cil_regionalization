@@ -7,6 +7,7 @@ and no process ever holds more than its share of the memory budget.
 The numbers are those of `stats`, which this module calls and does not
 repeat.
 """
+
 from __future__ import annotations
 
 import os
@@ -131,9 +132,7 @@ class PandasBlocks(ReduceBackend):
         share = kept_share(request)
         row_bytes = bytes_per_row(request)
         try:
-            blocks = choose_blocks(
-                request.rows_per_group, share, per_worker, row_bytes
-            )
+            blocks = choose_blocks(request.rows_per_group, share, per_worker, row_bytes)
         except _TooSmall as error:
             needed = error.largest_group * n_workers / 1e9
             raise ValueError(
@@ -294,9 +293,7 @@ def _leaf_rows(
     spans: dict[tuple[float, float], list[str]] = {}
     for label, start, end in leaf.windows:
         spans.setdefault((start, end), []).append(label)
-    present = [
-        span for span in spans if times.between(span[0], span[1]).any()
-    ]
+    present = [span for span in spans if times.between(span[0], span[1]).any()]
     if not present:
         return None
     reduced = window_means(
@@ -371,13 +368,11 @@ def _leaf_span(
     """One leaf's rows of a block inside its one window, with their time
     value, which stays a column of the statistics. None if the window
     has no row here."""
-    (_, start, end), = leaf.windows
+    ((_, start, end),) = leaf.windows
     inside = frame[request.time_col].between(start, end).to_numpy()
     if not inside.any():
         return None
-    group = [
-        c for c in frame.columns if c not in (request.time_col, request.value_col)
-    ]
+    group = [c for c in frame.columns if c not in (request.time_col, request.value_col)]
     return frame.loc[inside, group + [request.time_col, request.value_col]]
 
 
@@ -393,7 +388,8 @@ def _with_counts(
     if request.time_reduction == "pooled":
         stats = stats.rename(columns={"n_members": "n_sample"})
     identity = [
-        c for c in stats.columns
+        c
+        for c in stats.columns
         if c not in ("statistic", request.value_col, "n_members", "n_sample")
     ]
     grouped = _plain_labels(pd.concat(members, ignore_index=True)).groupby(
@@ -407,7 +403,9 @@ def _with_counts(
     names = [count.name for count in counts]
     stats = stats.merge(
         pd.concat(counts, axis=1).reset_index(),
-        on=identity, how="left", validate="many_to_one",
+        on=identity,
+        how="left",
+        validate="many_to_one",
     )
     for name in names:
         stats[name] = stats[name].fillna(0).astype(np.int64)
@@ -420,9 +418,7 @@ def _check_whole_spans(request: ReduceRequest, leaf, frame: pd.DataFrame) -> Non
     would be over fewer years than the window says."""
     times = frame[request.time_col]
     has_value = frame[request.value_col].notna().to_numpy()
-    group = [
-        c for c in frame.columns if c not in (request.time_col, request.value_col)
-    ]
+    group = [c for c in frame.columns if c not in (request.time_col, request.value_col)]
     for _, start, end in leaf.windows:
         valid = times.between(start, end).to_numpy() & has_value
         n_years = int(end) - int(start) + 1
@@ -503,13 +499,14 @@ def _reduce_block(block: tuple[int, int]) -> dict:
             has_value = reduced[request.value_col].notna().to_numpy()
             with_value = reduced.loc[
                 has_value,
-                [c for c in reduced.columns
-                 if c not in (request.time_col, request.value_col)],
+                [
+                    c
+                    for c in reduced.columns
+                    if c not in (request.time_col, request.value_col)
+                ],
             ]
             # a window mean is one row a member already
-            pieces.append(
-                with_value.drop_duplicates() if pooled else with_value.copy()
-            )
+            pieces.append(with_value.drop_duplicates() if pooled else with_value.copy())
         for piece in pieces:
             at = list(piece.columns).index(request.time_col if per_year else "window")
             for i, name in enumerate(request.level_names):
@@ -545,8 +542,11 @@ def _reduce_block(block: tuple[int, int]) -> dict:
     if not frames:
         # `pooled_statistics` is not asked about nothing
         return {
-            "block": block, "stats": pd.DataFrame(), "rows": 0,
-            "failed_opens": failed_opens, "peak_gb": round(_peak_gb(), 2),
+            "block": block,
+            "stats": pd.DataFrame(),
+            "rows": 0,
+            "failed_opens": failed_opens,
+            "peak_gb": round(_peak_gb(), 2),
         }
     combined = pd.concat(frames, ignore_index=True)
     del frames
@@ -575,7 +575,7 @@ def _reduce_block(block: tuple[int, int]) -> dict:
         stats = _with_counts(stats, members, request)
     # the ids go on last, one lookup a statistics row
     per_group = request.footer["targets_per_group"]
-    block_ids = _STATE["targets"].ids[first * per_group:stop * per_group]
+    block_ids = _STATE["targets"].ids[first * per_group : stop * per_group]
     ordinals = stats.pop(leaf_format.ORDINAL_COLUMN).to_numpy() - first * per_group
     for i, field in enumerate(request.id_fields):
         ids = np.array([row[i] for row in block_ids], dtype=object)

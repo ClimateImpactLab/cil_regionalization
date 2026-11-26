@@ -21,6 +21,7 @@ Run on the cluster:
 
     python run_physical_labor.py --adm adm1 --rcp rcp85 --workers 16
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,8 +36,10 @@ import cil_regionalization as cilreg
 from cil_regionalization.netcdf_io import read_netcdf_leaf
 from cil_regionalization.stats import pooled_statistics, window_means
 
-TREE = Path("/project/cil/gcp/outputs/labor/impacts-woodwork/montecarlo"
-            "/uninteracted_main_model_27_37_39")
+TREE = Path(
+    "/project/cil/gcp/outputs/labor/impacts-woodwork/montecarlo"
+    "/uninteracted_main_model_27_37_39"
+)
 STEM = "uninteracted_main_model"
 POP = "/project/cil/gcp/social/baselines/population/merged/population-merged.{ssp}.csv"
 WEIGHTS = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/weights/ir_{adm}_full"
@@ -48,16 +51,41 @@ IAMS = ["high", "low"]
 WINDOWS = [(2020, 2039), (2040, 2059), (2080, 2099)]
 YEARS = range(2020, 2100)
 QUANTILES = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
-GCMS = ["ACCESS1-0", "BNU-ESM", "CCSM4", "CESM1-BGC", "CNRM-CM5",
-        "CSIRO-Mk3-6-0", "CanESM2", "GFDL-CM3", "GFDL-ESM2G", "GFDL-ESM2M",
-        "IPSL-CM5A-LR", "IPSL-CM5A-MR", "MIROC-ESM", "MIROC-ESM-CHEM",
-        "MIROC5", "MPI-ESM-LR", "MPI-ESM-MR", "MRI-CGCM3", "NorESM1-M",
-        "bcc-csm1-1", "inmcm4",
-        "surrogate_CanESM2_89", "surrogate_CanESM2_94", "surrogate_CanESM2_99",
-        "surrogate_GFDL-CM3_89", "surrogate_GFDL-CM3_94", "surrogate_GFDL-CM3_99",
-        "surrogate_GFDL-ESM2G_01", "surrogate_GFDL-ESM2G_06",
-        "surrogate_GFDL-ESM2G_11", "surrogate_MRI-CGCM3_01",
-        "surrogate_MRI-CGCM3_06", "surrogate_MRI-CGCM3_11"]
+GCMS = [
+    "ACCESS1-0",
+    "BNU-ESM",
+    "CCSM4",
+    "CESM1-BGC",
+    "CNRM-CM5",
+    "CSIRO-Mk3-6-0",
+    "CanESM2",
+    "GFDL-CM3",
+    "GFDL-ESM2G",
+    "GFDL-ESM2M",
+    "IPSL-CM5A-LR",
+    "IPSL-CM5A-MR",
+    "MIROC-ESM",
+    "MIROC-ESM-CHEM",
+    "MIROC5",
+    "MPI-ESM-LR",
+    "MPI-ESM-MR",
+    "MRI-CGCM3",
+    "NorESM1-M",
+    "bcc-csm1-1",
+    "inmcm4",
+    "surrogate_CanESM2_89",
+    "surrogate_CanESM2_94",
+    "surrogate_CanESM2_99",
+    "surrogate_GFDL-CM3_89",
+    "surrogate_GFDL-CM3_94",
+    "surrogate_GFDL-CM3_99",
+    "surrogate_GFDL-ESM2G_01",
+    "surrogate_GFDL-ESM2G_06",
+    "surrogate_GFDL-ESM2G_11",
+    "surrogate_MRI-CGCM3_01",
+    "surrogate_MRI-CGCM3_06",
+    "surrogate_MRI-CGCM3_11",
+]
 
 
 def gcms_for(rcp: str) -> list[str]:
@@ -102,8 +130,9 @@ def read_effect(leafdir: Path) -> pd.DataFrame:
             region_labels="regions",
         )
         frames[tag] = frame.rename(columns={"rebased": tag})
-    df = frames["scen"].merge(frames["hist"], on=["hierid", "year"],
-                              validate="one_to_one")
+    df = frames["scen"].merge(
+        frames["hist"], on=["hierid", "year"], validate="one_to_one"
+    )
     df = df[df["year"].isin(YEARS)].copy()
     df["minutes"] = df["scen"].astype("float64") - df["hist"].astype("float64")
     return df[["hierid", "year", "minutes"]]
@@ -140,8 +169,7 @@ def batch_frames(task) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
     alive = den.groupby(id_fields, sort=False)["pop"].min()
     alive = alive[alive > 0].reset_index()[id_fields]
     den = den.merge(alive, on=id_fields)
-    den_iso = (den.groupby(["ISO", "year"], sort=False)["pop"]
-               .sum().reset_index())
+    den_iso = den.groupby(["ISO", "year"], sort=False)["pop"].sum().reset_index()
     out = []
     for iam in IAMS:
         for gcm in gcms_for(rcp):
@@ -158,28 +186,40 @@ def batch_frames(task) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
                 data_version="world-combo-201710",
                 restrict_to_sources=covered,
             ).frame
-            target = num.merge(den, on=id_fields + ["year"],
-                               validate="one_to_one")
+            target = num.merge(den, on=id_fields + ["year"], validate="one_to_one")
             if target["pop"].eq(0).any() or target["pop"].isna().any():
                 raise ValueError(f"{leafdir}: zero or missing denominator")
             target["rate"] = target["minutes_pop"] / target["pop"]
             # ISO before the division: numerator and denominator sum
             # exactly because impact regions stay within one country
-            adm0 = (num.groupby(["ISO", "year"], sort=False)["minutes_pop"]
-                    .sum().reset_index()
-                    .merge(den_iso, on=["ISO", "year"], validate="one_to_one"))
+            adm0 = (
+                num.groupby(["ISO", "year"], sort=False)["minutes_pop"]
+                .sum()
+                .reset_index()
+                .merge(den_iso, on=["ISO", "year"], validate="one_to_one")
+            )
             adm0["rate"] = adm0["minutes_pop"] / adm0["pop"]
             member = {"batch": batch, "gcm": gcm, "iam": iam, "ssp": ssp}
-            target = (target[id_fields + ["year", "rate"]].assign(**member))
+            target = target[id_fields + ["year", "rate"]].assign(**member)
             adm0 = adm0[["ISO", "year", "rate"]].assign(**member)
-            out.append((
-                window_means(target, time_col="year", windows=WINDOWS,
-                             value_col="rate",
-                             summation="fast"),
-                window_means(adm0, time_col="year", windows=WINDOWS,
-                             value_col="rate",
-                             summation="fast"),
-            ))
+            out.append(
+                (
+                    window_means(
+                        target,
+                        time_col="year",
+                        windows=WINDOWS,
+                        value_col="rate",
+                        summation="fast",
+                    ),
+                    window_means(
+                        adm0,
+                        time_col="year",
+                        windows=WINDOWS,
+                        value_col="rate",
+                        summation="fast",
+                    ),
+                )
+            )
         print(batch, rcp, ssp, iam, flush=True)
     return out
 
@@ -187,12 +227,16 @@ def batch_frames(task) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
 def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
     smme = pd.read_csv(SMME.format(rcp=rcp), sep="\t")[["model", "weight"]]
     smme["key"] = smme["model"].str.replace("*", "", regex=False).str.lower()
-    frame = reduced.assign(
-        key=reduced["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-    ).merge(
-        smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
-        on="key",
-    ).drop(columns="key")
+    frame = (
+        reduced.assign(
+            key=reduced["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
+        )
+        .merge(
+            smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
+            on="key",
+        )
+        .drop(columns="key")
+    )
     if len(frame) != len(reduced):
         raise ValueError("a climate model has no SMME weight row")
     return pooled_statistics(
@@ -206,8 +250,9 @@ def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
     )
 
 
-def write_product(stats: pd.DataFrame, adm: str, rcp: str,
-                  extra: dict | None = None) -> None:
+def write_product(
+    stats: pd.DataFrame, adm: str, rcp: str, extra: dict | None = None
+) -> None:
     out = Path(OUT) / adm
     out.mkdir(parents=True, exist_ok=True)
     stem = f"labor_physical_{rcp}"
@@ -219,9 +264,9 @@ def write_product(stats: pd.DataFrame, adm: str, rcp: str,
         "units": "minutes per worker per day, fulladapt minus histclim",
         "population": POP,
         "coverage": "regions with a population baseline; 110 of 24378 "
-                    "impact regions (small territories, Antarctica) have "
-                    "none and are absent, and targets whose population "
-                    "is zero are dropped because their rate is undefined",
+        "impact regions (small territories, Antarctica) have "
+        "none and are absent, and targets whose population "
+        "is zero are dropped because their rate is undefined",
         "windows": [f"{a}-{b}" for a, b in WINDOWS],
         "quantiles": QUANTILES,
         "model_weights": SMME.format(rcp=rcp),
@@ -254,10 +299,15 @@ def main() -> int:
     if args.adm == "adm1":
         adm0 = pd.concat([p[1] for p in pairs], ignore_index=True)
         adm0_stats = weighted_stats(adm0, args.rcp)
-        write_product(adm0_stats, "adm0", args.rcp, {
-            "method": "ISO sums of the adm1 numerator and denominator "
-                      "before the division",
-        })
+        write_product(
+            adm0_stats,
+            "adm0",
+            args.rcp,
+            {
+                "method": "ISO sums of the adm1 numerator and denominator "
+                "before the division",
+            },
+        )
     return 0
 
 

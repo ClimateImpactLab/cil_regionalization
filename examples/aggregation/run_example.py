@@ -32,6 +32,7 @@ with the SMME weights Climate Impact Lab projections use, read from
 data/smme_weights_rcp85.csv (the model and weight columns of
 rcp85_SMME_weights.tsv in Zenodo record 22003542).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -78,11 +79,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  montecarlo/batch0/rcp85/<gcm>/low/SSP3/ for {len(gcms)} models,")
     print("plus the physical rate leaves,")
     for b in RATE_BATCHES:
-        print(f"  montecarlo/{b}/{RATE_LEVELS}/Agespec_interaction_response-combined.nc4")
+        print(
+            f"  montecarlo/{b}/{RATE_LEVELS}/Agespec_interaction_response-combined.nc4"
+        )
     print()
 
     if args.offline:
-        per_destination = WeightsArtifact.load(DATA / "weights" / "adm1_per_destination")
+        per_destination = WeightsArtifact.load(
+            DATA / "weights" / "adm1_per_destination"
+        )
         per_source = WeightsArtifact.load(DATA / "weights" / "adm1_per_source")
         adm2_per_source = WeightsArtifact.load(DATA / "weights" / "adm2_per_source")
         restrict = None
@@ -95,10 +100,14 @@ def main(argv: list[str] | None = None) -> int:
         # The fetched weights are global; the data is one country. The
         # restriction declares that subset explicitly, and the coverage
         # checks stay strict within it.
-        first_leaf = DAMAGES_BATCH / gcms[0] / "low" / "SSP3" / "mortality_damages_IR_batch.nc4"
+        first_leaf = (
+            DAMAGES_BATCH / gcms[0] / "low" / "SSP3" / "mortality_damages_IR_batch.nc4"
+        )
         col = read_netcdf_leaf(
-            first_leaf, variables=["total_damages"],
-            region_dim="region", region_col="hierid",
+            first_leaf,
+            variables=["total_damages"],
+            region_dim="region",
+            region_col="hierid",
         )
         restrict = {(h,) for h in col["hierid"].unique()}
 
@@ -107,7 +116,13 @@ def main(argv: list[str] | None = None) -> int:
     # unlabeled dimension; the caller promotes them to the key column.
     rate_frames = []
     for batch in RATE_BATCHES:
-        leaf = DATA / "montecarlo" / batch / RATE_LEVELS / "Agespec_interaction_response-combined.nc4"
+        leaf = (
+            DATA
+            / "montecarlo"
+            / batch
+            / RATE_LEVELS
+            / "Agespec_interaction_response-combined.nc4"
+        )
         raw = read_netcdf_leaf(
             leaf,
             variables=["rebased", "regions"],
@@ -132,7 +147,11 @@ def main(argv: list[str] | None = None) -> int:
     print("population weighted mean over each department's impact regions):")
     show = rates[(rates["year"] == 2099) & (rates["batch"] == "batch0")]
     show = show.merge(names, on=["ISO", "ID_1"])
-    print(show.sort_values("rebased").head(5)[["NAME_1", "year", "rebased"]].to_string(index=False))
+    print(
+        show.sort_values("rebased")
+        .head(5)[["NAME_1", "year", "rebased"]]
+        .to_string(index=False)
+    )
     print(f"  ... {show['rebased'].size} departments, both batches computed\n")
 
     # 2. Monetized damages, extensive, per_source: aggregate every
@@ -163,21 +182,43 @@ def main(argv: list[str] | None = None) -> int:
     print("Monetized damages at ADM1 (2019 USD, extensive, allocated shares")
     print("sum to each impact region's total; mass balance checked):")
     show = one_draw[one_draw["year"] == 2099].merge(names, on=["ISO", "ID_1"])
-    print(show.sort_values("total_damages", ascending=False).head(5)[["NAME_1", "year", "total_damages", "gcm"]].to_string(index=False))
-    total_ir = read_netcdf_leaf(
-        DAMAGES_BATCH / "GFDL-ESM2G" / "low" / "SSP3" / "mortality_damages_IR_batch.nc4",
-        variables=["total_damages"], region_dim="region", region_col="hierid",
-    ).query("year == 2099")["total_damages"].sum()
-    print(f"  sum over departments {show['total_damages'].sum():.6e} "
-          f"= sum over impact regions {total_ir:.6e}\n")
+    print(
+        show.sort_values("total_damages", ascending=False)
+        .head(5)[["NAME_1", "year", "total_damages", "gcm"]]
+        .to_string(index=False)
+    )
+    total_ir = (
+        read_netcdf_leaf(
+            DAMAGES_BATCH
+            / "GFDL-ESM2G"
+            / "low"
+            / "SSP3"
+            / "mortality_damages_IR_batch.nc4",
+            variables=["total_damages"],
+            region_dim="region",
+            region_col="hierid",
+        )
+        .query("year == 2099")["total_damages"]
+        .sum()
+    )
+    print(
+        f"  sum over departments {show['total_damages'].sum():.6e} "
+        f"= sum over impact regions {total_ir:.6e}\n"
+    )
 
     # 3. The same damages at ADM2, where the split is visible: in this
     # geometry version a Colombian impact region is a grouping of
     # municipalities, so one region's total spreads across up to 90 of
     # them by population share, and the shares sum to one per region.
     data_one = read_netcdf_leaf(
-        DAMAGES_BATCH / "GFDL-ESM2G" / "low" / "SSP3" / "mortality_damages_IR_batch.nc4",
-        variables=["total_damages"], region_dim="region", region_col="hierid",
+        DAMAGES_BATCH
+        / "GFDL-ESM2G"
+        / "low"
+        / "SSP3"
+        / "mortality_damages_IR_batch.nc4",
+        variables=["total_damages"],
+        region_dim="region",
+        region_col="hierid",
         kind="extensive",
     )
     adm2 = apply_weights(
@@ -202,18 +243,25 @@ def main(argv: list[str] | None = None) -> int:
     print(split.sort_values("popwt", ascending=False).head(3).to_string(index=False))
     print(f"  shares sum to {split['popwt'].sum():.6f}")
     total_adm2 = adm2.frame.query("year == 2099")["total_damages"].sum()
-    print(f"  2099 sum over municipalities {total_adm2:.6e} matches the "
-          f"impact region sum\n")
+    print(
+        f"  2099 sum over municipalities {total_adm2:.6e} matches the "
+        f"impact region sum\n"
+    )
 
     # 4. Statistics over the Monte Carlo sample. Spatial aggregation
     # happened first, above; the window mean and pooled statistics come
     # last. The 33 climate models are the draws, each with its SMME
     # weight.
     smme = pd.read_csv(DATA / "smme_weights_rcp85.csv")
-    smme_weight = dict(zip(
-        smme["model"].str.replace("*", "", regex=False).str.lower(), smme["weight"]))
-    damages["weight"] = (damages["gcm"].str.replace("surrogate_", "", regex=False)
-                         .str.lower().map(smme_weight))
+    smme_weight = dict(
+        zip(smme["model"].str.replace("*", "", regex=False).str.lower(), smme["weight"])
+    )
+    damages["weight"] = (
+        damages["gcm"]
+        .str.replace("surrogate_", "", regex=False)
+        .str.lower()
+        .map(smme_weight)
+    )
     assert damages["weight"].notna().all()
     stats = summarize_samples(
         damages,

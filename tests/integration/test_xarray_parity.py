@@ -26,6 +26,7 @@ reverting it. They failed under mutations of the backend: the year
 left out of the pooled sample, the last year of a span left out, and a
 member pooled under a level it is not at.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -101,8 +102,15 @@ def _build_tree(root: Path, *, gaps: bool) -> None:
 
 
 def _raw(
-    weights_dir, tmp_path, *, methods, weighted=False, gaps=True,
-    quantiles=QUANTILES, memory_gb=0.002, **stats,
+    weights_dir,
+    tmp_path,
+    *,
+    methods,
+    weighted=False,
+    gaps=True,
+    quantiles=QUANTILES,
+    memory_gb=0.002,
+    **stats,
 ):
     tree, out = tmp_path / "tree", tmp_path / "out"
     _build_tree(tree, gaps=gaps)
@@ -169,7 +177,11 @@ def _lower_step(
     them."""
     if q == 0.5 and (weights == weights[0]).all():
         return float(np.median(values))
-    order = np.lexsort((weights, values)) if by_weight else np.argsort(values, kind="stable")
+    order = (
+        np.lexsort((weights, values))
+        if by_weight
+        else np.argsort(values, kind="stable")
+    )
     share = np.cumsum(weights[order]) / weights.sum()
     below = values[order][share < q]
     return float(below.max()) if len(below) else -np.inf
@@ -187,7 +199,12 @@ def _inverted_cdf(values: np.ndarray, weights: np.ndarray, q: float) -> float:
 
 
 def _oracle(
-    da, pooled: list[str], *, method: str, weighted: bool, quantiles=QUANTILES,
+    da,
+    pooled: list[str],
+    *,
+    method: str,
+    weighted: bool,
+    quantiles=QUANTILES,
     summation: str = "fast",
 ) -> pd.DataFrame:
     """Every statistic of ``da`` over ``pooled``, one row a group and
@@ -221,7 +238,9 @@ def _oracle(
         }
     else:
         q = da.quantile(quantiles, dim=sample, method=method, skipna=True)
-        quantiles = {LABELS[v]: q.sel(quantile=v).drop_vars("quantile") for v in quantiles}
+        quantiles = {
+            LABELS[v]: q.sel(quantile=v).drop_vars("quantile") for v in quantiles
+        }
 
     flat = stacked.values.reshape(-1, stacked.sizes["member"])
     exact = np.full(len(flat), np.nan)
@@ -235,10 +254,13 @@ def _oracle(
     coords = {k: stacked[k] for k in keys}
     exact = xr.DataArray(exact.reshape(stacked.shape[:-1]), dims=keys, coords=coords)
     if weighted:
-        fast = da.weighted(xr.DataArray(
-            [GCM_WEIGHTS[g] for g in da["gcm"].values], dims="gcm",
-            coords={"gcm": da["gcm"]},
-        )).mean(dim=sample, skipna=True)
+        fast = da.weighted(
+            xr.DataArray(
+                [GCM_WEIGHTS[g] for g in da["gcm"].values],
+                dims="gcm",
+                coords={"gcm": da["gcm"]},
+            )
+        ).mean(dim=sample, skipna=True)
     else:
         fast = da.mean(dim=sample, skipna=True)
     largest = abs(da).max(dim=sample, skipna=True)
@@ -249,7 +271,9 @@ def _oracle(
         frame = values.to_series().rename("oracle").reset_index()
         frames.append(frame.assign(statistic=label))
     whole = pd.concat(frames, ignore_index=True)
-    extra = xr.Dataset({"fast": fast, "largest": largest, "count": count}).to_dataframe()
+    extra = xr.Dataset(
+        {"fast": fast, "largest": largest, "count": count}
+    ).to_dataframe()
     return whole.merge(extra.reset_index(), on=keys, how="left")
 
 
@@ -271,8 +295,12 @@ def _compare(ours: pd.DataFrame, oracle: pd.DataFrame, keys: list[str], summatio
         assert (gap[is_mean] <= bound[is_mean]).all(), both.loc[is_mean & (gap > bound)]
     want = both["oracle"].to_numpy(np.float64)
     same = value.view(np.int64) == want.view(np.int64)
-    assert same[to_the_bit].all(), both.loc[to_the_bit & ~same, keys + ["statistic", "value", "oracle"]]
-    assert (both["n_sample" if "n_sample" in both else "n_members"] == both["count"]).all()
+    assert same[to_the_bit].all(), both.loc[
+        to_the_bit & ~same, keys + ["statistic", "value", "oracle"]
+    ]
+    assert (
+        both["n_sample" if "n_sample" in both else "n_members"] == both["count"]
+    ).all()
 
 
 METHODS = [
@@ -296,16 +324,23 @@ def test_pooled_years_are_xarrays_statistics(weights_dir, tmp_path, methods, wei
     that lacks four years."""
     windows = [(2040, 2059), (2050, 2069), (2080, 2099)]
     raw, out = _raw(
-        weights_dir, tmp_path, methods=methods, weighted=weighted,
-        time_reduction="pooled", windows=[list(w) for w in windows],
+        weights_dir,
+        tmp_path,
+        methods=methods,
+        weighted=weighted,
+        time_reduction="pooled",
+        windows=[list(w) for w in windows],
     )
     ours = _run(raw, out)
     da = _leaves(out)
     pieces = []
     for lo, hi in windows:
         oracle = _oracle(
-            da.sel(year=slice(lo, hi)), POOLED + ["year"],
-            method=methods[0], weighted=weighted, summation=methods[1],
+            da.sel(year=slice(lo, hi)),
+            POOLED + ["year"],
+            method=methods[0],
+            weighted=weighted,
+            summation=methods[1],
         )
         span = da.sel(year=slice(lo, hi))
         members = span.notnull().any("year").sum(POOLED).to_series().rename("members")
@@ -325,13 +360,22 @@ def test_pooled_years_are_xarrays_statistics(weights_dir, tmp_path, methods, wei
 @pytest.mark.parametrize("methods, weighted", METHODS)
 def test_each_year_is_xarrays_statistics(weights_dir, tmp_path, methods, weighted):
     raw, out = _raw(
-        weights_dir, tmp_path, methods=methods, weighted=weighted,
-        time_reduction="per_year", years=[2041, 2098], quantiles=YEAR_QUANTILES,
+        weights_dir,
+        tmp_path,
+        methods=methods,
+        weighted=weighted,
+        time_reduction="per_year",
+        years=[2041, 2098],
+        quantiles=YEAR_QUANTILES,
     )
     ours = _run(raw, out)
     da = _leaves(out).sel(year=slice(2041, 2098))
     oracle = _oracle(
-        da, POOLED, method=methods[0], weighted=weighted, quantiles=YEAR_QUANTILES,
+        da,
+        POOLED,
+        method=methods[0],
+        weighted=weighted,
+        quantiles=YEAR_QUANTILES,
         summation=methods[1],
     )
     _compare(ours, oracle, ["target_id", "band", "year"], methods[1])
@@ -365,10 +409,18 @@ def _level(temperature: float):
 
 
 @pytest.mark.usefixtures("one_target_a_group")
-@pytest.mark.parametrize("methods", [
-    ("linear", "fast"), ("linear", "exact"), ("inverted_cdf", "fast"),
-    ("inverted_cdf", "exact"), ("lower_step", "fast"), ("lower_step", "exact"),
-], ids="-".join)
+@pytest.mark.parametrize(
+    "methods",
+    [
+        ("linear", "fast"),
+        ("linear", "exact"),
+        ("inverted_cdf", "fast"),
+        ("inverted_cdf", "exact"),
+        ("lower_step", "fast"),
+        ("lower_step", "exact"),
+    ],
+    ids="-".join,
+)
 def test_warming_levels_pooled_are_xarrays_statistics(weights_dir, tmp_path, methods):
     """The paper's valued expression: the members at a level, their
     years pooled with the models and the draws."""
@@ -380,14 +432,21 @@ def test_warming_levels_pooled_are_xarrays_statistics(weights_dir, tmp_path, met
             rows.append(f"{gcm},{rcp},{year},{temp}")
     gmst.write_text("\n".join(rows) + "\n")
     raw, out = _raw(
-        weights_dir, tmp_path, methods=methods, gaps=False,
+        weights_dir,
+        tmp_path,
+        methods=methods,
+        gaps=False,
         time_reduction="pooled",
         # the windows keep about half the rows, so the budget is smaller
         memory_gb=0.0012,
         warming_levels={
-            "gmst": str(gmst), "member": ["gcm", "rcp"],
-            "reference_period": [1986, 2005], "smoothing": "unknown",
-            "periods": [{"gmst_span": list(p), "impact_span": list(p)} for p in PERIODS],
+            "gmst": str(gmst),
+            "member": ["gcm", "rcp"],
+            "reference_period": [1986, 2005],
+            "smoothing": "unknown",
+            "periods": [
+                {"gmst_span": list(p), "impact_span": list(p)} for p in PERIODS
+            ],
             **WARMING,
         },
     )
@@ -396,9 +455,12 @@ def test_warming_levels_pooled_are_xarrays_statistics(weights_dir, tmp_path, met
     pieces = []
     for i, (lo, hi) in enumerate(PERIODS):
         level = xr.DataArray(
-            [[_level(TEMPERATURES[(g, r)][i]) or np.nan for r in LEVELS["rcp"]]
-             for g in LEVELS["gcm"]],
-            dims=["gcm", "rcp"], coords={"gcm": LEVELS["gcm"], "rcp": LEVELS["rcp"]},
+            [
+                [_level(TEMPERATURES[(g, r)][i]) or np.nan for r in LEVELS["rcp"]]
+                for g in LEVELS["gcm"]
+            ],
+            dims=["gcm", "rcp"],
+            coords={"gcm": LEVELS["gcm"], "rcp": LEVELS["rcp"]},
         )
         span = da.sel(year=slice(lo, hi))
         for at in WARMING["levels"]:
@@ -406,14 +468,19 @@ def test_warming_levels_pooled_are_xarrays_statistics(weights_dir, tmp_path, met
             if not members.notnull().any():
                 continue
             oracle = _oracle(
-                members, POOLED + ["year"], method=methods[0], weighted=False,
+                members,
+                POOLED + ["year"],
+                method=methods[0],
+                weighted=False,
                 summation=methods[1],
             )
             has = members.notnull().any("year")
-            counts = pd.DataFrame({
-                "members": has.sum(POOLED).to_series(),
-                "bins": has.any("batch").sum(["rcp", "gcm"]).to_series(),
-            }).reset_index()
+            counts = pd.DataFrame(
+                {
+                    "members": has.sum(POOLED).to_series(),
+                    "bins": has.any("batch").sum(["rcp", "gcm"]).to_series(),
+                }
+            ).reset_index()
             oracle = oracle.merge(counts, on=["target_id", "band"])
             pieces.append(oracle.assign(window=f"{lo}-{hi}", warming_level=at))
     oracle = pd.concat(pieces, ignore_index=True)
@@ -423,5 +490,8 @@ def test_warming_levels_pooled_are_xarrays_statistics(weights_dir, tmp_path, met
     assert (both["n_members"] == both["members"]).all()
     assert (both["n_bin_members"] == both["bins"]).all()
     assert sorted(set(zip(ours["window"], ours["warming_level"]))) == [
-        ("2040-2059", 1.5), ("2040-2059", 2.0), ("2080-2099", 2.0), ("2080-2099", 3.0),
+        ("2040-2059", 1.5),
+        ("2040-2059", 2.0),
+        ("2080-2099", 2.0),
+        ("2080-2099", 3.0),
     ]

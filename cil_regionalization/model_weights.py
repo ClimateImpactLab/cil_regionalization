@@ -6,6 +6,7 @@ projection tree after a ``*`` is dropped from the name, the
 ``surrogate_`` prefix is dropped from the member, and both are
 lowercased.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -63,9 +64,7 @@ class ModelWeights:
                 f"file {self.path} (first: {absent[:5]}), and "
                 f"{int((codes < 0).sum())} rows name no member"
             )
-        per_member = np.array(
-            [self.weight_of(m) for m in distinct], dtype=np.float64
-        )
+        per_member = np.array([self.weight_of(m) for m in distinct], dtype=np.float64)
         return pd.Series(per_member[codes], index=members.index, name="model_weight")
 
     def record(self, members: Iterable[str]) -> dict:

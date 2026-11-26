@@ -4,6 +4,7 @@ The error messages produced by config.py are part of its public interface:
 users see them when their TOML is wrong, and they need to identify the
 offending key. These tests pin the relevant substrings of those messages.
 """
+
 from __future__ import annotations
 
 import copy

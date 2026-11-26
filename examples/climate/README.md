@@ -53,30 +53,40 @@ import cil_regionalization as cilreg
 from cil_regionalization.bcsd_io import read_bcsd_daily, BCSD_GRID
 
 SRC = "/project/cil/gcp/climate/source_data/NASA/BCSD/rcp85/day/atmos"
-SEGMENTS = ("/project/cil/home_dirs/jonahmgilbert/archive/data/"
-            "agglomerated-world-new_BCSD_grid_segment_weights_area_pop.csv")
+SEGMENTS = (
+    "/project/cil/home_dirs/jonahmgilbert/archive/data/"
+    "agglomerated-world-new_BCSD_grid_segment_weights_area_pop.csv"
+)
 
 tasmax = read_bcsd_daily(
     f"{SRC}/tasmax/r1i1p1/v1.0/tasmax_day_BCSD_rcp85_r1i1p1_ACCESS1-0_2020.nc",
-    "tasmax", require_full_year=True)
+    "tasmax",
+    require_full_year=True,
+)
 
 hot = (tasmax.values.astype("float64") - 273.15 > 35.0).sum(axis=0).astype("float64")
-hot[np.isnan(tasmax.values).any(axis=0)] = np.nan   # a blank day leaves the cell blank
+hot[np.isnan(tasmax.values).any(axis=0)] = np.nan  # a blank day leaves the cell blank
 cells = tasmax.to_cells({"hot_days": hot})
 
 table = pd.read_csv(SEGMENTS)
 table["pix_cent_x"] = np.mod(table["pix_cent_x"] + 180.0, 360.0) - 180.0
-table = (table.groupby(["hierid", "pix_cent_x", "pix_cent_y"], as_index=False)
-         [["popwt"]].sum(min_count=1))
+table = table.groupby(["hierid", "pix_cent_x", "pix_cent_y"], as_index=False)[
+    ["popwt"]
+].sum(min_count=1)
 weights = cilreg.WeightsArtifact.from_table(
-    table, id_fields=["hierid"], weights={"pop": "popwt"},
-    source=BCSD_GRID)
+    table, id_fields=["hierid"], weights={"pop": "popwt"}, source=BCSD_GRID
+)
 
 out = cilreg.apply_weights(
-    weights, cells, kind="intensive", weight="pop", value_col="hot_days",
+    weights,
+    cells,
+    kind="intensive",
+    weight="pop",
+    value_col="hot_days",
     data_version=BCSD_GRID,
-    policies=cilreg.SourceUnitPolicies(on_zero_weight="skip",
-                                       on_unmatched="skip",
-                                       on_absent_from_data="skip"))
+    policies=cilreg.SourceUnitPolicies(
+        on_zero_weight="skip", on_unmatched="skip", on_absent_from_data="skip"
+    ),
+)
 print(f"{len(out.frame)} impact regions")
 ```

@@ -5,6 +5,7 @@ must equal source_value * geodesic_area_of_that_pixel. The area is
 longitude-invariant on a regular lat/lon grid, so each row has a single
 pixel area.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,8 +35,15 @@ def fraction_raster(tmp_path: Path) -> Path:
     )
     p = tmp_path / "frac.tif"
     with rasterio.open(
-        p, "w", driver="GTiff", height=4, width=4, count=1,
-        dtype="float32", crs="EPSG:4326", transform=transform,
+        p,
+        "w",
+        driver="GTiff",
+        height=4,
+        width=4,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=transform,
     ) as ds:
         ds.write(data, 1)
     return p

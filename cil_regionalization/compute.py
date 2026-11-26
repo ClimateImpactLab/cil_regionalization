@@ -19,6 +19,7 @@ typical). The TOML's `n_workers`, `threads_per_worker`, `slurm_queue`,
 `slurm_walltime` override the defaults; everything else stays fixed
 to keep the surface area small.
 """
+
 from __future__ import annotations
 
 import contextlib

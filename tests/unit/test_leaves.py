@@ -4,6 +4,7 @@ The frames are synthetic. Every test here fails without the module,
 because the import fails. The tests that name a mutation in their
 docstring were also seen to fail under it.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -78,7 +79,11 @@ class TestTargetTable:
         )
         table = TargetTable.from_frame(frame, ["iso", "adm"])
         assert table.ids == (
-            ("B", "1"), ("a", "10"), ("a", "9"), ("b", "1"), ("é", "1"),
+            ("B", "1"),
+            ("a", "10"),
+            ("a", "9"),
+            ("b", "1"),
+            ("é", "1"),
         )
         assert table.ordinals(frame).tolist() == [3, 1, 2, 0, 4]
         assert table.ordinals(frame).dtype == np.int32
@@ -134,7 +139,8 @@ class TestTargetTable:
         assert TargetTable.read(path) == table
         schema = pq.read_schema(path)
         assert [(f.name, str(f.type)) for f in schema] == [
-            (ORDINAL_COLUMN, "int32"), ("gid", "string"),
+            (ORDINAL_COLUMN, "int32"),
+            ("gid", "string"),
         ]
         assert b"pandas" not in schema.metadata
 
@@ -153,9 +159,7 @@ class TestTargetTable:
 
 
 class TestLayout:
-    def test_rows_are_sorted_by_target_and_keep_their_order_within_one(
-        self, tmp_path
-    ):
+    def test_rows_are_sorted_by_target_and_keep_their_order_within_one(self, tmp_path):
         """The years of a target stay as the leaf had them, 2051, 2050,
         2052. Failed with a sort that is not stable, on the second leaf
         here, which is long enough for such a sort to move rows."""
@@ -237,7 +241,10 @@ class TestLayout:
         ids = [f"T{i:03d}" for i in range(130)]
         path = tmp_path / "leaf.parquet"
         written = write_leaf(
-            _leaf(ids, [2050]), path, targets=_targets(ids), value_col="value",
+            _leaf(ids, [2050]),
+            path,
+            targets=_targets(ids),
+            value_col="value",
             identity={},
         )
         assert written.rows_per_group == [128, 2]
@@ -298,8 +305,15 @@ class TestSchema:
             pd.array([True, False, None], dtype="boolean"),
             np.array([1, "a", 2.5], dtype=object),
         ],
-        ids=["categorical", "datetime", "Int64", "Float64", "string", "boolean",
-             "mixed"],
+        ids=[
+            "categorical",
+            "datetime",
+            "Int64",
+            "Float64",
+            "string",
+            "boolean",
+            "mixed",
+        ],
     )
     def test_a_dimension_pandas_writes_two_ways_is_refused(self, tmp_path, column):
         frame = _leaf(["T1"]).assign(band=column)[["gid", "band", "year", "value"]]
@@ -466,7 +480,10 @@ class TestReadGroups:
             for ordinals in groups:
                 writer.write_table(
                     pa.table(
-                        [pa.array(ordinals, pa.int32()), pa.array([0.0] * len(ordinals))],
+                        [
+                            pa.array(ordinals, pa.int32()),
+                            pa.array([0.0] * len(ordinals)),
+                        ],
                         schema=schema,
                     ),
                     row_group_size=max(len(ordinals), 1),
@@ -505,9 +522,7 @@ class TestReadGroups:
             return real(*args, **kwargs)
 
         monkeypatch.setattr(leaves.pq, "ParquetFile", flaky)
-        table, failed = leaves.read_groups(
-            path, 0, 1, expect=self._expect(), pause=0.0
-        )
+        table, failed = leaves.read_groups(path, 0, 1, expect=self._expect(), pause=0.0)
         assert (failed, len(opens), table.num_rows) == (2, 3, 6)
 
     def test_three_opens_that_fail_are_the_end(self, tmp_path, monkeypatch):

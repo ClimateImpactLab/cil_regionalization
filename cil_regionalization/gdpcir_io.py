@@ -14,6 +14,7 @@ does not match the stated contract, loudly, per store:
 ``derive_daily`` then consumes the year arrays exactly as it does for
 BCSD; nothing downstream knows which generation fed it.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -49,15 +50,13 @@ def open_gdpcir_daily(store: str, variable: str, **open_kwargs):
         ds = xr.open_zarr(store)
     if variable not in ds.data_vars:
         raise ValueError(
-            f"{store}: variable {variable!r} not present "
-            f"(has {sorted(ds.data_vars)})"
+            f"{store}: variable {variable!r} not present (has {sorted(ds.data_vars)})"
         )
     lon = np.asarray(ds["lon"].values, dtype="float64")
     lat = np.asarray(ds["lat"].values, dtype="float64")
     if lon.min() < -180.0 or lon.max() >= 180.0:
         raise ValueError(
-            f"{store}: longitudes outside [-180,180); got "
-            f"{lon.min()}..{lon.max()}"
+            f"{store}: longitudes outside [-180,180); got {lon.min()}..{lon.max()}"
         )
     if np.any(np.diff(lon) <= 0) or np.any(np.diff(lat) <= 0):
         raise ValueError(f"{store}: coordinates are not strictly ascending")
@@ -108,9 +107,7 @@ def gdpcir_stac_assets(
     import planetary_computer
     import pystac_client
 
-    cat = pystac_client.Client.open(
-        _STAC_URL, modifier=planetary_computer.sign_inplace
-    )
+    cat = pystac_client.Client.open(_STAC_URL, modifier=planetary_computer.sign_inplace)
     want = set(variables)
     found: dict = {}
     for cname in collections or _GDPCIR_COLLECTIONS:
@@ -130,6 +127,4 @@ def gdpcir_stac_assets(
             if want == set(found):
                 return found
     missing = sorted(want - set(found))
-    raise FileNotFoundError(
-        f"GDPCIR {model}/{experiment}: no asset for {missing}"
-    )
+    raise FileNotFoundError(f"GDPCIR {model}/{experiment}: no asset for {missing}")

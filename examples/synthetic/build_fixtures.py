@@ -8,6 +8,7 @@ The committed files under ``tests/data/synthetic/`` (``regions.parquet`` and
 You only need to run this if you change the fixture shape; otherwise the
 committed binaries are the source of truth.
 """
+
 from __future__ import annotations
 
 import os

@@ -17,6 +17,7 @@ zero. Each crop therefore has its own set of covered units.
 
 Run once from anywhere that sees the repos; the inputs are small.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -24,6 +25,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+
 
 def _cil(path: str) -> Path:
     """A /project/cil path, refused if it is not there."""
@@ -55,16 +57,17 @@ def build(adm: str, areas: pd.DataFrame, csv_sha: str) -> None:
     missing = merged["hierid"][merged[CROPS[0]].isna()].unique()
     if len(missing):
         raise ValueError(
-            f"{len(missing)} source units have no row in {CSV}: "
-            f"{sorted(missing)[:10]}"
+            f"{len(missing)} source units have no row in {CSV}: {sorted(missing)[:10]}"
         )
 
     for crop in CROPS:
         # the region's crop area, split across straddled targets by the
         # land-area split recorded in the geometric artifact
-        raw = merged[crop] * merged["areawt"] / merged.groupby("hierid")[
-            "areawt"
-        ].transform("sum")
+        raw = (
+            merged[crop]
+            * merged["areawt"]
+            / merged.groupby("hierid")["areawt"].transform("sum")
+        )
         out = merged[id_fields + ["hierid"]].copy()
         out["croparea_raw"] = raw
         totals = out.groupby(id_fields)["croparea_raw"].transform("sum")
@@ -90,23 +93,23 @@ def build(adm: str, areas: pd.DataFrame, csv_sha: str) -> None:
                 "weight_source_sha256": csv_sha,
                 "built_from": str(base_dir),
                 "allocation": "region crop area split across straddled "
-                              "targets by the geometric artifact's "
-                              "land-area shares",
+                "targets by the geometric artifact's "
+                "land-area shares",
                 "zero_area_source_units": int(merged.loc[zero, "hierid"].nunique()),
                 "covered_source_units": int(merged.loc[~zero, "hierid"].nunique()),
                 "coverage_note": "zero-area regions carry NaN weight; runs "
-                                 "declare on_zero_weight='skip' and targets "
-                                 "with no cropland for this crop are absent "
-                                 "from outputs, not zero",
+                "declare on_zero_weight='skip' and targets "
+                "with no cropland for this crop are absent "
+                "from outputs, not zero",
             },
         }
-        (target / "weights.manifest.json").write_text(
-            json.dumps(manifest, indent=2)
-        )
+        (target / "weights.manifest.json").write_text(json.dumps(manifest, indent=2))
         n_targets = out.dropna(subset=["cropareawt"]).groupby(id_fields).ngroups
         total_targets = out.groupby(id_fields).ngroups
-        print(f"{target.name}: {manifest['extra']['covered_source_units']} "
-              f"covered sources, {n_targets}/{total_targets} targets with cropland")
+        print(
+            f"{target.name}: {manifest['extra']['covered_source_units']} "
+            f"covered sources, {n_targets}/{total_targets} targets with cropland"
+        )
 
 
 def main() -> int:

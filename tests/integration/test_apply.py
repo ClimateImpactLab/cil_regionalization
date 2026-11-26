@@ -19,6 +19,7 @@ Level-2 code "001" repeats across countries on purpose: with a display
 name attached to it, this is exactly the shared-name pattern (the same
 ADM1 name in two countries) that name-based joins merge silently.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -84,9 +85,7 @@ def _level2_artifact() -> WeightsArtifact:
             "popwt": [1.0, 1.0, 0.25, 0.75, 1.0, 1.0, 1.0],
         }
     )
-    return _artifact(
-        frame, id_fields=["adm0", "code"], normalization="per_source"
-    )
+    return _artifact(frame, id_fields=["adm0", "code"], normalization="per_source")
 
 
 def _mc_data() -> pd.DataFrame:
@@ -339,9 +338,7 @@ class TestIntensive:
             }
         )
         artifact = _artifact(frame, id_fields=["adm0"], normalization="per_destination")
-        data = pd.DataFrame(
-            {"unit_id": ["x", "y"], "value": [10.0, float("nan")]}
-        )
+        data = pd.DataFrame({"unit_id": ["x", "y"], "value": [10.0, float("nan")]})
         result = apply_weights(
             artifact,
             data,
@@ -430,9 +427,7 @@ class TestCoveragePolicies:
             "country": "C1",
             "value": 999.0,
         }
-        data = pd.concat(
-            [_mc_data(), pd.DataFrame([ghost])], ignore_index=True
-        )
+        data = pd.concat([_mc_data(), pd.DataFrame([ghost])], ignore_index=True)
         result = apply_weights(
             _level1_artifact(),
             data,
@@ -503,8 +498,11 @@ class TestRowsInMatchesRowWiseTuples:
     def test_duplicate_keys(self):
         # Keys repeat across a dimension, and one row is duplicated outright.
         frame = pd.DataFrame(
-            {"cell_ix": [1, 1, 2, 3, 1, 1], "cell_iy": [5, 5, 6, 7, 9, 5],
-             "t": [0, 1, 0, 0, 0, 0]}
+            {
+                "cell_ix": [1, 1, 2, 3, 1, 1],
+                "cell_iy": [5, 5, 6, 7, 9, 5],
+                "t": [0, 1, 0, 0, 0, 0],
+            }
         )
         mask = self._check(frame, ["cell_ix", "cell_iy"], {(1, 5), (3, 7)})
         assert mask.tolist() == [True, True, False, True, False, True]
@@ -525,10 +523,7 @@ class TestRowsInMatchesRowWiseTuples:
         # The applied ids are built from itertuples, so a NaN key arrives
         # as a different float object than the one in the frame.
         frame = pd.DataFrame({"x": [1.0, np.nan, 2.0], "y": [1, 1, 1]})
-        ids = {
-            tuple(r)
-            for r in frame.iloc[1:].itertuples(index=False, name=None)
-        }
+        ids = {tuple(r) for r in frame.iloc[1:].itertuples(index=False, name=None)}
         self._check(frame, ["x", "y"], ids)
 
     def test_empty_frame(self):
@@ -566,8 +561,12 @@ class TestGroupCodesMatchPandas:
 
     @pytest.mark.parametrize(
         "keys, dims",
-        [(["i"], ["t"]), (["i", "s"], ["t"]), (["s", "f"], ["i", "t"]),
-         (["i", "s"], [])],
+        [
+            (["i"], ["t"]),
+            (["i", "s"], ["t"]),
+            (["s", "f"], ["i", "t"]),
+            (["i", "s"], []),
+        ],
     )
     def test_duplicate_check_and_first_rows(self, keys, dims):
         frame = _mixed_frame()
@@ -583,9 +582,7 @@ class TestGroupCodesMatchPandas:
         # limit, so the codes are compressed between columns.
         rng = np.random.default_rng(1)
         n = 500
-        frame = pd.DataFrame(
-            {c: rng.integers(0, n, n) for c in ("a", "b", "c")}
-        )
+        frame = pd.DataFrame({c: rng.integers(0, n, n) for c in ("a", "b", "c")})
         frame = pd.concat([frame, frame.iloc[:7]], ignore_index=True)
         codes, card = _group_codes(frame, ["a", "b", "c"])
         assert card <= 8 * (len(frame) + 1) * (len(frame) + 1)

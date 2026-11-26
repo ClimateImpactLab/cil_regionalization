@@ -4,6 +4,7 @@ Everything except the missing-dependency test needs the [netcdf] extra;
 those tests skip cleanly when xarray is absent so the base suite stays
 runnable without it.
 """
+
 from __future__ import annotations
 
 import sys
@@ -45,9 +46,7 @@ def _leaf_frame() -> pd.DataFrame:
     rows = []
     for unit, base in (("u1", 100.0), ("u2", 40.0)):
         for year in (2050, 2051):
-            rows.append(
-                {"unit_id": unit, "year": year, "value": base + (year - 2050)}
-            )
+            rows.append({"unit_id": unit, "year": year, "value": base + (year - 2050)})
     return pd.DataFrame(rows)
 
 
@@ -78,7 +77,8 @@ class TestReaderRoundTrip:
         frame = _leaf_frame()
         nc = tmp_path / "leaf.nc4"
         _write_netcdf(
-            nc, frame.rename(columns={"unit_id": "spatial_thing"}),
+            nc,
+            frame.rename(columns={"unit_id": "spatial_thing"}),
             region_dim="spatial_thing",
         )
         from_nc = read_netcdf_leaf(
@@ -155,9 +155,9 @@ class TestReaderRoundTrip:
         from cil_regionalization.netcdf_io import read_netcdf_leaf
 
         frame = _leaf_frame()
-        frame.loc[
-            (frame["unit_id"] == "u2") & (frame["year"] == 2051), "value"
-        ] = np.nan
+        frame.loc[(frame["unit_id"] == "u2") & (frame["year"] == 2051), "value"] = (
+            np.nan
+        )
         nc = tmp_path / "leaf.nc4"
         _write_netcdf(nc, frame, region_dim="unit_id")
         out = read_netcdf_leaf(
@@ -278,13 +278,19 @@ class TestUnitsBackstop:
         ds.to_netcdf(nc)
         with pytest.raises(ValueError, match="meaningless"):
             read_netcdf_leaf(
-                nc, variables=["share"], region_dim="unit_id",
-                region_col="unit_id", kind="extensive",
+                nc,
+                variables=["share"],
+                region_dim="unit_id",
+                region_col="unit_id",
+                kind="extensive",
             )
         # The same variable reads fine under intensive, and without kind.
         out = read_netcdf_leaf(
-            nc, variables=["share"], region_dim="unit_id",
-            region_col="unit_id", kind="intensive",
+            nc,
+            variables=["share"],
+            region_dim="unit_id",
+            region_col="unit_id",
+            kind="intensive",
         )
         assert len(out) == 2
         out = read_netcdf_leaf(
@@ -315,8 +321,11 @@ class TestRegionLabels:
         p = tmp_path / "leaf.nc4"
         self._write_uncoordinated_leaf(p)
         frame = read_netcdf_leaf(
-            p, variables=["rebased"], region_dim="region",
-            region_col="unit_id", region_labels="regions",
+            p,
+            variables=["rebased"],
+            region_dim="region",
+            region_col="unit_id",
+            region_labels="regions",
         )
         assert sorted(frame["unit_id"].unique()) == ["u1", "u2"]
         assert len(frame) == 6
@@ -327,7 +336,10 @@ class TestRegionLabels:
         p = tmp_path / "leaf.nc4"
         self._write_uncoordinated_leaf(p)
         frame = read_netcdf_leaf(
-            p, variables=["rebased"], region_dim="region", region_col="unit_id",
+            p,
+            variables=["rebased"],
+            region_dim="region",
+            region_col="unit_id",
         )
         assert sorted(frame["unit_id"].unique()) == [0, 1]
 
@@ -338,8 +350,11 @@ class TestRegionLabels:
         self._write_uncoordinated_leaf(p)
         with pytest.raises(ValueError, match="no variable 'nope'"):
             read_netcdf_leaf(
-                p, variables=["rebased"], region_dim="region",
-                region_col="unit_id", region_labels="nope",
+                p,
+                variables=["rebased"],
+                region_dim="region",
+                region_col="unit_id",
+                region_labels="nope",
             )
 
     def test_labels_with_wrong_dimensions_raise(self, tmp_path):
@@ -352,14 +367,19 @@ class TestRegionLabels:
         ds = xr.Dataset(
             {
                 "rebased": (("year", "region"), np.arange(6.0).reshape(3, 2)),
-                "regions": (("year", "region"),
-                            np.array([["a", "b"]] * 3, dtype=object)),
+                "regions": (
+                    ("year", "region"),
+                    np.array([["a", "b"]] * 3, dtype=object),
+                ),
             },
             coords={"year": [2050, 2051, 2052]},
         )
         ds.to_netcdf(p)
         with pytest.raises(ValueError, match="expected exactly"):
             read_netcdf_leaf(
-                p, variables=["rebased"], region_dim="region",
-                region_col="unit_id", region_labels="regions",
+                p,
+                variables=["rebased"],
+                region_dim="region",
+                region_col="unit_id",
+                region_labels="regions",
             )

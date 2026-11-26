@@ -22,6 +22,7 @@ truncates or prunes anything other than the single file it was asked
 to write. There is deliberately no "clean the output directory" helper
 in this module, and adding one would be a mistake.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -64,8 +65,9 @@ QUANTILE_DESCRIPTIONS: dict[str, str] = {
 # What `--lite-drop-names` puts in the metadata in place of the per-unit
 # name fields, so a consumer of a lite document is told where the names
 # went rather than finding them simply missing.
-NAMES_OMITTED = ("omitted; take display names from the GADM 2.0 boundary "
-                 "files via the id")
+NAMES_OMITTED = (
+    "omitted; take display names from the GADM 2.0 boundary files via the id"
+)
 
 
 def round_significant(value: float) -> float:
@@ -82,8 +84,9 @@ def round_significant(value: float) -> float:
     return float(f"{value:.{SIGNIFICANT_DIGITS}g}")
 
 
-def check_ids_resolve(ids: Iterable[str], known: Iterable[str], *,
-                      context: str) -> None:
+def check_ids_resolve(
+    ids: Iterable[str], known: Iterable[str], *, context: str
+) -> None:
     """Raise unless every id in `ids` appears in `known`.
 
     An id the GADM name table does not carry means the converter's id
@@ -100,9 +103,9 @@ def check_ids_resolve(ids: Iterable[str], known: Iterable[str], *,
         )
 
 
-def check_statistics_available(statistics: Iterable[str],
-                               available: Iterable[str], *,
-                               context: str) -> None:
+def check_statistics_available(
+    statistics: Iterable[str], available: Iterable[str], *, context: str
+) -> None:
     """Raise unless every requested statistic is one the product has.
 
     Asking for a statistic the product never computed is a silent
@@ -118,9 +121,13 @@ def check_statistics_available(statistics: Iterable[str],
         )
 
 
-def lite_document(metadata: Mapping, data: Mapping,
-                  statistics: Iterable[str] = LITE_STATISTICS, *,
-                  drop_names: bool = False) -> tuple[dict, dict]:
+def lite_document(
+    metadata: Mapping,
+    data: Mapping,
+    statistics: Iterable[str] = LITE_STATISTICS,
+    *,
+    drop_names: bool = False,
+) -> tuple[dict, dict]:
     """The same document restricted to `statistics`.
 
     Returns a new (metadata, data) pair; the inputs are not mutated, so
@@ -132,8 +139,9 @@ def lite_document(metadata: Mapping, data: Mapping,
     default and the metadata says where the names went.
     """
     statistics = list(statistics)
-    check_statistics_available(statistics, metadata["statistics"],
-                               context="lite document")
+    check_statistics_available(
+        statistics, metadata["statistics"], context="lite document"
+    )
 
     meta = dict(metadata)
     meta["statistics"] = {s: metadata["statistics"][s] for s in statistics}
@@ -159,8 +167,9 @@ def lite_document(metadata: Mapping, data: Mapping,
     return meta, out
 
 
-def write_document(out_dir: str | Path, filename: str,
-                   metadata: Mapping, data: Mapping) -> Path:
+def write_document(
+    out_dir: str | Path, filename: str, metadata: Mapping, data: Mapping
+) -> Path:
     """Write one gzipped web document and return its path.
 
     Creates `out_dir` if absent and writes exactly one file. Nothing
@@ -177,6 +186,5 @@ def write_document(out_dir: str | Path, filename: str,
     out.mkdir(parents=True, exist_ok=True)
     path = out / filename
     with gzip.open(path, "wt", encoding="utf-8") as f:
-        json.dump({"metadata": dict(metadata), "data": data}, f,
-                  separators=(",", ":"))
+        json.dump({"metadata": dict(metadata), "data": data}, f, separators=(",", ":"))
     return path

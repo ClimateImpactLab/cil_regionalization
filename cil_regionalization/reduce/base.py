@@ -5,6 +5,7 @@ holds nothing about how: no block sizes and no engine options. A second
 backend adds a module, a branch in `get_backend`, a name in the ``kind``
 of `ReduceConfig` and an options field there.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -19,9 +20,7 @@ from cil_regionalization.config import _Strict
 # a statistics method pair, (quantile_method, summation)
 Methods = tuple[str, str]
 ALL_METHODS: frozenset[Methods] = frozenset(
-    (q, s)
-    for q in ("linear", "lower_step", "inverted_cdf")
-    for s in ("fast", "exact")
+    (q, s) for q in ("linear", "lower_step", "inverted_cdf") for s in ("fast", "exact")
 )
 
 

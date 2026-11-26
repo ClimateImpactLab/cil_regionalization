@@ -54,6 +54,7 @@ local bytes, so a truncated transfer fails before publication. On
 publish it prints the record id, the DOI, and the registry.toml
 entries to add with the id filled in.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -159,16 +160,15 @@ def _load_record(record_path: Path) -> dict:
         if key not in rec:
             raise SystemExit(f"record TOML is missing {key!r}")
     if ("registry_names" in rec) == ("files" in rec):
-        raise SystemExit(
-            "record TOML needs exactly one of [registry_names] or files"
-        )
+        raise SystemExit("record TOML needs exactly one of [registry_names] or files")
     return rec
 
 
 def _staged_files(rec: dict) -> list[Path]:
     files_dir = (_ROOT / rec["files_dir"]).resolve()
     staged = [
-        f for f in sorted(files_dir.glob("*"))
+        f
+        for f in sorted(files_dir.glob("*"))
         if f.is_file() and not f.name.startswith(".")
     ]
     if not staged:
@@ -237,10 +237,16 @@ def _build_zip(rec: dict, files: list[Path], workdir: Path) -> Path | None:
         _add(zf, f"{root}/README.txt", zcfg["readme"].strip().encode() + b"\n")
         if "registry_names" in rec:
             for name, stem in rec["registry_names"].items():
-                _add(zf, f"{root}/{name}/weights.parquet",
-                     by_name[f"{stem}.parquet"].read_bytes())
-                _add(zf, f"{root}/{name}/weights.manifest.json",
-                     by_name[f"{stem}.manifest.json"].read_bytes())
+                _add(
+                    zf,
+                    f"{root}/{name}/weights.parquet",
+                    by_name[f"{stem}.parquet"].read_bytes(),
+                )
+                _add(
+                    zf,
+                    f"{root}/{name}/weights.manifest.json",
+                    by_name[f"{stem}.manifest.json"].read_bytes(),
+                )
         else:
             for f in files:
                 _add(zf, f"{root}/{f.name}", f.read_bytes())
@@ -262,9 +268,11 @@ def _metadata(rec: dict) -> dict:
     related = []
     for entry in rec.get("related_identifiers", []):
         if "REPLACE" in entry.get("identifier", ""):
-            print(f"warning: skipping placeholder related identifier "
-                  f"({entry.get('relation')}); fill it in and republish "
-                  f"metadata when the sibling record exists")
+            print(
+                f"warning: skipping placeholder related identifier "
+                f"({entry.get('relation')}); fill it in and republish "
+                f"metadata when the sibling record exists"
+            )
             continue
         related.append(
             {"identifier": entry["identifier"], "relation": entry["relation"]}
@@ -290,16 +298,28 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--record", required=True, help="record TOML sidecar")
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--dry-run", action="store_true",
-                      help="print the plan and build the zip; no network")
-    mode.add_argument("--draft", action="store_true",
-                      help="upload and verify, stop before publishing")
-    mode.add_argument("--publish", action="store_true",
-                      help="upload, verify, and publish")
-    parser.add_argument("--sandbox", action="store_true",
-                        help="use sandbox.zenodo.org and ZENODO_SANDBOX_TOKEN")
-    parser.add_argument("--new-version-of", metavar="ID", default=None,
-                        help="open a new version of this published record id")
+    mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the plan and build the zip; no network",
+    )
+    mode.add_argument(
+        "--draft", action="store_true", help="upload and verify, stop before publishing"
+    )
+    mode.add_argument(
+        "--publish", action="store_true", help="upload, verify, and publish"
+    )
+    parser.add_argument(
+        "--sandbox",
+        action="store_true",
+        help="use sandbox.zenodo.org and ZENODO_SANDBOX_TOKEN",
+    )
+    parser.add_argument(
+        "--new-version-of",
+        metavar="ID",
+        default=None,
+        help="open a new version of this published record id",
+    )
     args = parser.parse_args(argv)
 
     rec = _load_record(Path(args.record))
@@ -312,14 +332,16 @@ def main(argv: list[str] | None = None) -> int:
     if upload_loose:
         print(f"loose files ({len(files)}):")
         for f in files:
-            print(f"  {f.name}  {f.stat().st_size/1e6:.2f} MB  md5 {_md5(f)}")
+            print(f"  {f.name}  {f.stat().st_size / 1e6:.2f} MB  md5 {_md5(f)}")
     _verify_staging(rec, files)
 
     with tempfile.TemporaryDirectory() as tmp:
         zip_path = _build_zip(rec, files, Path(tmp))
         if zip_path is not None:
-            print(f"zip built: {zip_path.name}  "
-                  f"{zip_path.stat().st_size/1e6:.2f} MB  md5 {_md5(zip_path)}")
+            print(
+                f"zip built: {zip_path.name}  "
+                f"{zip_path.stat().st_size / 1e6:.2f} MB  md5 {_md5(zip_path)}"
+            )
         uploads = (files if upload_loose else []) + (
             [zip_path] if zip_path is not None else []
         )
@@ -327,8 +349,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("nothing to upload: loose = false and no [zip]")
 
         if args.dry_run:
-            print(f"\ndry run: {len(uploads)} files would be uploaded; "
-                  f"nothing sent")
+            print(f"\ndry run: {len(uploads)} files would be uploaded; nothing sent")
             return 0
 
         token = _load_token(args.sandbox)
@@ -350,8 +371,7 @@ def main(argv: list[str] | None = None) -> int:
 
         bucket = dep["links"]["bucket"]
         for f in uploads:
-            stored = _request("PUT", f"{bucket}/{f.name}", token,
-                              data=f.read_bytes())
+            stored = _request("PUT", f"{bucket}/{f.name}", token, data=f.read_bytes())
             remote = str(stored.get("checksum", "")).removeprefix("md5:")
             local = _md5(f)
             if remote != local:

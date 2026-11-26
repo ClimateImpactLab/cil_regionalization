@@ -12,6 +12,7 @@ the caller has to say how it was smoothed, so the record of a run says
 so too. The reference period and the offset have no default, because
 the offset is only right for one reference period and one baseline.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -106,12 +107,9 @@ class GMSTTable:
         years = pd.to_numeric(kept[time_col]).to_numpy(dtype=np.float64)
         if (years != np.floor(years)).any():
             raise ValueError(
-                f"column {time_col!r} of the temperature table has to hold "
-                f"whole years"
+                f"column {time_col!r} of the temperature table has to hold whole years"
             )
-        out = pd.DataFrame(
-            {name: kept[name].astype(str) for name in member_cols}
-        )
+        out = pd.DataFrame({name: kept[name].astype(str) for name in member_cols})
         out[_YEAR] = years.astype(np.int64)
         out[_VALUE] = pd.to_numeric(kept[value_col]).to_numpy(dtype=np.float64)
         repeated = out.duplicated(subset=[*member_cols, _YEAR])
@@ -242,9 +240,7 @@ class WarmingLevels:
             if level is not None
         )
 
-    def record(
-        self, members: Optional[Iterable[Sequence[str]]] = None
-    ) -> dict:
+    def record(self, members: Optional[Iterable[Sequence[str]]] = None) -> dict:
         """What a manifest says of a run, as plain values. ``members``
         are those the run used, and every member of the table if it is
         left out. The rest of the table is listed under
@@ -369,8 +365,7 @@ def assign_warming_levels(
     labels = [period.label for period in periods]
     if len(set(labels)) != len(labels):
         raise ValueError(
-            f"two periods have the same impact years, so the same label: "
-            f"{labels}"
+            f"two periods have the same impact years, so the same label: {labels}"
         )
 
     def years_of(span) -> list[int]:
@@ -378,9 +373,7 @@ def assign_warming_levels(
 
     def values(member, series: dict[int, float], span, what: str) -> list[float]:
         years = years_of(span)
-        lacking = [
-            y for y in years if y not in series or math.isnan(series[y])
-        ]
+        lacking = [y for y in years if y not in series or math.isnan(series[y])]
         if lacking:
             raise ValueError(
                 f"{dict(zip(table.member_cols, member))} has no temperature "

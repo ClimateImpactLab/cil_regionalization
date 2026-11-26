@@ -6,6 +6,7 @@ backend used, fallback counts per weight, timing, and row counts. The
 goal is reproducibility-by-recognition: someone returning to a Parquet
 later should be able to tell what produced it, how, and how to redo it.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -124,7 +125,9 @@ def hash_file(path: str | Path, chunk_size: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
-def collect_package_versions(packages: tuple[str, ...] = _TRACKED_PACKAGES) -> dict[str, str]:
+def collect_package_versions(
+    packages: tuple[str, ...] = _TRACKED_PACKAGES,
+) -> dict[str, str]:
     out: dict[str, str] = {}
     for pkg in packages:
         try:
@@ -166,7 +169,8 @@ def build_manifest(cfg: Config) -> Manifest:
         # grid artifacts pass the application-time version check the same
         # way polygon artifacts do
         source_version=(
-            cfg.source.version if cfg.source is not None
+            cfg.source.version
+            if cfg.source is not None
             else GridSpec.from_config(cfg.grid).source_version
         ),
     )

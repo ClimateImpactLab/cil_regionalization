@@ -4,6 +4,7 @@ Writes the canonical output frame as Parquet (default), CSV, or both, and
 a JSON manifest sidecar. Local paths and `gs://` URIs are supported; the
 GCS path uses `gcsfs` which is part of the `[bigquery]` extra.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
