@@ -97,6 +97,7 @@ else:  # pragma: no cover
 from cil_regionalization.apply import WeightsArtifact, apply_weights
 from cil_regionalization.config import SourceUnitPolicies, _Strict
 from cil_regionalization.manifest import collect_package_versions
+from cil_regionalization.model_weights import ModelWeights, read_model_weights
 from cil_regionalization.stats import (
     _quantile_label,
     _window_label,
@@ -492,15 +493,16 @@ def run_pipeline(
         if cfg.weights is not None
         else None
     )
+    model_weights = None
     if cfg.stats.model_weights is not None:
+        # The file is read here and nowhere else. The workers get these
+        # rows, so a file edited during the run cannot give different
+        # leaves different weights.
+        model_weights = read_model_weights(cfg.stats.model_weights)
         # fail before the run, not after it: every declared value of the
         # weight level must have a row in the table
-        mapping = _load_model_weight_map(cfg.stats.model_weights)
         declared = cfg.tree.expect[cfg.stats.model_weight_level]
-        unmatched = sorted(
-            v for v in declared
-            if v.replace("surrogate_", "").lower() not in mapping
-        )
+        unmatched = model_weights.missing(declared)
         if unmatched:
             raise ValueError(
                 f"{len(unmatched)} values of "
@@ -522,7 +524,7 @@ def run_pipeline(
     initargs = (
         cfg.weights.dir if cfg.weights is not None else None,
         cfg.weights.stem if cfg.weights is not None else None,
-        cfg.stats.model_weights,
+        model_weights,
     )
     # the log states which code ran: an editable install picks up
     # whatever is on disk at launch, so the file path plus this marker
@@ -588,7 +590,7 @@ def run_pipeline(
     # window: the window label is an ordinary identity dimension.
     combined = pd.concat([o.pop("frame") for o in outcomes], ignore_index=True)
     _log_memory(f"after concat ({len(combined)} rows)")
-    weight_col = "model_weight" if cfg.stats.model_weights is not None else None
+    weight_col = "model_weight" if model_weights is not None else None
     stats = pooled_statistics(
         combined,
         sample_dims=cfg.stats.sample_dims,
@@ -644,6 +646,15 @@ def run_pipeline(
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
+        # what the leaves were given, not what the config declares
+        "model_weights_record": (
+            model_weights.record(
+                o["leaf"][cfg.tree.levels.index(cfg.stats.model_weight_level)]
+                for o in outcomes
+            )
+            if model_weights is not None
+            else None
+        ),
         "subtract_filename": cfg.tree.subtract_filename,
         "excluded_leaves": [list(c) for c in cfg.tree.exclude],
         "package_versions": collect_package_versions(),
@@ -707,24 +718,6 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
     return frame.loc[order].reset_index(drop=True)
 
 
-def _load_model_weight_map(weights_path: str) -> dict[str, float]:
-    """The SMME table as normalized-name -> weight.
-
-    The weight file is an SMME table (columns ``model`` and ``weight``,
-    tab separated). Names match after the usual normalization: strip a
-    trailing ``*``, lowercase, and drop the trees' ``surrogate_``
-    prefix.
-    """
-    table = pd.read_csv(weights_path, sep="\t")
-    if not {"model", "weight"}.issubset(table.columns):
-        raise ValueError(
-            f"model weights file {weights_path} needs 'model' and 'weight' "
-            f"columns; found {sorted(table.columns)}"
-        )
-    keys = table["model"].str.replace("*", "", regex=False).str.lower()
-    return dict(zip(keys, table["weight"].astype(float)))
-
-
 def _peak_rss_gb() -> float:
     """This process's peak resident memory in GB."""
     import resource
@@ -778,16 +771,14 @@ _WORKER_STATE: dict = {}
 def _init_worker(
     weights_dir: Optional[str],
     weights_stem: Optional[str],
-    model_weights: Optional[str],
+    model_weights: Optional[ModelWeights],
 ) -> None:
     _WORKER_STATE["artifact"] = (
         WeightsArtifact.load(weights_dir, stem=weights_stem)
         if weights_dir is not None
         else None
     )
-    _WORKER_STATE["model_weights"] = (
-        _load_model_weight_map(model_weights) if model_weights else None
-    )
+    _WORKER_STATE["model_weights"] = model_weights
 
 
 def _read_leaf(
@@ -932,8 +923,9 @@ def _process_leaf(task: tuple) -> dict:
             # column here; attaching it per leaf replaces a merge over
             # the full combined frame that dominated end-of-run memory
             value = leaf.labels(levels)[stats_cfg.model_weight_level]
-            key = value.replace("surrogate_", "").lower()
-            reduced["model_weight"] = _WORKER_STATE["model_weights"][key]
+            reduced["model_weight"] = _WORKER_STATE["model_weights"].weight_of(
+                value
+            )
 
         return {
             "leaf": list(leaf.values),

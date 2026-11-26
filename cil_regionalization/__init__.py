@@ -6,6 +6,7 @@ What a consumer of published weights touches, in call order:
     read_netcdf_grid    a lat-lon NetCDF to the cell table apply_weights takes
     apply_weights       aggregate source-level data to the artifact's targets
     summarize_samples   window means and pooled statistics over MC draws
+    read_model_weights  the climate model weights those statistics take
 
 `window_means` and `pooled_statistics` are the two halves of
 `summarize_samples`, for pipelines that reduce time per leaf before
@@ -72,6 +73,7 @@ from cil_regionalization.gradients import (
     read_gradient_leaf,
     window_gradient,
 )
+from cil_regionalization.model_weights import ModelWeights, read_model_weights
 from cil_regionalization.netcdf_io import read_netcdf_grid, read_netcdf_leaf
 from cil_regionalization.schema import GRID_CELLS, OutputSchema, SourceUnits
 from cil_regionalization.stats import (
@@ -85,6 +87,7 @@ from cil_regionalization.stats import (
 __all__ = [
     "Config",
     "GRID_CELLS",
+    "ModelWeights",
     "OutputSchema",
     "SourceUnitPolicies",
     "SourceUnits",
@@ -103,6 +106,7 @@ __all__ = [
     "mixture_quantile",
     "pooled_statistics",
     "read_gradient_leaf",
+    "read_model_weights",
     "read_netcdf_grid",
     "read_netcdf_leaf",
     "summarize_samples",

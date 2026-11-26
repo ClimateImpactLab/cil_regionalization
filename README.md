@@ -167,6 +167,23 @@ marks a surrogate, which the projection trees spell with a prefix
 (`surrogate_GFDL-CM3_94`). Strip the prefix and lowercase, and every
 model in the trees matches exactly one weight row.
 
+`read_model_weights` applies that rule to a file on disk. It reads the
+file once and refuses a table in which two rows match the same model.
+
+```python
+weights = cilreg.read_model_weights("rcp85_SMME_weights.tsv")
+draws["weight"] = weights.attach(draws["gcm"])
+entry = weights.record(leaf_models)  # one model name per leaf pooled
+```
+
+`attach` raises if a model has no row. `record` returns what a manifest
+should keep about the run: the file's path and SHA256, each model that
+was given a weight with that weight and its number of leaves, and the
+rows no model matched with their weights. The two lists together are
+the whole table, so the statistics can be rerun from the manifest if
+the file is lost. A pipeline run writes this entry to its manifest as
+`model_weights_record`.
+
 Weighted quantiles follow the historical extraction tool: the left
 step inverse of the weighted empirical distribution, not the
 interpolated quantiles of the unweighted path. Pooling a sample
