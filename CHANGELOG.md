@@ -331,6 +331,17 @@ window with the models and the draws.
   `"stage": "all"`.
 - New: `ReduceRequest.pool_years`, and `ReduceBackend.check_options`,
   which the pipeline calls before it aggregates anything.
+- Changed: the pandas reduce backend plans a block at 240 bytes for a
+  row it keeps and 40 more for each dimension the leaf has of its own,
+  where it planned 130 for any leaf. For one memory budget the blocks
+  hold about half the rows they held, or fewer for a leaf with
+  dimensions, so a reduce opens each leaf about twice as often. The
+  resident memory of a worker grew by up to 155 bytes a kept row on
+  leaves with no dimension and by 168, 194 and 218 with one, two and
+  three, on synthetic leaves on macOS, and 130 left nothing over
+  that. The new figures cover each by half again or more. The dry run
+  prints the figure it used, and the manifest has it as
+  `reduce.bytes_per_row` next to `reduce.max_worker_peak_gb`.
 
 ## v0.5.0
 

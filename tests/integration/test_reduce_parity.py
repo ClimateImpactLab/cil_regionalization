@@ -237,9 +237,9 @@ def _backend(memory_gb: float = 1.0, n_workers: int = 1) -> PandasBlocks:
 def _one_group_a_block(request: ReduceRequest, n_workers: int = 1) -> PandasBlocks:
     """A budget that fits one row group a worker and no more, so every
     group is a block of its own."""
-    from cil_regionalization.reduce.pandas_blocks import BYTES_PER_ROW, kept_share
+    from cil_regionalization.reduce.pandas_blocks import bytes_per_row, kept_share
 
-    largest = max(request.rows_per_group) * kept_share(request) * BYTES_PER_ROW
+    largest = max(request.rows_per_group) * kept_share(request) * bytes_per_row(request)
     return _backend(memory_gb=largest * 1.01 * n_workers / 1e9, n_workers=n_workers)
 
 
@@ -846,18 +846,69 @@ class TestBlocks:
         )
 
         rows = [10, 10, 0, 0, 30, 5, 0, 20]
-        assert choose_blocks(rows, 1.0, 1000 * BYTES_PER_ROW) == [(0, 8)]
-        assert choose_blocks(rows, 1.0, 30 * BYTES_PER_ROW) == [
+        wide = BYTES_PER_ROW
+        assert choose_blocks(rows, 1.0, 1000 * wide, wide) == [(0, 8)]
+        assert choose_blocks(rows, 1.0, 30 * wide, wide) == [
             (0, 4), (4, 5), (5, 8),
         ]
-        assert choose_blocks(rows, 1.0, 35 * BYTES_PER_ROW) == [
+        assert choose_blocks(rows, 1.0, 35 * wide, wide) == [
             (0, 4), (4, 7), (7, 8),
         ]
         # half the rows kept, so twice the groups fit
-        assert choose_blocks(rows, 0.5, 30 * BYTES_PER_ROW) == [(0, 7), (7, 8)]
+        assert choose_blocks(rows, 0.5, 30 * wide, wide) == [(0, 7), (7, 8)]
+        # and half the groups if a row takes twice the bytes
+        assert choose_blocks(rows, 0.5, 30 * wide, 2 * wide) == [
+            (0, 4), (4, 5), (5, 8),
+        ]
         # groups that hold nothing start no block
-        assert choose_blocks([0, 0, 7, 0, 0], 1.0, 7 * BYTES_PER_ROW) == [(2, 5)]
-        assert choose_blocks([0, 0, 0], 1.0, 7 * BYTES_PER_ROW) == []
+        assert choose_blocks([0, 0, 7, 0, 0], 1.0, 7 * wide, wide) == [(2, 5)]
+        assert choose_blocks([0, 0, 0], 1.0, 7 * wide, wide) == []
+
+    def test_a_row_is_planned_wider_for_each_dimension_of_the_leaf(self, tmp_path):
+        """The leaves here have one dimension of their own, the band. A
+        leaf with more of them takes fewer rows a block for the same
+        budget."""
+        from cil_regionalization.reduce.pandas_blocks import (
+            BYTES_PER_DIMENSION, BYTES_PER_ROW, bytes_per_row, kept_share,
+        )
+
+        request, _ = build_request(tmp_path, weighted=False, n_members=False)
+        assert request.dimensions == ["band"]
+        assert bytes_per_row(request) == BYTES_PER_ROW + BYTES_PER_DIMENSION
+        bare = dataclasses.replace(
+            request, schema=tuple(c for c in request.schema if c["name"] != "band")
+        )
+        assert bytes_per_row(bare) == BYTES_PER_ROW
+        wider = dataclasses.replace(
+            request,
+            schema=request.schema
+            + ({"name": "tier"}, {"name": "rank"}),
+        )
+        assert bytes_per_row(wider) == BYTES_PER_ROW + 3 * BYTES_PER_DIMENSION
+
+        # a budget that fits every group of the leaves as they are
+        budget = (
+            sum(request.rows_per_group) * kept_share(request) * bytes_per_row(request)
+        )
+        backend = _backend(memory_gb=budget / 1e9)
+        assert backend.describe(request)["blocks"] == 1
+        assert backend.describe(request)["bytes_per_row"] == bytes_per_row(request)
+        assert backend.describe(wider)["blocks"] > 1
+        assert backend.describe(wider)["bytes_per_row"] == bytes_per_row(wider)
+
+    def test_the_planned_bytes_cover_what_was_measured_by_half_again(self):
+        """The most a kept row grew the resident memory of a worker,
+        by the dimensions of the leaf, over the settings the comment
+        on `BYTES_PER_ROW` lists. A figure lowered below one and a half
+        times that fails here."""
+        from cil_regionalization.reduce.pandas_blocks import (
+            BYTES_PER_DIMENSION, BYTES_PER_ROW,
+        )
+
+        measured = {0: 155, 1: 168, 2: 194, 3: 218}
+        for dimensions, most in measured.items():
+            planned = BYTES_PER_ROW + dimensions * BYTES_PER_DIMENSION
+            assert planned >= 1.5 * most, (dimensions, planned, most)
 
     def test_a_group_that_does_not_fit_is_refused(self):
         from cil_regionalization.reduce.pandas_blocks import (
@@ -865,7 +916,7 @@ class TestBlocks:
         )
 
         with pytest.raises(ValueError):
-            choose_blocks([10, 31, 5], 1.0, 30 * BYTES_PER_ROW)
+            choose_blocks([10, 31, 5], 1.0, 30 * BYTES_PER_ROW, BYTES_PER_ROW)
 
     def test_a_worker_that_dies_stops_the_run(self, tmp_path, monkeypatch):
         """Failed with a `multiprocessing.Pool`, which waits for the

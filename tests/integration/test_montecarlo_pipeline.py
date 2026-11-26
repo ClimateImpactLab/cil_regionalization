@@ -2376,9 +2376,9 @@ _METHODS_AND_WEIGHTS = pytest.mark.parametrize(
         else "weighted" if value else "unweighted"
     ),
 )
-# One row group of the tree below, at 130 bytes a row with half its
-# rows kept, is 3,120 bytes. This fits one group a worker and not two.
-_ONE_GROUP_GB = 3200e-9
+# One row group of the tree below, at 280 bytes a row with half its
+# rows kept, is 6,720 bytes. This fits one group a worker and not two.
+_ONE_GROUP_GB = 7000e-9
 
 
 def _same_frames(one: pd.DataFrame, two: pd.DataFrame) -> None:
@@ -2515,7 +2515,8 @@ class TestReduce:
         assert (reduce["blocks"], reduce["opens_per_leaf"], reduce["opens"]) == (2, 2, 12)
         assert reduce["failed_opens"] == 0
         assert reduce["rows_pooled"] == 48
-        assert reduce["bytes_per_row"] == 130
+        # 240, and 40 for the band
+        assert reduce["bytes_per_row"] == 280
         assert reduce["kept_share"] == 0.5
         assert manifest["artifact_sha256"] == _leaves_manifest(out)["aggregation"][
             "artifact"
@@ -2749,8 +2750,8 @@ class TestReduce:
             self._reduce(raw, memory_gb=None)
         with pytest.raises(
             ValueError,
-            match="one row group of 1 targets needs 3.12e-06 GB. The smallest "
-            "budget that runs with 3 workers is 9.36e-06 GB",
+            match="one row group of 1 targets needs 6.72e-06 GB. The smallest "
+            "budget that runs with 3 workers is 2.02e-05 GB",
         ):
             self._reduce(raw, memory_gb=_ONE_GROUP_GB, n_workers=3)
         with pytest.raises(ValueError, match="smallest budget"):
@@ -2812,10 +2813,11 @@ class TestReduce:
             f"  statistics -> {out / 'again.parquet'}",
             f"  manifest   -> {out / 'again.manifest.json'}",
             f"  leaves     -> {out / 'leaves' / 'statistics.leaves.manifest.json'}",
-            "  reduce: pandas, 3.2e-06 GB over 1 workers, 3.2e-06 GB a worker",
+            "  reduce: pandas, 7e-06 GB over 1 workers, 7e-06 GB a worker",
             "  2 blocks of up to 1 targets and 24 rows",
             "  2 opens a leaf, 12 in all",
-            "  sized at 130 bytes a row, with 0.5 of a group's rows kept. The "
+            "  sized at 280 bytes a row, 240 and 40 for each dimension of a "
+            "leaf, with 0.5 of a group's rows kept. The "
             "rows of a group are known summed over the leaves, so this takes "
             "every leaf to spread its rows over the groups alike.",
             f"  leaves: every file under {out / 'leaves'} is in a leaves manifest",
@@ -2837,7 +2839,7 @@ class TestReduce:
             warnings_.simplefilter("ignore")
             run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
         with pytest.warns(UnweightedModelWeightsWarning) as caught:
-            self._reduce(raw, memory_gb=1560e-9)
+            self._reduce(raw, memory_gb=2900e-9)
         assert len([w for w in caught if w.category is UnweightedModelWeightsWarning]) == 1
         manifest = json.loads((out / "again.manifest.json").read_text())
         assert manifest["reduce"]["blocks"] == 2
@@ -2907,8 +2909,8 @@ memory_gb = 1
 
 
 # One row group of that tree with every row kept, as pooled years keep
-# them, is 6,240 bytes.
-_ONE_POOLED_GROUP_GB = 6400e-9
+# them, is 13,440 bytes.
+_ONE_POOLED_GROUP_GB = 14000e-9
 
 
 @pytest.mark.usefixtures("one_target_a_group")
@@ -3258,7 +3260,7 @@ class TestPooledYears:
         raw, out = self._raw(weights_dir, tmp_path, memory_gb=1e-9)
         with pytest.raises(
             ValueError,
-            match="smallest budget that runs with 1 workers is 6.24e-06 GB. The "
+            match="smallest budget that runs with 1 workers is 1.34e-05 GB. The "
             "leaves are written and their manifest is complete .*Stage "
             "'reduce' takes the statistics from them without aggregating again",
         ):
@@ -3337,7 +3339,7 @@ class TestPooledYears:
         assert lines[:5] == head
         assert lines[5:8] == [
             "  with the leaves on disk now, which this run writes again:",
-            "  reduce: pandas, 6.4e-06 GB over 1 workers, 6.4e-06 GB a worker",
+            "  reduce: pandas, 1.4e-05 GB over 1 workers, 1.4e-05 GB a worker",
             "  2 blocks of up to 1 targets and 48 rows",
         ]
         assert "with 1 of a group's rows kept, each with its year." in lines[9]

@@ -33,13 +33,25 @@ from cil_regionalization.stats import (
     window_means,
 )
 
-# Bytes a pooled row is planned at. Traced on a block of the corn ADM2
-# shape: 43 held, 64 at the peak inside the statistics, 69 while the
-# Arrow tables are handed over. A row pooled with its year, under
-# ``pool_years``, grew the resident memory of a block of that shape by
-# 75 to 122, with and without a string dimension, on pandas 2.3.3 and
-# 3.0.3.
-BYTES_PER_ROW = 130
+# What a block is planned to take for a row it keeps, and for each
+# dimension that row has of its own. They come from the resident memory
+# of a worker, which grew by at most 155 bytes a kept row on leaves
+# with no dimension, and by 168, 194 and 218 with one, two and three.
+# That is the largest over window means and pooled years, the four
+# method pairs, with and without model weights, blocks of 1,300 to
+# 41,000 kept rows a leaf, and pandas 2.3.3 and 3.1.1, on macOS. The
+# two figures cover each of those by half again or more. A worker
+# killed for memory costs the pass, and a block that is smaller than
+# it had to be costs opens.
+BYTES_PER_ROW = 240
+BYTES_PER_DIMENSION = 40
+
+
+def bytes_per_row(request: ReduceRequest) -> int:
+    """The bytes a block is planned to take for each row it keeps. A
+    dimension of the leaf travels with every row, so each one adds to
+    it."""
+    return BYTES_PER_ROW + BYTES_PER_DIMENSION * len(request.dimensions)
 
 
 def kept_share(request: ReduceRequest) -> float:
@@ -66,12 +78,13 @@ def kept_share(request: ReduceRequest) -> float:
 
 
 def choose_blocks(
-    rows_per_group, share: float, bytes_per_worker: float
+    rows_per_group, share: float, bytes_per_worker: float, row_bytes: float
 ) -> list[tuple[int, int]]:
     """Consecutive row groups packed into blocks of at most
-    ``bytes_per_worker``, as (first, stop) pairs. Groups that hold
-    nothing are left out. Raises if one group alone does not fit."""
-    need = np.asarray(rows_per_group, dtype=np.float64) * share * BYTES_PER_ROW
+    ``bytes_per_worker``, as (first, stop) pairs, with a kept row
+    counted as ``row_bytes``. Groups that hold nothing are left out.
+    Raises if one group alone does not fit."""
+    need = np.asarray(rows_per_group, dtype=np.float64) * share * row_bytes
     if len(need) and need.max() > bytes_per_worker:
         raise _TooSmall(float(need.max()))
     blocks: list[tuple[int, int]] = []
@@ -115,8 +128,11 @@ class PandasBlocks(ReduceBackend):
         n_workers = self.options.n_workers or request.n_workers
         per_worker = self.options.memory_gb * 1e9 / n_workers
         share = kept_share(request)
+        row_bytes = bytes_per_row(request)
         try:
-            blocks = choose_blocks(request.rows_per_group, share, per_worker)
+            blocks = choose_blocks(
+                request.rows_per_group, share, per_worker, row_bytes
+            )
         except _TooSmall as error:
             needed = error.largest_group * n_workers / 1e9
             raise ValueError(
@@ -133,6 +149,7 @@ class PandasBlocks(ReduceBackend):
             "n_workers": max(1, min(n_workers, len(blocks))),
             "per_worker_gb": per_worker / 1e9,
             "share": share,
+            "row_bytes": row_bytes,
             "rows_in_largest_block": int(
                 max((kept[a:b].sum() for a, b in blocks), default=0)
             ),
@@ -156,7 +173,7 @@ class PandasBlocks(ReduceBackend):
             "opens_per_leaf": n_blocks,
             "opens": n_blocks * n_leaves,
             "per_worker_gb": plan["per_worker_gb"],
-            "bytes_per_row": BYTES_PER_ROW,
+            "bytes_per_row": plan["row_bytes"],
             "kept_share": plan["share"],
             "text": [
                 f"reduce: pandas, {self.options.memory_gb:g} GB over "
@@ -166,7 +183,14 @@ class PandasBlocks(ReduceBackend):
                 f"{plan['groups_in_largest_block'] * per_group} targets and "
                 f"{plan['rows_in_largest_block']:,} rows",
                 f"  {n_blocks} opens a leaf, {n_blocks * n_leaves:,} in all",
-                f"  sized at {BYTES_PER_ROW} bytes a row, with "
+                f"  sized at {plan['row_bytes']} bytes a row, "
+                + (
+                    f"{BYTES_PER_ROW} and {BYTES_PER_DIMENSION} for each "
+                    f"dimension of a leaf, "
+                    if request.dimensions
+                    else ""
+                )
+                + f"with "
                 f"{plan['share']:.4g} of a group's rows kept"
                 f"{', each with its year' if request.pool_years else ''}. "
                 f"The rows of a "
