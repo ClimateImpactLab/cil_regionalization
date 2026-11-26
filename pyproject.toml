@@ -20,7 +20,8 @@ dependencies = [
     "rasterio>=1.3",
     "pyarrow>=14",
     "pydantic>=2.6",
-    "pandas>=2.0",
+    # 2.1: before it a grouped sum or mean of an infinity is NaN
+    "pandas>=2.1",
     "numpy>=1.24",
     "scipy>=1.10",
     "tomli>=2.0; python_version < '3.11'",
@@ -79,3 +80,24 @@ markers = [
     "benchmark: timing runs under benchmarks/; excluded by default, they assert identical output and print timings",
 ]
 addopts = "-ra --strict-markers -m 'not bigquery and not dask and not network and not benchmark'"
+
+# CI runs `ruff check` and `ruff format --check` with the version it
+# pins. The rules are syntax errors, misplaced and unused imports, and
+# pyflakes: what can be wrong, not what is a matter of taste.
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+# notebooks are documents with their outputs, and are left as written
+extend-exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# the package repairs the environment before it imports anything
+"cil_regionalization/__init__.py" = ["E402"]
+# tests import after pytest.importorskip, and scripts after setting sys.path
+"tests/**" = ["E402"]
+"examples/**" = ["E402"]
+# fixtures imported from another test module are redefined as arguments
+"tests/integration/test_xarray_parity.py" = ["F811"]

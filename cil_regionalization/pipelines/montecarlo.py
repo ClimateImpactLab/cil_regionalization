@@ -1803,10 +1803,10 @@ def _run_reduce(
         stats["window"] = labels.map(
             {label: window for label, (_, window) in of_label.items()}
         )
-    for field, column in zip(request.id_fields, document["schema"][1:]):
+    for id_field, column in zip(request.id_fields, document["schema"][1:]):
         # what the same ids are in a frame of the pipeline's own
         wanted = "string" if column["pandas"] == "string" else pd.Series(["a"]).dtype
-        stats[field] = stats[field].astype(wanted)
+        stats[id_field] = stats[id_field].astype(wanted)
     stats = _ordered(stats, cfg)
     _log_memory("after reduce")
 

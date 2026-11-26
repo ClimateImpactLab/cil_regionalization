@@ -415,8 +415,12 @@ def check_against_full(ir_table: Path) -> None:
 
     # the global file has blank cells near the poles that some regions
     # use; none are in either country, so the global runs drop them
-    by_iso = lambda f: f["ISO"]
-    by_hierid = lambda f: f["hierid"].str[:3]
+    def by_iso(f):
+        return f["ISO"]
+
+    def by_hierid(f):
+        return f["hierid"].str[:3]
+
     full_weights = _restrict(full_weights, cells, by_iso)
     full_ir = _ir_weights(_collapse_wrapped_segments(ir_table))
     full_ir = _restrict(full_ir, cells, by_hierid)

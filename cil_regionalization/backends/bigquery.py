@@ -72,22 +72,9 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import pandas as pd
 
-
-logger = logging.getLogger(__name__)
-
-
-# Maximum number of attempts for transient-load-failure retries. Google's
-# BigQuery 500 internalError text prescribes retry with backoff; this
-# also covers ServiceUnavailable and DeadlineExceeded.
-_LOAD_MAX_ATTEMPTS = 3
-# Base delay in seconds; total wait is approximately base * (2 ** attempt)
-# + jitter. With base 5 and 3 attempts: ~5s, ~10s, then raise.
-_LOAD_BACKOFF_BASE_SECONDS = 5.0
-_LOAD_BACKOFF_JITTER_SECONDS = 5.0
 
 from cil_regionalization.backends.base import WeightsBackend, WeightsResult
 from cil_regionalization.config import Config
@@ -103,6 +90,18 @@ from cil_regionalization.regions import RegionSet
 from cil_regionalization.schema import OutputSchema
 from cil_regionalization.validate import check_grid_invariants, check_sum_to_one
 from cil_regionalization.weights import WeightSpec
+
+logger = logging.getLogger(__name__)
+
+
+# Maximum number of attempts for transient-load-failure retries. Google's
+# BigQuery 500 internalError text prescribes retry with backoff; this
+# also covers ServiceUnavailable and DeadlineExceeded.
+_LOAD_MAX_ATTEMPTS = 3
+# Base delay in seconds; total wait is approximately base * (2 ** attempt)
+# + jitter. With base 5 and 3 attempts: ~5s, ~10s, then raise.
+_LOAD_BACKOFF_BASE_SECONDS = 5.0
+_LOAD_BACKOFF_JITTER_SECONDS = 5.0
 
 
 _LAT_ORIGIN = -90.0
@@ -1169,7 +1168,7 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
         if missing:
             from shapely import wkt as _wkt
 
-            geom_lookup: dict[tuple, "shapely.Geometry"] = {}
+            geom_lookup: dict[tuple, object] = {}
             for _, row in geom_df.iterrows():
                 key = (str(row[primary_id]),)
                 if key in missing:

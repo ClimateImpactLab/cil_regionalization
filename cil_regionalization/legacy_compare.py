@@ -28,9 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
-import numpy as np
 import pandas as pd
 
 
@@ -113,28 +111,25 @@ def compare_weights(
 
     keys = ["hierid", "pix_cent_x", "pix_cent_y"]
     o = ours[keys + [wt_col]].copy()
-    l = legacy[keys + [wt_col]].copy()
+    old = legacy[keys + [wt_col]].copy()
     o["pix_cent_x"] = o["pix_cent_x"].round(coord_round)
     o["pix_cent_y"] = o["pix_cent_y"].round(coord_round)
-    l["pix_cent_x"] = l["pix_cent_x"].round(coord_round)
-    l["pix_cent_y"] = l["pix_cent_y"].round(coord_round)
+    old["pix_cent_x"] = old["pix_cent_x"].round(coord_round)
+    old["pix_cent_y"] = old["pix_cent_y"].round(coord_round)
     o = o.rename(columns={wt_col: "wt_ours"})
-    l = l.rename(columns={wt_col: "wt_legacy"})
+    old = old.rename(columns={wt_col: "wt_legacy"})
 
-    joined = o.merge(l, on=keys, how="outer")
+    joined = o.merge(old, on=keys, how="outer")
 
     # Per-region classification: each region is "NaN" in one side iff
     # ALL of its non-NaN cells in the join are NaN there. A region with
     # ANY non-NaN wt is "native" on that side.
-    def _region_class(group: pd.DataFrame) -> pd.Series:
-        ours_native = group["wt_ours"].notna().any()
-        legacy_native = group["wt_legacy"].notna().any()
-        return pd.Series(
-            {"ours_native": ours_native, "legacy_native": legacy_native}
-        )
-
-    region_class = joined.groupby("hierid", sort=False).apply(
-        _region_class, include_groups=False
+    by_region = joined["hierid"]
+    region_class = pd.DataFrame(
+        {
+            "ours_native": joined["wt_ours"].notna().groupby(by_region, sort=False).any(),
+            "legacy_native": joined["wt_legacy"].notna().groupby(by_region, sort=False).any(),
+        }
     )
 
     n_total = len(region_class)

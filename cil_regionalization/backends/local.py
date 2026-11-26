@@ -979,7 +979,6 @@ def _materialize_area_weighted_raster(fraction_path: str) -> str:
     with rasterio.open(src_path) as src:
         transform = src.transform
         height = src.height
-        width = src.width
         profile = src.profile.copy()
         # Per-row pixel area (m^2): rasters in EPSG:4326 with north-up
         # affine transform have constant |transform.e| latitude step

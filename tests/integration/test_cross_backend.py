@@ -25,10 +25,8 @@ weights) accommodates this comfortably without masking real bugs.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import geopandas as gpd
-import pandas as pd
 import pytest
 
 from cil_regionalization.backends.local import LocalBackend

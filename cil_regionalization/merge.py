@@ -24,7 +24,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
@@ -73,7 +72,6 @@ def merge_weights(
         )
     combined_ids = canonical_ids | supplement_ids
     if len(combined_ids) != expected_total:
-        diff = combined_ids ^ set(combined_ids)  # always empty; sanity
         raise ValueError(
             f"merge: combined unique hierids = {len(combined_ids)}, "
             f"expected {expected_total}. canonical={len(canonical_ids)}, "

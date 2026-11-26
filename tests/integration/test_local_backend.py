@@ -26,11 +26,9 @@ import pytest
 
 from cil_regionalization.backends.local import LocalBackend
 from cil_regionalization.config import Config
-from cil_regionalization.fallback import count_methods
 from cil_regionalization.grid import GridSpec
 from cil_regionalization.regions import RegionSet
 from cil_regionalization.schema import OutputSchema
-from cil_regionalization.validate import check_sum_to_one
 from cil_regionalization.weights import from_config_list
 
 
@@ -607,7 +605,6 @@ class TestNearestCellSynthesis:
 
         # Build a minimal raster so the local backend has a pop weight to
         # process; the synthesis path doesn't read it for nearest_cell rows.
-        import numpy as np
         import rasterio
         from rasterio.transform import from_origin
 
@@ -825,7 +822,6 @@ class TestCliLegacyCsv:
     ):
         from cil_regionalization.cli import main
         from cil_regionalization.legacy_export import LEGACY_COLUMNS
-        import geopandas as gpd
 
         # Rename the synthetic fixture's id column to hierid for legacy schema.
         gdf = three_region_gdf.rename(columns={"region_id": "hierid"})

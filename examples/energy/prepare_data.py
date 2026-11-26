@@ -216,7 +216,7 @@ def build_gradients(keep: list[str]) -> None:
 
 def build_gammas() -> None:
     lines = CSVV.read_text().splitlines()
-    gi = [i for i, l in enumerate(lines) if l.strip() == "gamma"][0]
+    gi = [i for i, line in enumerate(lines) if line.strip() == "gamma"][0]
     gammas = np.array([float(x) for x in lines[gi + 1].split(",")])
     assert gammas.shape == (80,)
     pd.DataFrame({"gamma": gammas}).to_parquet(DATA / "gammas.parquet", index=False)
@@ -244,7 +244,7 @@ def build_display_layer(keep: list[str]) -> None:
 
 
 def write_smme() -> None:
-    table = pd.read_csv(_mounted(SMME), sep="\t", usecols=["model", "weight"])
+    table = pd.read_csv(SMME, sep="\t", usecols=["model", "weight"])
     table.to_csv(DATA / "smme_weights_rcp85.csv", index=False)
     print(f"smme weights: {len(table)} models")
 

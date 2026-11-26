@@ -11,7 +11,6 @@ from unittest.mock import MagicMock
 
 import geopandas as gpd
 import pandas as pd
-import pytest
 from shapely.geometry import box
 
 
@@ -128,8 +127,13 @@ class TestRegionsFindLocal:
         rc = main(["regions", "find", "%", str(cfg), "--limit", "3"])
         out = capsys.readouterr().out
         assert rc == 0
-        lines = [l for l in out.splitlines() if l and not l.startswith("searching") and not l.startswith("3 matches")]
+        lines = [
+            line for line in out.splitlines()
+            if line and not line.startswith("searching")
+            and not line.startswith("3 matches")
+        ]
         # Three id lines plus the summary line
+        assert len(lines) == 3
         assert "3 matches (limit reached)" in out
 
 
@@ -154,7 +158,8 @@ class TestRegionsFindBigQuery:
         )
 
         # Inject the fake bigquery module so `from google.cloud import bigquery` returns ours.
-        import sys, types
+        import sys
+        import types
 
         gcloud_pkg = sys.modules.setdefault("google.cloud", types.ModuleType("google.cloud"))
         monkeypatch.setattr(gcloud_pkg, "bigquery", fake_bq, raising=False)

@@ -443,6 +443,16 @@ its warming level in a calendar period.
 - Fixed: a refusal raised while a reduce block is pooled named the
   target by its ordinal in the leaf file. It names it by its id fields,
   as the statistics file does.
+- Changed: the lowest pandas the package declares is 2.1, up from 2.0.
+  On pandas 2.0 a grouped sum or mean of an infinite value is NaN, so a
+  statistic that is infinite came back as NaN, and a refusal of an
+  infinite statistic was never reached. The lowest version of every
+  dependency the package declares is now installed and tested on every
+  push, on Python 3.10.
+- Fixed: `cross_backend_compare` and `legacy_compare` needed pandas 2.2
+  to classify a region, although the package declared 2.0.
+- Fixed: the data scripts of `examples/energy` and `examples/labor`
+  failed with a NameError when they copied the SMME weights.
 
 ## v0.5.0
 

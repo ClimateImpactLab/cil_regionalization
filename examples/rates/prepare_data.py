@@ -55,11 +55,11 @@ def slice_leaf(src: Path, dst: Path, keep: list[str]) -> None:
 def implied_population(gcm: str, filename: str, keep: list[str]):
     leaf = TREE / "batch0" / "rcp85" / gcm / "low" / "SSP3" / filename
     levels = leaf.with_name(leaf.name.replace(".nc4", "-levels.nc4"))
-    with xr.open_dataset(leaf) as r, xr.open_dataset(levels) as l:
+    with xr.open_dataset(leaf) as r, xr.open_dataset(levels) as lv:
         regs = [str(x) for x in r["regions"].values]
         idx = [regs.index(x) for x in keep]
         rate = r["rebased"].isel(region=idx).sel(year=YEARS).values
-        lev = l["rebased"].isel(region=idx).sel(year=YEARS).values
+        lev = lv["rebased"].isel(region=idx).sel(year=YEARS).values
         years = [int(y) for y in r["year"].sel(year=YEARS).values]
     return np.where(np.abs(rate) > 1e-9, lev / rate, np.nan), years
 

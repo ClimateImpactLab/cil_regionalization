@@ -13,7 +13,7 @@ Two groups:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -1008,7 +1008,6 @@ class TestLoadRetry:
 
     def test_does_not_retry_on_schema_error(self, monkeypatch):
         """Non-transient failures fail fast; retrying won't help."""
-        from cil_regionalization.backends.bigquery import BigQueryBackend
         from google.api_core.exceptions import BadRequest
 
         backend = self._backend_with_no_real_sleep(monkeypatch)
@@ -1203,8 +1202,6 @@ class TestNullGeometryHandling:
         assert result.manifest.extra["null_geometry_regions"] == ["CAN.5"]
 
     def test_fetch_sql_filters_null_geometry(self):
-        from cil_regionalization.grid import GridSpec
-        from cil_regionalization.weights import from_config_list
 
         cfg = _bq_cfg()
         regions = self._specs(cfg)

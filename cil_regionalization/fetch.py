@@ -43,6 +43,14 @@ from pathlib import Path
 from typing import Any
 
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised only on 3.10
+    import tomli as tomllib
+
+from cil_regionalization.apply import WeightsArtifact
+
+
 def _ssl_context() -> ssl.SSLContext:
     """An SSL context that finds a CA bundle on hosts whose OpenSSL has
     none configured (some cluster environments). certifi's bundle is
@@ -53,13 +61,6 @@ def _ssl_context() -> ssl.SSLContext:
         return ssl.create_default_context(cafile=certifi.where())
     except ImportError:
         return ssl.create_default_context()
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - exercised only on 3.10
-    import tomli as tomllib
-
-from cil_regionalization.apply import WeightsArtifact
 
 DEFAULT_BASE_URL = "https://zenodo.org"
 _CHUNK = 1 << 20

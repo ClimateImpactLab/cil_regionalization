@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from cil_regionalization.cross_backend_compare import (
-    CrossBackendReport,
     compare_outputs,
     load_canonical_parquet,
 )

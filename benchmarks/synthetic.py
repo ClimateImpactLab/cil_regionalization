@@ -179,7 +179,9 @@ def weights_frame(scale: int = SCALE) -> pd.DataFrame:
         // scale,
     )
 
-    ones = lambda n: np.ones(n, dtype=np.int64)
+    def ones(n):
+        return np.ones(n, dtype=np.int64)
+
     groups = [  # targets, regions, regions with no crop area
         (ones(n_pairs - n_pairs_empty), 1, 0),
         (ones(n_pairs_empty), 1, 1),

@@ -562,7 +562,6 @@ class TestMixedGeometryNormalization:
 
     def test_helper_extracts_polygonal_parts(self):
         import numpy as np
-        import shapely
         from shapely.geometry import (
             GeometryCollection,
             LineString,

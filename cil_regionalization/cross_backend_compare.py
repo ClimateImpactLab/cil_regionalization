@@ -35,7 +35,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 
@@ -111,20 +110,17 @@ def compare_outputs(
             )
 
     cols = list(_JOIN_KEYS) + [weight]
-    l = local[cols].rename(columns={weight: "wt_local"})
-    b = bq[cols].rename(columns={weight: "wt_bq"})
-    joined = l.merge(b, on=list(_JOIN_KEYS), how="outer")
+    on_local = local[cols].rename(columns={weight: "wt_local"})
+    on_bq = bq[cols].rename(columns={weight: "wt_bq"})
+    joined = on_local.merge(on_bq, on=list(_JOIN_KEYS), how="outer")
 
-    def _region_class(group: pd.DataFrame) -> pd.Series:
-        return pd.Series(
-            {
-                "local_native": group["wt_local"].notna().any(),
-                "bq_native": group["wt_bq"].notna().any(),
-            }
-        )
-
-    region_class = joined.groupby("hierid", sort=False).apply(
-        _region_class, include_groups=False
+    # a region is native on a side if any of its cells has a weight there
+    by_region = joined["hierid"]
+    region_class = pd.DataFrame(
+        {
+            "local_native": joined["wt_local"].notna().groupby(by_region, sort=False).any(),
+            "bq_native": joined["wt_bq"].notna().groupby(by_region, sort=False).any(),
+        }
     )
 
     n_total = len(region_class)

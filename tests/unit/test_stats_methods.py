@@ -185,6 +185,10 @@ class TestInvertedCdf:
     """Hyndman and Fan type 1, the smallest value whose cumulative
     weight share reaches q."""
 
+    @pytest.mark.skipif(
+        int(np.__version__.split(".")[0]) < 2,
+        reason="numpy.quantile takes weights from numpy 2.0",
+    )
     @pytest.mark.parametrize("seed", range(5))
     def test_weighted_matches_numpy(self, seed):
         rng = np.random.default_rng(seed)
@@ -209,8 +213,12 @@ class TestInvertedCdf:
         assert unweighted == _pooled(
             _members(values, np.full(n, 0.25)), qs, **options
         )
-        want = np.quantile(values, qs, method="inverted_cdf", weights=np.ones(n))
-        assert list(unweighted.values()) == want.tolist()
+        if int(np.__version__.split(".")[0]) >= 2:
+            # Weights of one, because numpy's unweighted form takes its
+            # index from n * q in floating point and picks the eighth of
+            # 100 values at 0.07. numpy takes weights from version 2.0.
+            want = np.quantile(values, qs, method="inverted_cdf", weights=np.ones(n))
+            assert list(unweighted.values()) == want.tolist()
 
     def test_a_share_that_equals_q_is_reached(self):
         """With 100 members, 7/100 is q = 0.07, so the 7th smallest

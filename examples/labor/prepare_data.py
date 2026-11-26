@@ -197,7 +197,7 @@ def build_display_layer(keep: list[str]) -> None:
 
 
 def write_smme() -> None:
-    table = pd.read_csv(_mounted(SMME), sep="\t", usecols=["model", "weight"])
+    table = pd.read_csv(SMME, sep="\t", usecols=["model", "weight"])
     table.to_csv(DATA / "smme_weights_rcp85.csv", index=False)
     print(f"smme weights: {len(table)} models")
 

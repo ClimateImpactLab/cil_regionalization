@@ -102,11 +102,11 @@ class TestSynthesizeRows:
         assert out.iloc[0]["admin1"] == "1"
 
     def test_representative_point_outside_grid_raises(self):
-        grid = _grid_1deg_180()
         # A geometry whose representative_point lies outside [-180, 180)
         # would be malformed at WGS84; easier to test by mocking the
-        # grid behavior. Skip a concrete case here; the boundary check
-        # in the helper is exercised by integration tests.
+        # grid behavior. The boundary check in the helper is exercised
+        # by integration tests. This test asserted nothing and passed.
+        pytest.skip("no concrete case here; see the integration tests")
 
     def test_polygon_with_hole_uses_interior_point(self):
         """The legacy script used polylabel to keep the synthesized cell

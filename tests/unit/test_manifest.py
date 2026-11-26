@@ -4,11 +4,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from cil_regionalization.config import Config
 from cil_regionalization.manifest import (
-    Manifest,
     build_manifest,
     collect_package_versions,
     hash_config,

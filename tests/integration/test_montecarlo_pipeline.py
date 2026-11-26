@@ -983,7 +983,7 @@ class TestNoSiteFactsInCode:
         source = Path(module.__file__).read_text()
         for forbidden in (
             "/project/",
-            "/" "Volumes/",  # split so test_no_mount_paths.py does not match it
+            "/" + "Volumes/",  # split so test_no_mount_paths.py does not match it
             "/shares/",
             "/home/",
             "conda",
@@ -1432,7 +1432,7 @@ class TestOutputNaming:
         raw["output"]["write_reduced"] = True
         raw["output"]["write_leaves"] = False
         cfg = MonteCarloPipelineConfig.model_validate(raw)
-        result = run_pipeline(cfg)
+        run_pipeline(cfg)
         out = tmp_path / "out"
         assert (out / "mortality_physical_rcpX.parquet").exists()
         assert (out / "mortality_physical_rcpX.manifest.json").exists()
@@ -3302,7 +3302,7 @@ class TestPooledYears:
         self, weights_dir, tmp_path
     ):
         """It runs under window means, which write no such column."""
-        tree, out = tmp_path / "tree", tmp_path / "out"
+        tree = tmp_path / "tree"
         TestLabelPlacement._build_tree(tree)
         for path in tree.rglob("damages.parquet"):
             pd.read_parquet(path).rename(columns={"band": "n_sample"}).to_parquet(
