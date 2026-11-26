@@ -365,6 +365,36 @@ its warming level in a calendar period.
   level, so a model that one scenario lacks is one line and not one
   line for each batch, socioeconomic model and scenario. A cell of
   stars alone is refused. The manifest records the cells as written.
+- New: `[stats.warming_levels]` in a pipeline config, in place of
+  `stats.windows`. The statistics are over the members at a warming
+  level in a period, with the levels from `assign_warming_levels`. A
+  leaf's member is read off the tree levels named in `member`, so no
+  level name is built in. Each period gives the years the temperature
+  is averaged over and the years of the impacts separately. The
+  statistics file gains a `warming_level` column next to `window`, and
+  two counts on every row: `n_members`, the draws behind a statistic,
+  and `n_bin_members`, the distinct members of the temperature table
+  behind it. A level nobody is at has no row and is in the manifest
+  with a zero. The statistics come from the leaf files under every
+  stage, so stage `all` writes the leaves and then reduces, and the
+  reduce stage gives other levels, periods or the other reduction
+  from the same leaves. `stats.pool_years` chooses between collapsing
+  each member's window first and pooling its years.
+  Refused: a config without `reference_period`, `offset`, `levels`,
+  `half_width`, `smoothing` or `periods`; `stats.windows` or
+  `stats.model_weights` next to it; a member column that is not a tree
+  level or is not pooled; a run without `[weights]`;
+  `output.write_reduced`; a declared member with no row in the table,
+  before any leaf is read; and a leaf that lacks a year of an impact
+  span its member is pooled over, as a row or as a value. The manifest
+  has the whole record under `warming_levels`. A run without warming
+  levels writes `"warming_levels": null` and is otherwise unchanged.
+- New: `LeafRequest.bin_member`, `ReduceRequest.include_n_bin_members`
+  and `ReduceRequest.whole_spans` in the `reduce` package.
+- Changed: a tree level named `warming_level` or `n_bin_members` is
+  refused before any leaf is read.
+- Changed: `stats.windows` may be left out when `[stats.warming_levels]`
+  is set. A config with neither is refused, as it was.
 
 ## v0.5.0
 

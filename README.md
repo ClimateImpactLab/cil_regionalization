@@ -288,6 +288,72 @@ A member's name is matched as it is written. A surrogate model is a
 member of its own and needs its own rows. A member that lacks a year
 of the reference period or of a `gmst_span` is refused by name.
 
+In a pipeline config the same settings go under
+`[stats.warming_levels]`, in place of `stats.windows`:
+
+```toml
+[stats]
+sample_dims = ["batch", "rcp", "gcm"]
+time_col = "year"
+quantiles = [0.05, 0.5, 0.95]
+quantile_method = "lower_step"
+summation = "fast"
+
+[stats.warming_levels]
+gmst = "gmst.csv"
+member = ["gcm", "rcp"]      # columns of the table, each a tree level
+reference_period = [1986, 2005]
+offset = 0.61
+levels = [1.5, 2, 3, 4, 5]
+half_width = 0.25
+smoothing = "unknown"
+
+[[stats.warming_levels.periods]]
+gmst_span = [2040, 2059]
+impact_span = [2040, 2058]
+
+[[stats.warming_levels.periods]]
+gmst_span = [2080, 2099]
+impact_span = [2080, 2098]
+
+[output]
+dir = "out"
+write_leaves = true
+
+[reduce.pandas]
+memory_gb = 128
+```
+
+A leaf's member is read off its level values, here its `gcm` and its
+`rcp`, so the tree declares both scenarios and the statistics pool
+them. A leaf is pooled under the level its member has in a period and
+left out of the periods in which it has none. The statistics file has
+a `warming_level` column next to `window`, which stays the period, and
+two counts on every row. `n_members` is the draws behind the
+statistic, a batch of a model counting as one. `n_bin_members` is the
+distinct members of the temperature table behind it, which is the
+number to read a 95th percentile over four models by. A level nobody
+is at in a period has no row, and the manifest records it with a zero.
+
+The statistics come from the leaf files under every stage, as with
+`stats.pool_years`, so stage `all` writes the leaves and then reduces
+them, and `--stage reduce` gives other levels, other periods or the
+other reduction from the same leaves. Collapsing each member's window
+first is the default, and `stats.pool_years = true` pools the years
+instead. The span is what is written: `[2040, 2058]` is nineteen
+years.
+
+A config that leaves out `reference_period`, `offset`, `levels`,
+`half_width`, `smoothing` or `periods` is refused. So is one that sets
+`stats.windows` or `stats.model_weights` as well: the members at a
+warming level count equally. `quantile_method = "lower_step"` is the
+extraction tool's quantile for that case. A member the tree declares
+that has no row in the table is refused before any leaf is read. A
+leaf that lacks a year of an impact span its member is pooled over, as
+a row or as a value, is refused by name, since its mean would be over
+fewer years than the span says. The manifest carries the whole record
+under `warming_levels`.
+
 `windows_of` gives, for one member, the periods in which it has a
 level, each with the level, the period's label and its impact years.
 `record` returns what a manifest should keep: the table's path and

@@ -669,7 +669,7 @@ class TestLabelPlacement:
         "name",
         [
             "window", "statistic", "n_members", "n_sample", "model_weight",
-            "target_id", "target_ordinal",
+            "target_id", "target_ordinal", "warming_level", "n_bin_members",
         ],
     )
     def test_a_level_named_like_an_output_column_is_refused_before_any_leaf(
@@ -3460,6 +3460,553 @@ memory_gb = 1
         # six leaves, and both years of each
         assert stats["n_members"].tolist() == [6, 6]
         assert stats["n_sample"].tolist() == [12, 12]
+
+
+_GWL_LEVELS = {
+    "batch": ["b0", "b1"],
+    "rcp": ["r45", "r85"],
+    "gcm": ["m0", "m1", "surrogate_m0_06"],
+}
+# The temperature of each member over 2040 to 2043 and over 2080 to
+# 2083, before the half a degree of the offset. With levels 1.5, 2, 3
+# and 4 and a half-width of a quarter:
+#   2040s  1.5 has three members, 2 has two, m1/r85 has no level
+#   2080s  2 has one, 3 has three, m1/r45 and m1/r85 have no level
+# and nobody is ever at 4.
+_GWL_TEMPERATURES = {
+    ("m0", "r45"): (1.0, 1.5),
+    ("m1", "r45"): (1.0, 2.0),
+    ("surrogate_m0_06", "r45"): (1.5, 2.5),
+    ("m0", "r85"): (1.5, 2.5),
+    ("m1", "r85"): (9.0, 9.0),
+    ("surrogate_m0_06", "r85"): (1.0, 2.5),
+}
+_GWL_YEARS = [2040, 2041, 2042, 2043, 2080, 2081, 2082, 2083]
+
+
+def _write_gmst(path: Path, temperatures=None, extra=()) -> Path:
+    rows = ["gcm,rcp,year,temp"]
+    members = dict(_GWL_TEMPERATURES if temperatures is None else temperatures)
+    members.update({member: (0.0, 0.0) for member in extra})
+    for (gcm, rcp), (mid, late) in members.items():
+        for year in range(1986, 2006):
+            rows.append(f"{gcm},{rcp},{year},0.0")
+        for year in _GWL_YEARS:
+            rows.append(f"{gcm},{rcp},{year},{mid if year < 2050 else late}")
+    path.write_text("\n".join(rows) + "\n")
+    return path
+
+
+def _build_gwl_tree(root: Path) -> None:
+    """One leaf a batch, scenario and model, with the eight years. The
+    values are exact in binary, and so is every sum and mean of them."""
+    for i, combo in enumerate(itertools.product(*_GWL_LEVELS.values())):
+        leaf_dir = root.joinpath(*combo)
+        leaf_dir.mkdir(parents=True, exist_ok=True)
+        rows = [
+            {"unit_id": unit, "year": year,
+             "value": base + 2.0 * i + 0.5 * (_GWL_YEARS.index(year) % 4) ** 2}
+            for unit, base in (("u1", 8.0), ("u2", 4.0))
+            for year in _GWL_YEARS
+        ]
+        pd.DataFrame(rows).to_parquet(leaf_dir / "damages.parquet", index=False)
+
+
+@pytest.mark.usefixtures("one_target_a_group")
+class TestWarmingLevels:
+    """``[stats.warming_levels]``: the statistics of the members at a
+    warming level in a period."""
+
+    @staticmethod
+    def _raw(weights_dir, tmp_path, **stats) -> tuple[dict, Path]:
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        if not tree.exists():
+            _build_gwl_tree(tree)
+        gmst = tmp_path / "gmst.csv"
+        if not gmst.exists():
+            _write_gmst(gmst)
+        raw = _pipeline_cfg(
+            weights_dir, tree, out, levels=_GWL_LEVELS
+        ).model_dump()
+        del raw["stats"]["windows"]
+        raw["stats"].update(
+            sample_dims=["batch", "rcp", "gcm"],
+            quantiles=[0.5, 0.95],
+            warming_levels={
+                "gmst": str(gmst),
+                "member": ["gcm", "rcp"],
+                "reference_period": [1986, 2005],
+                "offset": 0.5,
+                "levels": [1.5, 2.0, 3.0, 4.0],
+                "half_width": 0.25,
+                "smoothing": "unknown",
+                "periods": [
+                    {"gmst_span": [2040, 2043], "impact_span": [2040, 2042]},
+                    {"gmst_span": [2080, 2083], "impact_span": [2080, 2083]},
+                ],
+            },
+            **stats,
+        )
+        raw["output"]["write_leaves"] = True
+        raw["reduce"] = {"pandas": {"memory_gb": 1.0}}
+        return raw, out
+
+    @staticmethod
+    def _by_hand(cfg: MonteCarloPipelineConfig, out: Path) -> pd.DataFrame:
+        """From the leaf files and the table of comments above
+        `_GWL_TEMPERATURES`, in one call of `pooled_statistics`."""
+        import warnings
+
+        from cil_regionalization.leaves import ORDINAL_COLUMN
+        from cil_regionalization.pipelines.montecarlo import _ordered
+        from cil_regionalization.stats import (
+            UnweightedModelWeightsWarning,
+            pooled_statistics,
+        )
+
+        level_of = {
+            member: tuple(
+                next(
+                    (level for level in cfg.stats.warming_levels.levels
+                     if abs(value + 0.5 - level) <= 0.25),
+                    None,
+                )
+                for value in temperatures
+            )
+            for member, temperatures in _GWL_TEMPERATURES.items()
+        }
+        spans = [p.impact_span for p in cfg.stats.warming_levels.periods]
+        pieces = []
+        for batch, rcp, gcm in itertools.product(*_GWL_LEVELS.values()):
+            leaf = pd.read_parquet(
+                out / "leaves" / batch / rcp / gcm / "damages.aggregated.parquet"
+            ).drop(columns=[ORDINAL_COLUMN])
+            for (lo, hi), level in zip(spans, level_of[(gcm, rcp)]):
+                if level is None:
+                    continue
+                inside = leaf[leaf["year"].between(lo, hi)]
+                if not cfg.stats.pool_years:
+                    inside = (
+                        inside.groupby("target_id", sort=False)["value"]
+                        .mean().reset_index()
+                    )
+                pieces.append(
+                    inside.assign(
+                        warming_level=level, window=f"{lo}-{hi}", batch=batch,
+                        rcp=rcp, gcm=gcm,
+                    )
+                )
+        members = pd.concat(pieces, ignore_index=True)
+        years = ["year"] if cfg.stats.pool_years else []
+        members = members[
+            ["target_id", "warming_level", "window", "batch", "rcp", "gcm"]
+            + years + ["value"]
+        ]
+        with warnings.catch_warnings():
+            # the members at a level count equally by design
+            warnings.simplefilter("ignore", UnweightedModelWeightsWarning)
+            stats = pooled_statistics(
+                members,
+                sample_dims=["batch", "rcp", "gcm"] + years,
+                value_col="value",
+                quantiles=cfg.stats.quantiles,
+                include_n_members=True,
+                quantile_method=cfg.stats.quantile_method,
+                summation=cfg.stats.summation,
+            )
+        keys = ["target_id", "warming_level", "window"]
+        counted = members.assign(
+            draw=members["batch"] + members["rcp"] + members["gcm"],
+            model=members["gcm"] + "/" + members["rcp"],
+        ).groupby(keys)
+        index = pd.MultiIndex.from_frame(stats[keys])
+        if cfg.stats.pool_years:
+            stats = stats.rename(columns={"n_members": "n_sample"})
+            stats.insert(
+                list(stats.columns).index("n_sample"), "n_members",
+                counted["draw"].nunique().reindex(index).to_numpy(),
+            )
+        stats["n_bin_members"] = counted["model"].nunique().reindex(index).to_numpy()
+        return _ordered(stats, cfg)
+
+    @pytest.mark.parametrize(
+        "quantile_method", ["lower_step", "inverted_cdf", "linear"]
+    )
+    @pytest.mark.parametrize("pool_years", [False, True], ids=["means", "years"])
+    def test_the_statistics_are_over_the_members_at_each_level(
+        self, weights_dir, tmp_path, quantile_method, pool_years
+    ):
+        """Collapsing the window first and pooling its years, each
+        under the three quantile definitions."""
+        raw, out = self._raw(
+            weights_dir, tmp_path, quantile_method=quantile_method,
+            pool_years=pool_years,
+        )
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+        assert list(result.stats.columns) == (
+            ["target_id", "warming_level", "window", "statistic", "value",
+             "n_members"]
+            + (["n_sample"] if pool_years else [])
+            + ["n_bin_members"]
+        )
+        assert result.stats["warming_level"].dtype == "float64"
+        _same_frames(result.stats, self._by_hand(cfg, out))
+        _same_frames(pd.read_parquet(out / "statistics.parquet"), result.stats)
+
+        counts = (
+            result.stats[result.stats["target_id"] == "T1"]
+            .drop_duplicates(["warming_level", "window"])
+            .set_index(["window", "warming_level"])
+        )
+        # two batches of each member, and three years of the first period
+        assert counts["n_bin_members"].to_dict() == {
+            ("2040-2042", 1.5): 3, ("2040-2042", 2.0): 2,
+            ("2080-2083", 2.0): 1, ("2080-2083", 3.0): 3,
+        }
+        assert (counts["n_members"] == 2 * counts["n_bin_members"]).all()
+        if pool_years:
+            years = counts.index.get_level_values("window").map(
+                {"2040-2042": 3, "2080-2083": 4}
+            )
+            assert (counts["n_sample"] == counts["n_members"] * years).all()
+
+    def test_the_three_quantile_definitions_differ_over_two_models(
+        self, weights_dir, tmp_path
+    ):
+        """Four draws of two models are behind level 2 in the 2040s. The
+        95th percentile is the third of the four under the tool's step,
+        the fourth under the standard inverse, and between them when
+        interpolated."""
+        got = {}
+        for method in ("lower_step", "inverted_cdf", "linear"):
+            raw, _ = self._raw(weights_dir, tmp_path, quantile_method=method)
+            raw["output"]["dir"] = str(tmp_path / method)
+            stats = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+            row = stats[
+                (stats["target_id"] == "T1") & (stats["warming_level"] == 2.0)
+                & (stats["window"] == "2040-2042") & (stats["statistic"] == "q95")
+            ]
+            assert row["n_members"].item() == 4 and row["n_bin_members"].item() == 2
+            got[method] = row["value"].item()
+        assert got["lower_step"] < got["linear"] < got["inverted_cdf"]
+
+    def test_the_manifest_says_what_decided_the_levels(
+        self, weights_dir, tmp_path, recwarn
+    ):
+        raw, out = self._raw(weights_dir, tmp_path)
+        _write_gmst(tmp_path / "gmst.csv", extra=[("m9", "r45")])
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        manifest = json.loads((out / "statistics.manifest.json").read_text())
+        assert manifest["stage"] == "all"
+        assert manifest["windows"] == ["2040-2042", "2080-2083"]
+        assert manifest["n_members_forced"] == [] and manifest["notes"] == []
+        assert manifest["model_weights"] is None
+        record = manifest["warming_levels"]
+        assert record["path"] == str(tmp_path / "gmst.csv")
+        assert record["sha256"] == hashlib.sha256(
+            (tmp_path / "gmst.csv").read_bytes()
+        ).hexdigest()
+        assert record["member_cols"] == ["gcm", "rcp"]
+        assert record["reference_period"] == [1986, 2005]
+        assert record["offset"] == 0.5
+        assert record["half_width"] == 0.25
+        assert record["smoothing"] == "unknown"
+        assert record["levels"] == [1.5, 2.0, 3.0, 4.0]
+        assert record["periods"] == [
+            {"window": "2040-2042", "gmst_span": [2040, 2043],
+             "impact_span": [2040, 2042]},
+            {"window": "2080-2083", "gmst_span": [2080, 2083],
+             "impact_span": [2080, 2083]},
+        ]
+        # a level nobody is at is recorded and has no row in the file
+        assert record["n_members"] == {
+            "2040-2042": {"1.5": 3, "2": 2, "3": 0, "4": 0},
+            "2080-2083": {"1.5": 0, "2": 1, "3": 3, "4": 0},
+        }
+        assert record["in_no_bin"] == [{"gcm": "m1", "rcp": "r85"}]
+        assert record["unassigned"]["2080-2083"] == [
+            {"gcm": "m1", "rcp": "r45"}, {"gcm": "m1", "rcp": "r85"},
+        ]
+        assert record["unused_members"] == [{"gcm": "m9", "rcp": "r45"}]
+        assert len(record["members"]) == 6
+        assert record["members"][0] == {
+            "member": {"gcm": "m0", "rcp": "r45"},
+            "gmst_mean": {"2040-2042": 1.5, "2080-2083": 2.0},
+            "warming_level": {"2040-2042": 1.5, "2080-2083": 2.0},
+        }
+        stats = pd.read_parquet(out / "statistics.parquet")
+        assert sorted(stats["warming_level"].unique()) == [1.5, 2.0, 3.0]
+        # the members at a level count equally by design, so the warning
+        # for a level named gcm without weights is not for this run
+        assert not [w for w in recwarn if "weights every climate model" in str(w.message)]
+
+    def test_other_periods_and_the_other_reduction_come_from_the_same_leaves(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Four impact years where the first run took three, pooled
+        where it collapsed, without reading the tree again."""
+        from cil_regionalization.pipelines import montecarlo
+
+        raw, out = self._raw(weights_dir, tmp_path)
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+
+        def read_leaf(*args):
+            raise AssertionError("a leaf of the tree was read")
+
+        monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
+        again = json.loads(json.dumps(raw))
+        again["stats"]["pool_years"] = True
+        again["stats"]["warming_levels"]["periods"] = [
+            {"gmst_span": [2040, 2043], "impact_span": [2040, 2043]},
+        ]
+        again["output"].update(stem="pooled", leaves_stem="statistics")
+        cfg = MonteCarloPipelineConfig.model_validate(again)
+        got = run_pipeline(cfg, stage="reduce")
+        _same_frames(got.stats, self._by_hand(cfg, out))
+        assert set(got.stats["window"]) == {"2040-2043"}
+        manifest = json.loads((out / "pooled.manifest.json").read_text())
+        assert manifest["stage"] == "reduce" and manifest["pool_years"] is True
+        assert manifest["warming_levels"]["periods"][0]["impact_span"] == [2040, 2043]
+
+    @pytest.mark.parametrize(
+        "left_out",
+        ["reference_period", "offset", "levels", "half_width", "smoothing",
+         "periods", "gmst", "member"],
+    )
+    def test_a_config_that_leaves_out_what_decides_a_level_is_refused(
+        self, weights_dir, tmp_path, left_out
+    ):
+        raw, _ = self._raw(weights_dir, tmp_path)
+        del raw["stats"]["warming_levels"][left_out]
+        with pytest.raises(ValueError, match=f"warming_levels.{left_out}"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_configs_that_mix_warming_levels_with_what_they_replace_are_refused(
+        self, weights_dir, tmp_path
+    ):
+        raw, _ = self._raw(weights_dir, tmp_path)
+
+        def refused(message, **changes):
+            changed = json.loads(json.dumps(raw))
+            for section, values in changes.items():
+                if values is None:
+                    del changed[section]
+                else:
+                    changed[section].update(values)
+            with pytest.raises(ValueError, match=message):
+                MonteCarloPipelineConfig.model_validate(changed)
+
+        refused(
+            "stats.windows and \\[stats.warming_levels\\] are both set",
+            stats={"windows": [[2040, 2042]]},
+        )
+        table = tmp_path / "weights.tsv"
+        table.write_text("model\tweight\nm0\t1\n")
+        refused(
+            "stats.model_weights and \\[stats.warming_levels\\] are both set",
+            stats={
+                "model_weights": str(table), "model_weight_level": "gcm",
+                "quantile_method": "lower_step",
+            },
+        )
+        refused(
+            "member \\['rcp'\\] must be among stats.sample_dims",
+            stats={"sample_dims": ["batch", "gcm"]},
+        )
+        refused("\\[stats.warming_levels\\] needs \\[weights\\]", weights=None)
+        strangers = json.loads(json.dumps(raw))
+        strangers["stats"]["warming_levels"]["member"] = ["gcm", "ssp"]
+        strangers["stats"]["sample_dims"] = ["batch", "rcp", "gcm", "ssp"]
+        with pytest.raises(ValueError, match="member \\['ssp'\\] must be tree levels"):
+            MonteCarloPipelineConfig.model_validate(strangers)
+        neither = json.loads(json.dumps(raw))
+        del neither["stats"]["warming_levels"]
+        with pytest.raises(ValueError, match="stats.windows must list at least one"):
+            MonteCarloPipelineConfig.model_validate(neither)
+
+    def test_what_a_run_needs_is_asked_before_any_leaf_is_read(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        from cil_regionalization.pipelines import montecarlo
+
+        def read_leaf(*args):
+            raise AssertionError("a leaf was read")
+
+        monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
+        raw, out = self._raw(weights_dir, tmp_path)
+
+        def refused(message, **changes):
+            changed = json.loads(json.dumps(raw))
+            for section, values in changes.items():
+                changed[section] = {**changed.get(section, {}), **values}
+            for dry_run in (True, False):
+                with pytest.raises(ValueError, match=message):
+                    run_pipeline(
+                        MonteCarloPipelineConfig.model_validate(changed),
+                        dry_run=dry_run,
+                    )
+            assert not out.exists()
+
+        refused(
+            "\\[stats.warming_levels\\] takes the statistics from the leaf "
+            "files, so stage 'all' needs output.write_leaves = true",
+            output={"write_leaves": False},
+        )
+        refused(
+            "\\[stats.warming_levels\\] cannot write the reduced file",
+            output={"write_reduced": True},
+        )
+        refused("Set \\[reduce.pandas\\] memory_gb", reduce={"pandas": {"memory_gb": None}})
+        # a surrogate is not the model it was made from
+        only_m0 = {k: v for k, v in _GWL_TEMPERATURES.items() if "surrogate" not in k[0]}
+        _write_gmst(tmp_path / "gmst.csv", temperatures=only_m0)
+        refused(
+            "2 of the 6 members the tree declares have no row in the temperature "
+            "table .*first: \\{'gcm': 'surrogate_m0_06', 'rcp': 'r45'\\}.*a "
+            "surrogate needs rows of its own"
+        )
+        _write_gmst(
+            tmp_path / "gmst.csv",
+            temperatures={member: (9.0, 9.0) for member in _GWL_TEMPERATURES},
+        )
+        refused("none of the 6 members the tree declares is at any of the levels")
+        overlapping = json.loads(json.dumps(raw))
+        overlapping["stats"]["warming_levels"]["half_width"] = 0.3
+        with pytest.raises(ValueError, match="levels 1.5 and 2 overlap"):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(overlapping))
+
+    def test_the_temperature_table_is_read_once(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Before the first pass. A table read again for the second
+        could have changed in between."""
+        from cil_regionalization.pipelines import montecarlo
+
+        real, reads = montecarlo.read_gmst, []
+
+        def read_gmst(path, **kwargs):
+            reads.append(path)
+            return real(path, **kwargs)
+
+        monkeypatch.setattr(montecarlo, "read_gmst", read_gmst)
+        raw, _ = self._raw(weights_dir, tmp_path)
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert len(reads) == 1
+
+    def test_aggregate_does_not_read_the_temperature_table(
+        self, weights_dir, tmp_path
+    ):
+        raw, out = self._raw(weights_dir, tmp_path)
+        (tmp_path / "gmst.csv").unlink()
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw), stage="aggregate")
+        assert _leaves_manifest(out)["complete"] is True
+        with pytest.raises(FileNotFoundError):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw), stage="reduce")
+
+    @pytest.mark.parametrize("year", [2040, 2041, 2042])
+    def test_a_leaf_without_a_year_of_an_impact_span_is_refused_by_name(
+        self, weights_dir, tmp_path, monkeypatch, year
+    ):
+        """b1/r45/m0 lacks one year of 2040 to 2042. Its member is at
+        1.5 in the 2040s, so its mean there would be over two years of
+        three. Refused from the leaves manifest, before any leaf file
+        is opened."""
+        from cil_regionalization import leaves
+
+        raw, out = self._raw(weights_dir, tmp_path)
+        path = tmp_path / "tree" / "b1" / "r45" / "m0" / "damages.parquet"
+        frame = pd.read_parquet(path)
+        frame[frame["year"] != year].to_parquet(path, index=False)
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        run_pipeline(cfg, stage="aggregate")
+
+        def read_groups(*args, **kwargs):
+            raise AssertionError("a leaf file was opened")
+
+        monkeypatch.setattr(leaves, "read_groups", read_groups)
+        with pytest.raises(
+            ValueError,
+            match=rf"leaf b1/r45/m0 has no row for 1 of the 3 years 2040 to 2042 "
+            rf"\(first: \[{year}\]\). A mean over fewer years than the span is "
+            rf"refused",
+        ):
+            run_pipeline(cfg, stage="reduce")
+        assert not (out / "statistics.parquet").exists()
+
+    def test_a_year_missing_where_the_member_has_no_level_is_let_through(
+        self, weights_dir, tmp_path
+    ):
+        """m1/r85 is at no level in any period, so none of its years is
+        averaged."""
+        raw, out = self._raw(weights_dir, tmp_path)
+        path = tmp_path / "tree" / "b1" / "r85" / "m1" / "damages.parquet"
+        frame = pd.read_parquet(path)
+        frame[frame["year"] != 2041].to_parquet(path, index=False)
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        stats = run_pipeline(cfg).stats
+        assert len(stats) == 2 * 4 * 3
+
+    def test_a_value_missing_in_one_year_of_a_span_is_refused_by_name(
+        self, weights_dir, tmp_path
+    ):
+        """The year has its rows and one of them has no value. Found
+        when the leaf is read, and the leaves stay."""
+        import pyarrow.parquet as pq
+
+        raw, out = self._raw(weights_dir, tmp_path)
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        run_pipeline(cfg, stage="aggregate")
+        entry = next(
+            e for e in _leaves_manifest(out)["leaves"] if e["leaf"] == ["b0", "r45", "m0"]
+        )
+        path = out / "leaves" / entry["file"]
+        table = pq.read_table(path)
+        frame = table.to_pandas()
+        hole = (frame["target_id"] == "T2") & (frame["year"] == 2081)
+        assert hole.sum() == 1
+        values = frame["value"].to_numpy().copy()
+        values[hole.to_numpy()] = float("nan")
+        changed = table.set_column(
+            table.schema.get_field_index("value"), "value", [values]
+        )
+        with pq.ParquetWriter(path, table.schema, compression="snappy") as writer:
+            for group in range(2):
+                rows = changed.filter(
+                    [o == group for o in changed.column("target_ordinal").to_pylist()]
+                )
+                writer.write_table(rows, row_group_size=max(len(rows), 1))
+        # the size in the manifest is that of the file as it was written
+        document = _leaves_manifest(out)
+        for e in document["leaves"]:
+            if e["leaf"] == ["b0", "r45", "m0"]:
+                e["size"] = path.stat().st_size
+        (out / "leaves" / "statistics.leaves.manifest.json").write_text(
+            json.dumps(document)
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"leaf b0/r45/m0 has a value for 3 of the 4 years 2080 to 2083 "
+            r"at \{'target_id': 'T2'\}",
+        ):
+            run_pipeline(cfg, stage="reduce")
+
+    def test_the_dry_run_reads_the_table_and_touches_nothing(
+        self, weights_dir, tmp_path
+    ):
+        raw, out = self._raw(weights_dir, tmp_path)
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        lines = run_pipeline(cfg, dry_run=True).summary().splitlines()
+        assert lines[-2:] == [
+            "  reduce: [stats.warming_levels] takes the statistics from the "
+            "leaf files, by blocks, after every leaf is written",
+            "  the blocks are sized once the leaves are written",
+        ]
+        assert not out.exists()
+        run_pipeline(cfg)
+        lines = run_pipeline(cfg, dry_run=True).summary().splitlines()
+        assert "  with the leaves on disk now, which this run writes again:" in lines
+        assert any(line.startswith("  reduce: pandas, 1 GB") for line in lines)
 
 
 class TestOrderedIndex:

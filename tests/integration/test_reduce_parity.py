@@ -120,6 +120,8 @@ def build_request(
     quantiles=(0.5, 0.95),
     pool_years: bool = False,
     frames=None,
+    bin_members: bool = False,
+    whole_spans: bool = False,
 ) -> tuple[ReduceRequest, pd.DataFrame]:
     """Write the leaves under ``root`` and return the request for them,
     with the frame of every leaf joined by hand and labelled.
@@ -159,6 +161,8 @@ def build_request(
                 rows=len(frame),
                 profile=written.profile["year"],
                 model_weight=MODELS[model] if weighted else None,
+                # a model is a bin member, whatever its draws
+                bin_member=(model,) if bin_members else None,
             )
         )
         joined.append(frame.assign(model=model, draw=draw))
@@ -180,6 +184,8 @@ def build_request(
         quantile_method=methods[0],
         summation=methods[1],
         pool_years=pool_years,
+        include_n_bin_members=bin_members,
+        whole_spans=whole_spans,
     )
     return request, pd.concat(joined, ignore_index=True)
 
@@ -187,7 +193,7 @@ def build_request(
 def _sorted(frame: pd.DataFrame, request: ReduceRequest) -> pd.DataFrame:
     keys = [
         c for c in request.columns
-        if c not in (request.value_col, "n_members", "n_sample")
+        if c not in (request.value_col, "n_members", "n_sample", "n_bin_members")
     ]
     return frame.sort_values(keys, kind="stable").reset_index(drop=True)
 
@@ -837,6 +843,143 @@ class TestPooledYears:
 
         with pytest.raises(AssertionError):
             assert_same_statistics(_backend(), _Changed(one_row_more), request)
+
+
+class TestBinMembers:
+    """'n_bin_members' counts the distinct bin member of the leaves
+    behind a statistic. Here a model is a bin member and has two
+    draws."""
+
+    @pytest.mark.parametrize("pool_years", [False, True], ids=["means", "years"])
+    @pytest.mark.parametrize("weighted", [False, True], ids=["unweighted", "weighted"])
+    def test_the_models_behind_a_statistic_are_counted_apart_from_its_members(
+        self, tmp_path, weighted, pool_years
+    ):
+        request, joined = build_request(
+            tmp_path, weighted=weighted, n_members=True, pool_years=pool_years,
+            bin_members=True,
+        )
+        assert request.columns[-1] == "n_bin_members"
+        plain, _ = build_request(
+            tmp_path / "plain", weighted=weighted, n_members=True,
+            pool_years=pool_years,
+        )
+        expected = _by_hand(joined, plain, weighted)
+        # by hand: the models with a value in the window and a weight
+        inside = pd.concat(
+            [
+                joined[joined["year"].between(lo, hi)].assign(window=label)
+                for label, lo, hi in WINDOWS
+            ]
+        )
+        inside = inside[inside["value"].notna()]
+        if weighted:
+            inside = inside[inside["model"].map(MODELS) > 0]
+        models = inside.groupby(["gid", "band", "window"])["model"].nunique()
+        expected["n_bin_members"] = np.array(
+            [
+                models.get(key, 0)
+                for key in zip(expected["gid"], expected["band"], expected["window"])
+            ],
+            dtype=np.int64,
+        )
+        for backend in (_backend(), _one_group_a_block(request)):
+            stats, _ = backend.run(request)
+            _assert_matches(
+                stats, expected, request,
+                to_the_bit=request.summation == "exact" or (pool_years and weighted),
+            )
+        got = _sorted(stats, request)
+        # T5 is in every leaf. Three models, or the two that carry weight,
+        # each with two draws.
+        t5 = got[(got["gid"] == "T5") & (got["statistic"] == "mean")]
+        assert set(t5["n_bin_members"]) == {2 if weighted else 3}
+        assert set(t5["n_members"]) == {4 if weighted else 6}
+        # T4 is in no leaf of m2 and T1 lacks m1/d0 only, so T1 keeps m1
+        t4 = got[(got["gid"] == "T4") & (got["statistic"] == "mean")]
+        assert set(t4["n_bin_members"]) == {2}
+        assert stats["n_bin_members"].dtype == np.int64
+
+    def test_a_miscounted_bin_fails_the_harness(self, tmp_path):
+        request, _ = build_request(
+            tmp_path, weighted=False, n_members=True, bin_members=True
+        )
+        assert_same_statistics(_backend(), _Changed(lambda stats: stats), request)
+
+        def one_more(stats):
+            stats.loc[stats.index[0], "n_bin_members"] += 1
+            return stats
+
+        with pytest.raises(AssertionError):
+            assert_same_statistics(_backend(), _Changed(one_more), request)
+
+
+class TestWholeSpans:
+    """Under ``whole_spans`` a leaf with a value for some years of a
+    window and not for all of them stops the run."""
+
+    @staticmethod
+    def _leaves(short: str) -> dict:
+        """Two leaves of one target over 2050 to 2052. The first is
+        whole. The second lacks 2051, as a row or as a value."""
+        whole = pd.DataFrame(
+            {"gid": "T1", "band": "old", "year": [2050, 2051, 2052],
+             "value": [1.0, 2.0, 3.0]}
+        )
+        other = whole.assign(value=[4.0, np.nan, 6.0])
+        if short == "row":
+            other = other.dropna()
+        if short == "all":
+            other = other.assign(value=np.nan)
+        return {("m0", "d0"): whole, ("m0", "d1"): other}
+
+    @pytest.mark.parametrize("pool_years", [False, True], ids=["means", "years"])
+    @pytest.mark.parametrize("short", ["row", "value"])
+    def test_a_leaf_short_of_a_year_is_refused_by_name(
+        self, tmp_path, short, pool_years
+    ):
+        window = (("2050-2052", 2050, 2052),)
+        settings = dict(
+            weighted=False, n_members=True, frames=self._leaves(short),
+            windows_of=lambda model, draw: window, pool_years=pool_years,
+        )
+        request, _ = build_request(tmp_path / "strict", whole_spans=True, **settings)
+        request = dataclasses.replace(request, window_labels=("2050-2052",))
+        with pytest.raises(
+            ValueError,
+            match=r"leaf m0/d1 has a value for 2 of the 3 years 2050 to 2052 at "
+            r"\{'gid': 'T1', 'band': 'old'\}, and so for 1 of its 1 groups in "
+            r"this block. A mean over fewer years than the span is refused",
+        ):
+            _backend().run(request)
+        # without the flag the two years it has are used
+        loose, _ = build_request(tmp_path / "loose", **settings)
+        loose = dataclasses.replace(loose, window_labels=("2050-2052",))
+        stats, _ = _backend().run(loose)
+        mean = stats.set_index("statistic").loc["mean", "value"]
+        assert mean == ((2.0 + 5.0) / 2 if not pool_years else 16.0 / 5)
+
+    def test_a_group_with_no_value_at_all_is_not_a_short_span(self, tmp_path):
+        """It has no mean over fewer years. It has no mean."""
+        window = (("2050-2052", 2050, 2052),)
+        request, _ = build_request(
+            tmp_path, weighted=False, n_members=True, frames=self._leaves("all"),
+            windows_of=lambda model, draw: window, whole_spans=True,
+        )
+        request = dataclasses.replace(request, window_labels=("2050-2052",))
+        stats, _ = _backend().run(request)
+        assert set(stats["n_members"]) == {1}
+        assert stats.set_index("statistic").loc["mean", "value"] == 2.0
+
+    def test_a_year_outside_every_window_may_be_missing(self, tmp_path):
+        window = (("2050", 2050, 2050),)
+        request, _ = build_request(
+            tmp_path, weighted=False, n_members=True, frames=self._leaves("value"),
+            windows_of=lambda model, draw: window, whole_spans=True,
+        )
+        request = dataclasses.replace(request, window_labels=("2050",))
+        stats, _ = _backend().run(request)
+        assert stats.set_index("statistic").loc["mean", "value"] == 2.5
 
 
 class TestBlocks:

@@ -44,7 +44,10 @@ class LeafRequest:
     """One leaf to pool. ``windows`` are this leaf's own, each a label
     with the first and last time value it covers. Two leaves may give
     one label different spans, and a leaf may lack a label another has.
-    ``profile`` is the rows at each value of the time column."""
+    ``profile`` is the rows at each value of the time column.
+    ``bin_member`` names what the leaf counts as one of in
+    'n_bin_members', such as its climate model and scenario. Many
+    leaves share one."""
 
     file: str
     levels: tuple[str, ...]
@@ -52,6 +55,7 @@ class LeafRequest:
     rows: int
     profile: dict
     model_weight: Optional[float] = None
+    bin_member: Optional[tuple[str, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,12 @@ class ReduceRequest:
     Under ``pool_years`` no window mean is taken. Every row inside a
     window is a member of the sample with its own time value, and a row
     inside two windows is in both.
+
+    ``include_n_bin_members`` adds a column 'n_bin_members', the
+    distinct ``bin_member`` of the leaves behind a statistic. Under
+    ``whole_spans`` a leaf that has a value for some years of one of
+    its windows and not for all of them is an error, where otherwise
+    the years it has are used.
     """
 
     leaves_root: str
@@ -87,6 +97,8 @@ class ReduceRequest:
     quantile_method: str = field(kw_only=True)
     summation: str = field(kw_only=True)
     pool_years: bool = False
+    include_n_bin_members: bool = False
+    whole_spans: bool = False
     n_workers: int = 1
 
     @property
@@ -117,6 +129,7 @@ class ReduceRequest:
             + ["window", "statistic", self.value_col]
             + (["n_members"] if self.include_n_members else [])
             + (["n_sample"] if self.include_n_members and self.pool_years else [])
+            + (["n_bin_members"] if self.include_n_bin_members else [])
         )
 
 

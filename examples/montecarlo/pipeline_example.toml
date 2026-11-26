@@ -61,6 +61,21 @@ include_mean = true
 # write_leaves and the memory budget below.
 # pool_years = true
 
+# Warming levels in place of the windows above. Remove `windows` and
+# give every setting below, none of which has a default. See "Warming
+# levels" in the README.
+# [stats.warming_levels]
+# gmst = "gmst.csv"
+# member = ["gcm", "rcp"]
+# reference_period = [1986, 2005]
+# offset = 0.61
+# levels = [1.5, 2, 3, 4, 5]
+# half_width = 0.25
+# smoothing = "unknown"
+# [[stats.warming_levels.periods]]
+# gmst_span = [2040, 2059]
+# impact_span = [2040, 2058]
+
 [output]
 dir = "pipeline_out"
 # Keeps every aggregated leaf, with its years, under pipeline_out/leaves.

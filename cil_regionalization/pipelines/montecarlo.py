@@ -83,6 +83,15 @@ statistics always come from the leaf files, one block of targets at a
 time. Stage ``all`` then writes the leaves, as ``aggregate`` does, and
 reduces them, as ``reduce`` does.
 
+Warming levels. With ``[stats.warming_levels]`` the statistics are over
+the members at a warming level in a period, where a member is a
+temperature series such as a model and a scenario. The level of each
+member comes from `warming_levels.assign_warming_levels`, before any
+leaf is read. A leaf is then pooled under the level its member has in
+a period and left out of the periods in which it has none. This also
+runs from the leaf files under every stage, so one aggregation serves
+every level, every period and both ways of reducing.
+
 Per-capita to total conversion is deliberately outside: leaves must
 already carry the extensive quantity to aggregate. The hook for such a
 conversion is the step that produces the tree this pipeline reads.
@@ -141,6 +150,12 @@ from cil_regionalization.stats import (
     check_summation,
     pooled_statistics,
     window_means,
+)
+from cil_regionalization.warming_levels import (
+    Period,
+    WarmingLevels,
+    assign_warming_levels,
+    read_gmst,
 )
 
 
@@ -260,6 +275,40 @@ class DataConfig(_Strict):
         return self
 
 
+class WarmingPeriod(_Strict):
+    """A calendar period of a warming level product. ``gmst_span`` is
+    the years the temperature is averaged over to pick a member's
+    level, and ``impact_span`` the years of the impacts. Both include
+    their first and last year."""
+
+    gmst_span: tuple[int, int]
+    impact_span: tuple[int, int]
+
+
+class WarmingLevelsConfig(_Strict):
+    """Warming levels in place of calendar windows.
+
+    ``gmst`` is the temperature table and ``member`` its columns that
+    name a series, each of them also a tree level. Nothing that decides
+    a level has a default. ``reference_period`` and ``offset`` go
+    together, since the offset is the warming up to that period.
+    ``smoothing`` says in words how the series in the table was
+    smoothed, and "unknown" is an answer.
+    """
+
+    gmst: str = Field(min_length=1)
+    member: list[str] = Field(min_length=1)
+    time_col: str = "year"
+    value_col: str = "temp"
+    sep: str = ","
+    reference_period: tuple[int, int]
+    offset: float
+    levels: list[float] = Field(min_length=1)
+    half_width: float = Field(gt=0)
+    smoothing: str = Field(min_length=1)
+    periods: list[WarmingPeriod] = Field(min_length=1)
+
+
 class StatsConfig(_Strict):
     """Statistics stage.
 
@@ -273,7 +322,9 @@ class StatsConfig(_Strict):
 
     sample_dims: list[str] = Field(min_length=1)
     time_col: str = Field(min_length=1)
-    windows: list[tuple[float, float]] = Field(min_length=1)
+    windows: list[tuple[float, float]] = Field(default_factory=list)
+    # In place of `windows`. The periods name their own years.
+    warming_levels: Optional[WarmingLevelsConfig] = None
     quantiles: list[float] = Field(default_factory=list)
     include_mean: bool = True
     # Adds an n_members column to the statistics file: the members each
@@ -338,6 +389,36 @@ class StatsConfig(_Strict):
             raise ValueError(
                 f"stats.pool_years pools over stats.time_col {self.time_col!r} "
                 f"itself. Leave it out of stats.sample_dims."
+            )
+        if self.warming_levels is None:
+            if not self.windows:
+                raise ValueError(
+                    "stats.windows must list at least one window, unless "
+                    "[stats.warming_levels] gives the periods"
+                )
+            return self
+        if self.windows:
+            raise ValueError(
+                "stats.windows and [stats.warming_levels] are both set. A "
+                "period of the warming levels names its own years, so leave "
+                "stats.windows out."
+            )
+        if self.model_weights is not None:
+            raise ValueError(
+                "stats.model_weights and [stats.warming_levels] are both "
+                "set. Model weights are made for a whole ensemble and say "
+                "nothing of the members at one warming level, which count "
+                "equally."
+            )
+        unpooled = [
+            name for name in self.warming_levels.member
+            if name not in self.sample_dims
+        ]
+        if unpooled:
+            raise ValueError(
+                f"stats.warming_levels.member {unpooled} must be among "
+                f"stats.sample_dims {self.sample_dims}. A warming level "
+                f"pools the members that are at it."
             )
         return self
 
@@ -406,6 +487,12 @@ class MonteCarloPipelineConfig(_Strict):
                     "reduced from the leaf files, and a passthrough run "
                     "writes none of the kind that reads."
                 )
+            if self.stats.warming_levels is not None:
+                raise ValueError(
+                    "[stats.warming_levels] needs [weights]. Warming levels "
+                    "are reduced from the leaf files, and a passthrough run "
+                    "writes none of the kind that reads."
+                )
         elif self.data.region_col is not None:
             raise ValueError(
                 "data.region_col is only for passthrough runs without "
@@ -429,6 +516,17 @@ class MonteCarloPipelineConfig(_Strict):
                 f"stats.model_weight_level {self.stats.model_weight_level!r} "
                 f"must be a tree level {self.tree.levels}"
             )
+        if self.stats.warming_levels is not None:
+            strangers = [
+                name for name in self.stats.warming_levels.member
+                if name not in self.tree.levels
+            ]
+            if strangers:
+                raise ValueError(
+                    f"stats.warming_levels.member {strangers} must be tree "
+                    f"levels {self.tree.levels}. A leaf's member is read off "
+                    f"its level values."
+                )
         return self
 
 
@@ -603,16 +701,21 @@ def run_pipeline(
     plan = resolve_plan(cfg, stage)
     if stage == "reduce":
         return _run_reduce(cfg, plan, dry_run=dry_run, verify_leaves=verify_leaves)
-    # pooled years are reduced from the leaf files this run writes
-    by_blocks = stage == "all" and cfg.stats.pool_years
+    # pooled years and warming levels are reduced from the leaf files
+    # this run writes
+    by_blocks = stage == "all" and bool(_from_leaf_files(cfg))
+    warming = None
     if by_blocks:
         # asked before pass 1, which may take hours
         backend = get_backend(cfg.reduce)
         backend.check_options()
         _check_methods_supported(cfg, backend)
+        warming = _warming_levels(cfg, plan)
     if dry_run:
         if by_blocks:
-            return _with_notes(plan, _blocks_before_aggregation(cfg, plan))
+            return _with_notes(
+                plan, _blocks_before_aggregation(cfg, plan, warming)
+            )
         return plan
     if plan.missing:
         shown = [str(m.path) for m in plan.missing[:10]]
@@ -771,7 +874,7 @@ def run_pipeline(
         try:
             return _run_reduce(
                 cfg, plan, dry_run=False, verify_leaves=False,
-                model_weights=model_weights, stage="all",
+                model_weights=model_weights, warming=warming, stage="all",
             )
         except (ValueError, RuntimeError) as error:
             # a subclass may not take a message alone
@@ -849,6 +952,7 @@ def run_pipeline(
         "quantile_method": cfg.stats.quantile_method,
         "summation": cfg.stats.summation,
         "pool_years": cfg.stats.pool_years,
+        "warming_levels": None,
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
@@ -933,6 +1037,13 @@ def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
             "time, and the leaf files already hold them. Set "
             "output.write_reduced = false."
         )
+    if (cfg.stats.warming_levels is not None and stage != "aggregate"
+            and cfg.output.write_reduced):
+        raise ValueError(
+            "[stats.warming_levels] cannot write the reduced file. Its "
+            "statistics come from the leaf files, one block of targets at "
+            "a time. Set output.write_reduced = false."
+        )
     if stage == "reduce":
         if cfg.weights is None:
             raise ValueError(
@@ -946,10 +1057,10 @@ def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
                 "with the tree levels ahead of the target. Set "
                 "output.write_reduced = false, or use stage 'all'."
             )
-    if stage == "all" and cfg.stats.pool_years and not cfg.output.write_leaves:
+    if stage == "all" and _from_leaf_files(cfg) and not cfg.output.write_leaves:
         raise ValueError(
-            "stats.pool_years takes the statistics from the leaf files, "
-            "so stage 'all' needs output.write_leaves = true"
+            f"{_from_leaf_files(cfg)[0]} takes the statistics from the leaf "
+            f"files, so stage 'all' needs output.write_leaves = true"
         )
     if stage == "aggregate":
         if cfg.weights is None:
@@ -1233,13 +1344,15 @@ def _reduce_request(
     document: dict,
     model_weights: Optional[ModelWeights],
     windows_of=None,
+    warming: Optional[WarmingLevels] = None,
 ) -> tuple[ReduceRequest, list[str]]:
     """The request for the declared leaves, and the reasons, if any, the
     member counts are switched on whatever the config says.
 
     ``windows_of`` gives a leaf's own windows from its level values. It
-    is the list in ``stats.windows`` for every leaf unless given.
-    Nothing in a config gives it yet.
+    is the list in ``stats.windows`` for every leaf unless given. With
+    ``warming`` a leaf has the periods in which its member is at a
+    level, each under a label that names the period and the level.
     """
     time_col = cfg.stats.time_col
     columns = [c["name"] for c in document["schema"]]
@@ -1253,9 +1366,21 @@ def _reduce_request(
             "the leaves have a column named 'n_sample', which is the column "
             "stats.pool_years writes its pooled rows in"
         )
-    common = tuple(
-        (_window_label(lo, hi), lo, hi) for lo, hi in cfg.stats.windows
-    )
+    if warming is not None:
+        for name in ("warming_level", "n_bin_members"):
+            if name in columns:
+                raise ValueError(
+                    f"the leaves have a column named {name!r}, which is a "
+                    f"column [stats.warming_levels] writes"
+                )
+
+        def windows_of(values):
+            return [
+                (_level_window(at.level, at.window), at.start, at.end)
+                for at in warming.windows_of(_bin_member(cfg, values))
+            ]
+
+    common = tuple((_window_label(lo, hi), lo, hi) for lo, hi in _windows(cfg))
     listed = {tuple(entry["leaf"]): entry for entry in document["leaves"]}
     absent = [leaf.values for leaf in plan.leaves if leaf.values not in listed]
     if absent:
@@ -1289,6 +1414,16 @@ def _reduce_request(
                     f"leaf {'/'.join(leaf.values)} (it spans "
                     f"{min(profile['values'])} to {max(profile['values'])})"
                 )
+            if warming is None:
+                continue
+            lacking = sorted(set(range(lo, hi + 1)) - set(profile["values"]))
+            if lacking:
+                raise ValueError(
+                    f"leaf {'/'.join(leaf.values)} has no row for "
+                    f"{len(lacking)} of the {hi - lo + 1} years {lo} to {hi} "
+                    f"(first: {lacking[:5]}). A mean over fewer years than "
+                    f"the span is refused."
+                )
         leaves.append(
             LeafRequest(
                 file=entry["file"],
@@ -1301,6 +1436,9 @@ def _reduce_request(
                     if model_weights is not None
                     else None
                 ),
+                bin_member=(
+                    _bin_member(cfg, leaf.values) if warming is not None else None
+                ),
             )
         )
 
@@ -1310,16 +1448,21 @@ def _reduce_request(
             f"{len(document['leaves']) - len(leaves)} of the "
             f"{len(document['leaves'])} aggregated leaves are not declared"
         )
-    if len({leaf.windows for leaf in leaves}) > 1:
+    if warming is None and len({leaf.windows for leaf in leaves}) > 1:
         reasons.append("the windows differ between leaves")
 
     # the manifest has the rows of a group summed over all its leaves
     kept = sum(leaf.rows for leaf in leaves)
     every = sum(entry["rows_out"] for entry in document["leaves"])
     scale = kept / every if every else 0.0
-    labels = list(dict.fromkeys(label for label, _, _ in common))
-    for leaf in leaves:
-        labels += [label for label, _, _ in leaf.windows if label not in labels]
+    if warming is None:
+        labels = list(dict.fromkeys(label for label, _, _ in common))
+        for leaf in leaves:
+            labels += [
+                label for label, _, _ in leaf.windows if label not in labels
+            ]
+    else:
+        labels = list(_level_windows(cfg))
     request = ReduceRequest(
         leaves_root=str(plan.leaves_manifest_path.parent),
         leaves=tuple(leaves),
@@ -1341,13 +1484,109 @@ def _reduce_request(
         sample_dims=tuple(cfg.stats.sample_dims),
         quantiles=tuple(cfg.stats.quantiles),
         include_mean=cfg.stats.include_mean,
-        include_n_members=cfg.stats.include_n_members or bool(reasons),
+        # a statistic of a warming level is always written with its counts
+        include_n_members=(
+            cfg.stats.include_n_members or bool(reasons) or warming is not None
+        ),
         quantile_method=cfg.stats.quantile_method,
         summation=cfg.stats.summation,
         pool_years=cfg.stats.pool_years,
+        include_n_bin_members=warming is not None,
+        whole_spans=warming is not None,
         n_workers=cfg.run.n_workers,
     )
     return request, reasons
+
+
+def _windows(cfg: MonteCarloPipelineConfig) -> list[tuple[float, float]]:
+    """The spans the impacts are reduced over. With warming levels they
+    are the impact years of the periods."""
+    warming = cfg.stats.warming_levels
+    if warming is None:
+        return list(cfg.stats.windows)
+    return [tuple(period.impact_span) for period in warming.periods]
+
+
+def _from_leaf_files(cfg: MonteCarloPipelineConfig) -> list[str]:
+    """The options set that take the statistics from the leaf files
+    under every stage."""
+    return (["stats.pool_years"] if cfg.stats.pool_years else []) + (
+        ["[stats.warming_levels]"] if cfg.stats.warming_levels is not None else []
+    )
+
+
+def _bin_member(cfg: MonteCarloPipelineConfig, values) -> tuple[str, ...]:
+    """The member of the temperature table a leaf belongs to, read off
+    its level values."""
+    return tuple(
+        values[cfg.tree.levels.index(name)]
+        for name in cfg.stats.warming_levels.member
+    )
+
+
+def _level_window(level: float, window: str) -> str:
+    return f"{window} at {level:g}"
+
+
+def _level_windows(cfg: MonteCarloPipelineConfig) -> dict[str, tuple[float, str]]:
+    """The level and the period of every label a warming level request
+    uses for a window, in the order of the periods and then of the
+    levels ascending."""
+    warming = cfg.stats.warming_levels
+    return {
+        _level_window(level, _window_label(*period.impact_span)): (
+            float(level), _window_label(*period.impact_span),
+        )
+        for period in warming.periods
+        for level in sorted(warming.levels)
+    }
+
+
+def _warming_levels(
+    cfg: MonteCarloPipelineConfig, plan: PipelinePlan
+) -> Optional[WarmingLevels]:
+    """The warming level of every member of the temperature table, or
+    None if the config has no warming levels. The table is read here
+    and nowhere else. Raises if a member the tree declares has no row
+    in it, or if no declared member is at any level."""
+    warming = cfg.stats.warming_levels
+    if warming is None:
+        return None
+    table = read_gmst(
+        warming.gmst,
+        member_cols=warming.member,
+        time_col=warming.time_col,
+        value_col=warming.value_col,
+        sep=warming.sep,
+    )
+    levels = assign_warming_levels(
+        table,
+        reference_period=tuple(warming.reference_period),
+        offset=warming.offset,
+        levels=warming.levels,
+        half_width=warming.half_width,
+        periods=[
+            Period(tuple(period.gmst_span), tuple(period.impact_span))
+            for period in warming.periods
+        ],
+        smoothing=warming.smoothing,
+    )
+    members = list(dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves))
+    absent = levels.missing(members)
+    if absent:
+        raise ValueError(
+            f"{len(absent)} of the {len(members)} members the tree declares "
+            f"have no row in the temperature table {warming.gmst} (first: "
+            f"{dict(zip(warming.member, absent[0]))}). A name is matched as "
+            f"it is written, so a surrogate needs rows of its own."
+        )
+    if not any(levels.windows_of(member) for member in members):
+        raise ValueError(
+            f"none of the {len(members)} members the tree declares is at "
+            f"any of the levels {list(warming.levels)} in any period, so "
+            f"there is nothing to take statistics of"
+        )
+    return levels
 
 
 def _verify_leaves(leaves_dir: Path, entries: list[dict], n_workers: int) -> None:
@@ -1397,22 +1636,26 @@ def _with_notes(plan: PipelinePlan, notes: list[str]) -> PipelinePlan:
 
 
 def _blocks_before_aggregation(
-    cfg: MonteCarloPipelineConfig, plan: PipelinePlan
+    cfg: MonteCarloPipelineConfig,
+    plan: PipelinePlan,
+    warming: Optional[WarmingLevels],
 ) -> list[str]:
-    """What a dry run of stage 'all' can say of the blocks under
-    ``stats.pool_years``. They are sized from the leaves manifest, which
-    the run itself writes. If leaves of this stem are on disk and
-    complete, the lines are for those."""
+    """What a dry run of stage 'all' can say of the blocks when the
+    statistics come from the leaf files. They are sized from the leaves
+    manifest, which the run itself writes. If leaves of this stem are
+    on disk and complete, the lines are for those."""
     after = (
-        "reduce: stats.pool_years takes the statistics from the leaf files, "
-        "by blocks, after every leaf is written"
+        f"reduce: {_from_leaf_files(cfg)[0]} takes the statistics from the "
+        f"leaf files, by blocks, after every leaf is written"
     )
     if not plan.leaves_manifest_path.exists():
         return [after, "the blocks are sized once the leaves are written"]
     try:
         document, _ = _load_leaves_document(plan.leaves_manifest_path)
         _check_identity(cfg, document)
-        request, _ = _reduce_request(cfg, plan, document, _model_weights(cfg))
+        request, _ = _reduce_request(
+            cfg, plan, document, _model_weights(cfg), warming=warming
+        )
         lines = get_backend(cfg.reduce).describe(request)["text"]
     except (ValueError, OSError) as error:
         return [
@@ -1430,21 +1673,27 @@ def _run_reduce(
     dry_run: bool,
     verify_leaves: bool,
     model_weights=_UNREAD,
+    warming=_UNREAD,
     stage: str = "reduce",
 ) -> PipelinePlan | PipelineResult:
     """Pass 2. The statistics come from leaf files a run of stage
     'aggregate' or 'all' wrote, checked against their manifest first.
     The source tree is not opened, and neither is the weights artifact
-    beyond hashing it if it is still there. ``model_weights`` is the
-    table if the caller has read it, and ``stage`` the stage the
-    manifest records."""
+    beyond hashing it if it is still there. ``model_weights`` and
+    ``warming`` are the model weights and the warming levels if the
+    caller has read them, and ``stage`` the stage the manifest
+    records."""
     leaves_dir = plan.leaves_manifest_path.parent
     document, document_sha256 = _load_leaves_document(plan.leaves_manifest_path)
     notes = _check_identity(cfg, document)
     _check_level_names(cfg.tree.levels, document["targets"]["id_fields"])
     if model_weights is _UNREAD:
         model_weights = _model_weights(cfg)
-    request, forced = _reduce_request(cfg, plan, document, model_weights)
+    if warming is _UNREAD:
+        warming = _warming_levels(cfg, plan)
+    request, forced = _reduce_request(
+        cfg, plan, document, model_weights, warming=warming
+    )
     for reason in forced:
         notes.append(
             f"n_members is written although the config does not ask for "
@@ -1477,12 +1726,27 @@ def _run_reduce(
         warnings.warn(note, stacklevel=3)
     if verify_leaves:
         _verify_leaves(leaves_dir, entries, cfg.run.n_workers)
-    _warn_if_unweighted_gcm(
-        list(cfg.stats.sample_dims), "model_weight" if model_weights else None
-    )
+    if warming is None:
+        # the members at a warming level count equally by design
+        _warn_if_unweighted_gcm(
+            list(cfg.stats.sample_dims), "model_weight" if model_weights else None
+        )
     _log_memory("reduce start")
     stats, report = backend.run(request)
     stats = stats[request.columns]
+    if warming is not None:
+        # the window a block was reduced under names a period and a level
+        of_label = _level_windows(cfg)
+        labels = stats["window"]
+        stats.insert(
+            list(stats.columns).index("window"),
+            "warming_level",
+            labels.map({label: level for label, (level, _) in of_label.items()})
+            .astype(np.float64),
+        )
+        stats["window"] = labels.map(
+            {label: window for label, (_, window) in of_label.items()}
+        )
     for field, column in zip(request.id_fields, document["schema"][1:]):
         # what the same ids are in a frame of the pipeline's own
         wanted = "string" if column["pandas"] == "string" else pd.Series(["a"]).dtype
@@ -1521,11 +1785,18 @@ def _run_reduce(
             "regions_version"
         ],
         "sample_dims": cfg.stats.sample_dims,
-        "windows": [_window_label(lo, hi) for lo, hi in cfg.stats.windows],
+        "windows": [_window_label(lo, hi) for lo, hi in _windows(cfg)],
         "quantiles": cfg.stats.quantiles,
         "quantile_method": cfg.stats.quantile_method,
         "summation": cfg.stats.summation,
         "pool_years": cfg.stats.pool_years,
+        "warming_levels": (
+            warming.record(
+                dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves)
+            )
+            if warming is not None
+            else None
+        ),
         "reduced": None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
@@ -1585,6 +1856,8 @@ def _check_level_names(levels: list[str], id_fields: list[str]) -> None:
         "statistic": "the column of statistic labels",
         "n_members": "the column stats.include_n_members writes",
         "n_sample": "the column of pooled rows stats.pool_years writes",
+        "warming_level": "the column of levels [stats.warming_levels] writes",
+        "n_bin_members": "the column of members [stats.warming_levels] writes",
         "model_weight": "the column the model weights travel in",
         leaf_format.ORDINAL_COLUMN: "the ordinal column of a leaf file",
     }
@@ -1617,7 +1890,7 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
         "statistic": (["mean"] if cfg.stats.include_mean else [])
         + [_quantile_label(q) for q in cfg.stats.quantiles],
         **{level: list(cfg.tree.expect[level]) for level in cfg.tree.levels},
-        "window": [_window_label(lo, hi) for lo, hi in cfg.stats.windows],
+        "window": [_window_label(lo, hi) for lo, hi in _windows(cfg)],
     }
     # Rows are picked by label below, and a frame put together from
     # several without a new index has labels that repeat.
@@ -1645,7 +1918,8 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
             )
     for column in frame.columns:
         if column in declared or column in (
-            cfg.data.value_col, "n_members", "n_sample", "model_weight"
+            cfg.data.value_col, "n_members", "n_sample", "n_bin_members",
+            "model_weight",
         ):
             continue
         col = frame[column]
