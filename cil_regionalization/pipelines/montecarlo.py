@@ -12,7 +12,8 @@ Composes the library core and adds no mathematics. The sequence:
        configured kind, weight, versions, and policies. Coverage and mass
        balance run per leaf exactly as they do for a direct library call,
        and a failing leaf fails the run. Optionally write the aggregated
-       leaf, mirrored under the output directory. Then take the window
+       leaf, mirrored under the output directory, in the layout of the
+       `leaves` module. Then take the window
        mean (`stats.window_means`) over the configured windows, collapsing
        the time dimension to the window count before anything is pooled,
        and attach the leaf's level values as columns to the reduced rows.
@@ -61,6 +62,13 @@ prints before trusting any smaller figure.
 Dry run resolves the tree and reports the plan (leaves, their paths,
 missing entries, output locations) without creating or writing anything.
 
+Stages. ``--stage aggregate`` runs steps 1 to 3 without the window mean
+and stops. It writes the leaf files and their manifest,
+``leaves/<stem>.leaves.manifest.json``, and no statistics. The manifest
+is written before the first leaf, marked incomplete, and again when
+every leaf has succeeded. The default stage, ``all``, runs everything
+in one process.
+
 Per-capita to total conversion is deliberately outside: leaves must
 already carry the extensive quantity to aggregate. The hook for such a
 conversion is the step that produces the tree this pipeline reads.
@@ -71,12 +79,14 @@ task, which is acceptable at current artifact sizes and revisitable if
 profiling ever says otherwise.
 
 Entry point: ``python -m cil_regionalization.pipelines.montecarlo
-<config.toml> [--dry-run]``. Job submission is out of scope; a scheduler
-template that calls this entry point lives under ``examples/``.
+<config.toml> [--dry-run] [--stage all|aggregate]``. Job submission is
+out of scope; a scheduler template that calls this entry point lives
+under ``examples/``.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import multiprocessing as mp
@@ -94,6 +104,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
     import tomli as tomllib
 
+from cil_regionalization import leaves as leaf_format
 from cil_regionalization.apply import WeightsArtifact, apply_weights
 from cil_regionalization.config import SourceUnitPolicies, _Strict
 from cil_regionalization.manifest import collect_package_versions
@@ -109,6 +120,7 @@ from cil_regionalization.stats import (
 
 
 VariableKind = Literal["extensive", "intensive", "ratio"]
+Stage = Literal["all", "aggregate"]
 
 
 class WeightsRef(_Strict):
@@ -289,10 +301,13 @@ class PipelineOutputConfig(_Strict):
     files, so several runs can share one directory. ``write_reduced``
     keeps the pooled window-mean frame (one row per target, window,
     and sample member), which downstream regrouping needs; per-draw
-    quantities cannot be recovered from the statistics file."""
+    quantities cannot be recovered from the statistics file.
+    ``write_leaves`` keeps every aggregated leaf with its years, under
+    ``leaves/``. It is off unless asked for, because the leaves take
+    far more disk than the statistics."""
 
     dir: str = Field(min_length=1)
-    write_leaves: bool = True
+    write_leaves: bool = False
     stem: str = "statistics"
     write_reduced: bool = False
 
@@ -407,13 +422,19 @@ class PipelinePlan:
     missing: list[Leaf]
     stats_path: Path
     manifest_path: Path
+    # set when the run writes leaf files in the layout of `leaves`
+    leaves_manifest_path: Path | None = None
+    stage: str = "all"
 
     def summary(self) -> str:
-        lines = [
-            f"pipeline plan: {len(self.leaves)} declared leaves",
-            f"  statistics -> {self.stats_path}",
-            f"  manifest   -> {self.manifest_path}",
-        ]
+        lines = [f"pipeline plan: {len(self.leaves)} declared leaves"]
+        if self.stage != "aggregate":
+            lines += [
+                f"  statistics -> {self.stats_path}",
+                f"  manifest   -> {self.manifest_path}",
+            ]
+        if self.leaves_manifest_path is not None:
+            lines.append(f"  leaves     -> {self.leaves_manifest_path}")
         if self.missing:
             lines.append(
                 f"  MISSING {len(self.missing)} declared leaves, e.g. "
@@ -424,14 +445,17 @@ class PipelinePlan:
 
 @dataclass
 class PipelineResult:
-    """Statistics frame plus per-leaf accounting for a completed run."""
+    """Statistics frame plus per-leaf accounting for a completed run.
+    ``stats`` is None after the aggregate stage, which takes none."""
 
-    stats: pd.DataFrame
+    stats: Optional[pd.DataFrame]
     leaf_reports: list[dict]
     paths: dict[str, str] = field(default_factory=dict)
 
 
-def resolve_plan(cfg: MonteCarloPipelineConfig) -> PipelinePlan:
+def resolve_plan(
+    cfg: MonteCarloPipelineConfig, stage: Stage = "all"
+) -> PipelinePlan:
     """Expand the declared tree into leaves; report missing ones.
 
     Touches nothing: no directories are created and no files written.
@@ -452,11 +476,19 @@ def resolve_plan(cfg: MonteCarloPipelineConfig) -> PipelinePlan:
             if cfg.tree.subtract_filename is not None
             else None
         )
-        output_path = (
-            out_root / "leaves" / rel / f"aggregated_{cfg.tree.filename}"
-            if cfg.output.write_leaves
-            else None
-        )
+        if not cfg.output.write_leaves:
+            output_path = None
+        elif cfg.weights is None:
+            # passthrough has no targets to lay a leaf out by, and keeps
+            # the file it always wrote
+            output_path = (
+                out_root / "leaves" / rel / f"aggregated_{cfg.tree.filename}"
+            )
+        else:
+            output_path = (
+                out_root / "leaves" / rel
+                / f"{Path(cfg.tree.filename).stem}.aggregated.parquet"
+            )
         leaf = Leaf(values=tuple(combo), path=path, output_path=output_path,
                     subtract_path=subtract_path)
         leaves.append(leaf)
@@ -469,14 +501,26 @@ def resolve_plan(cfg: MonteCarloPipelineConfig) -> PipelinePlan:
         missing=missing,
         stats_path=out_root / f"{cfg.output.stem}.parquet",
         manifest_path=out_root / f"{cfg.output.stem}.manifest.json",
+        leaves_manifest_path=(
+            out_root / "leaves" / f"{cfg.output.stem}.leaves.manifest.json"
+            if cfg.output.write_leaves and cfg.weights is not None
+            else None
+        ),
+        stage=stage,
     )
 
 
 def run_pipeline(
-    cfg: MonteCarloPipelineConfig, *, dry_run: bool = False
+    cfg: MonteCarloPipelineConfig,
+    *,
+    dry_run: bool = False,
+    stage: Stage = "all",
 ) -> PipelinePlan | PipelineResult:
-    """Run the pipeline, or return the plan untouched when ``dry_run``."""
-    plan = resolve_plan(cfg)
+    """Run the pipeline, or return the plan untouched when ``dry_run``.
+    ``stage="aggregate"`` writes the leaf files and their manifest and
+    stops, and the result's ``stats`` is then None."""
+    _check_stage(cfg, stage)
+    plan = resolve_plan(cfg, stage)
     if dry_run:
         return plan
     if plan.missing:
@@ -488,17 +532,17 @@ def run_pipeline(
             f"does not run over a partial universe."
         )
 
-    artifact = (
-        WeightsArtifact.load(cfg.weights.dir, stem=cfg.weights.stem)
+    artifact, artifact_sha256 = (
+        _load_artifact(cfg.weights.dir, cfg.weights.stem)
         if cfg.weights is not None
-        else None
+        else (None, None)
     )
     _check_level_names(
         cfg.tree.levels,
         list(artifact.schema.id_fields) if artifact is not None else [],
     )
     model_weights = None
-    if cfg.stats.model_weights is not None:
+    if stage != "aggregate" and cfg.stats.model_weights is not None:
         # The file is read here and nowhere else. The workers get these
         # rows, so a file edited during the run cannot give different
         # leaves different weights.
@@ -514,6 +558,28 @@ def run_pipeline(
                 f"weights file (first: {unmatched[:5]})"
             )
 
+    leaves_document = None
+    job = {
+        "reduce": stage != "aggregate",
+        "artifact_sha256": artifact_sha256,
+        "leaf_file": None,
+    }
+    if plan.leaves_manifest_path is not None:
+        targets = leaf_format.TargetTable.from_frame(
+            artifact.frame, artifact.schema.id_fields
+        )
+        identity = _aggregation_identity(cfg, artifact, artifact_sha256)
+        # Nothing has been created under the output directory so far.
+        # The config, the level names and the model weights are checked.
+        leaves_document = _begin_leaves(cfg, plan, targets, identity)
+        job["leaf_file"] = {
+            # read here and sent along, because a worker that is spawned
+            # imports the module afresh
+            "targets_per_group": leaves_document["targets_per_group"],
+            "target_digest": targets.digest,
+            "aggregation": identity,
+            "aggregation_digest": leaves_document["aggregation_digest"],
+        }
     tasks = [
         (
             leaf,
@@ -522,6 +588,7 @@ def run_pipeline(
             cfg.weights.weight if cfg.weights is not None else None,
             cfg.policies,
             cfg.stats,
+            job,
         )
         for leaf in plan.leaves
     ]
@@ -588,6 +655,18 @@ def run_pipeline(
             f"were written."
         )
 
+    files = {tuple(o["leaf"]): o.pop("leaf_file") for o in outcomes}
+    if leaves_document is not None:
+        _finish_leaves(plan, leaves_document, outcomes, files)
+    if stage == "aggregate":
+        for o in outcomes:
+            o.pop("frame")
+        return PipelineResult(
+            stats=None,
+            leaf_reports=outcomes,
+            paths={"leaves_manifest": str(plan.leaves_manifest_path)},
+        )
+
     # Leaves arrive already reduced to window means (see _process_leaf),
     # so the pooled frame is targets x dims x windows per leaf, not
     # targets x dims x years. One pooled-statistics call serves every
@@ -629,6 +708,13 @@ def run_pipeline(
     manifest = {
         "leaves": outcomes,
         "n_leaves": len(outcomes),
+        "stage": stage,
+        "leaves_manifest": (
+            str(plan.leaves_manifest_path)
+            if plan.leaves_manifest_path is not None
+            else None
+        ),
+        "artifact_sha256": artifact_sha256,
         "weight": cfg.weights.weight if cfg.weights is not None else None,
         "spatial_aggregation": (
             "weighted" if cfg.weights is not None
@@ -671,6 +757,219 @@ def run_pipeline(
         paths={
             "statistics": str(plan.stats_path),
             "manifest": str(plan.manifest_path),
+            **(
+                {"leaves_manifest": str(plan.leaves_manifest_path)}
+                if plan.leaves_manifest_path is not None
+                else {}
+            ),
+        },
+    )
+
+
+def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
+    if stage not in ("all", "aggregate"):
+        raise ValueError(
+            f"unknown stage {stage!r}; expected 'all' or 'aggregate'"
+        )
+    if stage == "aggregate":
+        if cfg.weights is None:
+            raise ValueError(
+                "stage 'aggregate' needs [weights]. A passthrough run "
+                "aggregates nothing, so its leaves are the source tree."
+            )
+        if not cfg.output.write_leaves:
+            raise ValueError(
+                "stage 'aggregate' writes the leaf files and nothing else, "
+                "so it needs output.write_leaves = true"
+            )
+
+
+def _read_bytes(location: str) -> bytes:
+    if location.startswith("gs://"):
+        import gcsfs
+
+        with gcsfs.GCSFileSystem().open(location, "rb") as f:
+            return f.read()
+    return Path(location).read_bytes()
+
+
+def _artifact_sha256(weights_dir: str, stem: str) -> dict[str, str]:
+    """SHA256 of the two files of a weights artifact."""
+    base = str(weights_dir).rstrip("/")
+    return {
+        "table": hashlib.sha256(_read_bytes(f"{base}/{stem}.parquet")).hexdigest(),
+        "manifest": hashlib.sha256(
+            _read_bytes(f"{base}/{stem}.manifest.json")
+        ).hexdigest(),
+    }
+
+
+def _load_artifact(
+    weights_dir: str, stem: str
+) -> tuple[WeightsArtifact, dict[str, str]]:
+    """The artifact and the SHA256 of its files. They are hashed before
+    and after the load, and a difference raises, so the hashes are those
+    of what was loaded."""
+    before = _artifact_sha256(weights_dir, stem)
+    artifact = WeightsArtifact.load(weights_dir, stem=stem)
+    if _artifact_sha256(weights_dir, stem) != before:
+        raise ValueError(
+            f"the weights artifact {stem!r} in {weights_dir} changed while "
+            f"it was being loaded"
+        )
+    return artifact, before
+
+
+def _aggregation_identity(
+    cfg: MonteCarloPipelineConfig, artifact: WeightsArtifact, sha256: dict
+) -> dict:
+    """What decides the content of an aggregated leaf, apart from the
+    leaf itself. It holds no path. A path says where something was, and
+    the hashes say what it was."""
+    return {
+        "weight": cfg.weights.weight,
+        "kind": cfg.data.kind,
+        "data_version": cfg.data.version,
+        "data_format": cfg.data.format,
+        "value_col": cfg.data.value_col,
+        "denominator_col": cfg.data.denominator_col,
+        "region_dim": cfg.data.region_dim,
+        "region_labels": cfg.data.region_labels,
+        "policies": cfg.policies.model_dump(),
+        "filename": cfg.tree.filename,
+        "subtract_filename": cfg.tree.subtract_filename,
+        "levels": list(cfg.tree.levels),
+        "artifact": {
+            "source_version": artifact.source_version,
+            "regions_version": artifact.regions_version,
+            "sha256": sha256,
+        },
+    }
+
+
+def _claimed_elsewhere(leaves_dir: Path, own: Path, files: list[str]) -> None:
+    """Raise if the leaves manifest of another output stem in the
+    directory lists one of ``files``, whether it is complete or not."""
+    for other in sorted(leaves_dir.glob("*.leaves.manifest.json")):
+        if other == own:
+            continue
+        document = json.loads(other.read_text())
+        taken = sorted(
+            {entry["file"] for entry in document["leaves"]} & set(files)
+        )
+        if taken:
+            raise ValueError(
+                f"{len(taken)} leaf files this run would write belong to the "
+                f"leaves of output stem {document['stem']!r} (first: "
+                f"{taken[0]}, listed in {other}). Two stems share a "
+                f"directory only when their leaves differ. Use another "
+                f"output.dir, or that output.stem to write them again."
+            )
+
+
+def _begin_leaves(
+    cfg: MonteCarloPipelineConfig,
+    plan: PipelinePlan,
+    targets: leaf_format.TargetTable,
+    identity: dict,
+) -> dict:
+    """Write the target table and the leaves manifest of this stem,
+    marked incomplete, and return the manifest. It lists the leaf files
+    the run is about to write, so that no run under another stem writes
+    over them, even if this one is killed."""
+    path = plan.leaves_manifest_path
+    leaves_dir = path.parent
+    document = {
+        "complete": False,
+        "format_version": leaf_format.FORMAT_VERSION,
+        "stem": cfg.output.stem,
+        "targets_per_group": leaf_format.TARGETS_PER_GROUP,
+        "targets": {
+            "file": targets.filename,
+            "digest": targets.digest,
+            "n_targets": len(targets),
+            "id_fields": list(targets.id_fields),
+        },
+        "aggregation": identity,
+        "aggregation_digest": leaf_format.canonical_digest(identity),
+        # recorded, and never compared
+        "paths": {
+            "weights_dir": cfg.weights.dir,
+            "weights_stem": cfg.weights.stem,
+            "tree_root": cfg.tree.root,
+        },
+        "group_col": cfg.data.group_col,
+        "leaves": [
+            {
+                "leaf": list(leaf.values),
+                "file": leaf.output_path.relative_to(leaves_dir).as_posix(),
+            }
+            for leaf in plan.leaves
+        ],
+    }
+    files = [entry["file"] for entry in document["leaves"]]
+    if leaves_dir.exists():
+        _claimed_elsewhere(leaves_dir, path, files)
+    leaves_dir.mkdir(parents=True, exist_ok=True)
+    targets.write(leaves_dir)
+    leaf_format.write_json(path, document)
+    try:
+        # a run under another stem may have started in between
+        _claimed_elsewhere(leaves_dir, path, files)
+    except ValueError:
+        path.unlink(missing_ok=True)
+        raise
+    return document
+
+
+def _finish_leaves(
+    plan: PipelinePlan, document: dict, outcomes: list[dict], files: dict
+) -> None:
+    """Write the leaves manifest again, complete, with the accounting
+    of every leaf in plan order. Raises, and leaves the manifest
+    incomplete, if two leaves have different columns."""
+    by_leaf = {tuple(o["leaf"]): o for o in outcomes}
+    schema = files[plan.leaves[0].values]["schema"]
+    profiles: list[dict] = []
+    rows_per_group = np.zeros(
+        len(files[plan.leaves[0].values]["rows_per_group"]), dtype=np.int64
+    )
+    entries = []
+    for leaf, claimed in zip(plan.leaves, document["leaves"]):
+        written, outcome = files[leaf.values], by_leaf[leaf.values]
+        if written["schema"] != schema:
+            raise ValueError(
+                f"leaf {'/'.join(leaf.values)} was written with columns "
+                f"{written['schema']} where the first leaf has {schema}. "
+                f"The leaves of one tree need the same columns and dtypes."
+            )
+        rows_per_group += np.asarray(written["rows_per_group"], dtype=np.int64)
+        if written["profile"] not in profiles:
+            profiles.append(written["profile"])
+        entries.append(
+            {
+                **claimed,
+                "sources": [str(leaf.path)]
+                + ([str(leaf.subtract_path)] if leaf.subtract_path else []),
+                "rows_in": outcome["rows_in"],
+                "rows_out": outcome["rows_out"],
+                "coverage": outcome["coverage"],
+                "mass_balance_rel_error": outcome["mass_balance_rel_error"],
+                "size": written["size"],
+                "sha256": written["sha256"],
+                "profile": profiles.index(written["profile"]),
+            }
+        )
+    leaf_format.write_json(
+        plan.leaves_manifest_path,
+        {
+            **document,
+            "complete": True,
+            "leaves": entries,
+            "schema": schema,
+            "rows_per_group": rows_per_group.tolist(),
+            "profiles": profiles,
+            "package_versions": collect_package_versions(),
         },
     )
 
@@ -684,6 +983,7 @@ def _check_level_names(levels: list[str], id_fields: list[str]) -> None:
         "statistic": "the column of statistic labels",
         "n_members": "the column stats.include_n_members writes",
         "model_weight": "the column the model weights travel in",
+        leaf_format.ORDINAL_COLUMN: "the ordinal column of a leaf file",
     }
     for level in levels:
         if level in taken:
@@ -806,11 +1106,12 @@ def _init_worker(
     weights_stem: Optional[str],
     model_weights: Optional[ModelWeights],
 ) -> None:
-    _WORKER_STATE["artifact"] = (
-        WeightsArtifact.load(weights_dir, stem=weights_stem)
+    _WORKER_STATE["artifact"], _WORKER_STATE["artifact_sha256"] = (
+        _load_artifact(weights_dir, weights_stem)
         if weights_dir is not None
-        else None
+        else (None, None)
     )
+    _WORKER_STATE["targets"] = None
     _WORKER_STATE["model_weights"] = model_weights
 
 
@@ -883,9 +1184,10 @@ def _subtract_leaf(
 
 def _process_leaf(task: tuple) -> dict:
     """Apply weights to one leaf (unless passthrough), then reduce it
-    to window means. The leaf's level values go on the reduced rows, and
-    on the leaf file if one is written, never on the frame the weights
-    are applied to.
+    to window means unless the stage stops before that. The leaf's
+    level values go on the reduced rows, never on the frame the weights
+    are applied to. An aggregated leaf file has them in its footer and
+    its path, and a passthrough one as columns.
 
     Returns accounting, never raises. Module-level and tuple-argument so
     a multiprocessing pool can run it; errors come back as strings so
@@ -894,9 +1196,14 @@ def _process_leaf(task: tuple) -> dict:
     the full aggregated frame (years intact); only the in-memory frame
     handed back for pooling is reduced.
     """
-    leaf, levels, data_cfg, weight, policies, stats_cfg = task
+    leaf, levels, data_cfg, weight, policies, stats_cfg, job = task
     artifact = _WORKER_STATE["artifact"]
     try:
+        if _WORKER_STATE["artifact_sha256"] != job["artifact_sha256"]:
+            raise ValueError(
+                "the weights artifact this worker loaded is not the one the "
+                "run started with. Its files changed during the run."
+            )
         frame = _read_leaf(leaf.path, data_cfg, artifact)
         if leaf.subtract_path is not None:
             frame = _subtract_leaf(frame, leaf.subtract_path, data_cfg, artifact)
@@ -915,8 +1222,6 @@ def _process_leaf(task: tuple) -> dict:
             out_frame = frame
             coverage = None
             rel_error = None
-            # the labels follow the leaf's own columns in the file
-            labels_before = None
         else:
             applied = apply_weights(
                 artifact,
@@ -933,13 +1238,44 @@ def _process_leaf(task: tuple) -> dict:
             coverage = applied.coverage.counts
             balance = applied.mass_balance
             rel_error = balance.rel_error if balance is not None else None
-            # the labels sit between the dimensions and the value
-            labels_before = data_cfg.value_col
-        if leaf.output_path is not None:
+        written = None
+        if leaf.output_path is not None and artifact is None:
+            # the labels follow the leaf's own columns in the file
             leaf.output_path.parent.mkdir(parents=True, exist_ok=True)
-            _labelled(out_frame, labels, labels_before).to_parquet(
-                leaf.output_path, index=False
-            )
+            _labelled(out_frame, labels).to_parquet(leaf.output_path, index=False)
+        elif leaf.output_path is not None:
+            written = leaf_format.write_leaf(
+                out_frame,
+                leaf.output_path,
+                targets=_worker_targets(artifact, job["leaf_file"]),
+                value_col=data_cfg.value_col,
+                # Spelled out as well as digested. A footer cannot be
+                # added to later, and a leaf has to say what made it
+                # when its manifest is gone.
+                identity={
+                    "aggregation": job["leaf_file"]["aggregation"],
+                    "aggregation_digest": job["leaf_file"]["aggregation_digest"],
+                    "levels": labels,
+                    "sources": [str(leaf.path)]
+                    + ([str(leaf.subtract_path)] if leaf.subtract_path else []),
+                },
+                targets_per_group=job["leaf_file"]["targets_per_group"],
+            ).as_dict()
+        if not job["reduce"]:
+            return {
+                "leaf": list(leaf.values),
+                "path": str(leaf.path),
+                "rows_in": int(len(frame)),
+                "rows_out": int(len(out_frame)),
+                "rows_reduced": None,
+                "coverage": coverage,
+                "mass_balance_rel_error": rel_error,
+                "output": str(leaf.output_path),
+                "worker_peak_gb": round(_peak_rss_gb(), 2),
+                "error": None,
+                "leaf_file": written,
+                "frame": None,
+            }
 
         # The labels are constant over a leaf. On the frame they would be
         # grouping keys of every row, in the weights and again in the
@@ -990,6 +1326,7 @@ def _process_leaf(task: tuple) -> dict:
             "output": str(leaf.output_path) if leaf.output_path else None,
             "worker_peak_gb": round(_peak_rss_gb(), 2),
             "error": None,
+            "leaf_file": written,
             "frame": reduced,
         }
     except Exception as e:  # noqa: BLE001 - reported, not swallowed
@@ -997,8 +1334,27 @@ def _process_leaf(task: tuple) -> dict:
             "leaf": list(leaf.values),
             "path": str(leaf.path),
             "error": str(e),
+            "leaf_file": None,
             "frame": None,
         }
+
+
+def _worker_targets(
+    artifact: WeightsArtifact, leaf_file: dict
+) -> leaf_format.TargetTable:
+    """The target table of this worker's artifact, built once. Raises
+    if it is not the table the run wrote down before the first leaf."""
+    if _WORKER_STATE["targets"] is None:
+        targets = leaf_format.TargetTable.from_frame(
+            artifact.frame, artifact.schema.id_fields
+        )
+        if targets.digest != leaf_file["target_digest"]:
+            raise ValueError(
+                "the targets of the weights artifact this worker loaded are "
+                "not those the run started with"
+            )
+        _WORKER_STATE["targets"] = targets
+    return _WORKER_STATE["targets"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1012,18 +1368,29 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="resolve the tree and print the plan; touch nothing",
     )
+    parser.add_argument(
+        "--stage",
+        choices=["all", "aggregate"],
+        default="all",
+        help="aggregate writes the leaf files and stops; all (the default) "
+        "runs everything",
+    )
     args = parser.parse_args(argv)
 
     cfg = load_pipeline_config(args.config)
     if args.dry_run:
-        plan = run_pipeline(cfg, dry_run=True)
+        plan = run_pipeline(cfg, dry_run=True, stage=args.stage)
         print(plan.summary())
         return 1 if plan.missing else 0
 
-    result = run_pipeline(cfg)
+    result = run_pipeline(cfg, stage=args.stage)
     print(
         f"pipeline: {len(result.leaf_reports)} leaves aggregated; "
-        f"statistics rows={len(result.stats)}"
+        + (
+            f"statistics rows={len(result.stats)}"
+            if result.stats is not None
+            else "no statistics at stage aggregate"
+        )
     )
     for kind_, path in result.paths.items():
         print(f"  wrote {kind_}: {path}")

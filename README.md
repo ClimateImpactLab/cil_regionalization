@@ -231,6 +231,48 @@ Files made before v0.6.0 had no such options. They are reproduced by
 `"lower_step"` if the run had weights and `"linear"` if it had none,
 with `"fast"`.
 
+## Keeping the aggregated leaves
+
+A pipeline run keeps nothing between the weights and the statistics
+unless `output.write_leaves = true`. With it, every leaf is written
+after the weights are applied, with its years, to
+`leaves/<level values>/<name>.aggregated.parquet` under the output
+directory. It is off by default because the leaves of a product take
+far more disk than its statistics.
+
+A leaf file is plain parquet. Its columns are `target_ordinal`, the id
+fields, the leaf's own dimensions and the value. Its rows are sorted
+by target and cut into row groups of 128 targets, the same targets in
+the same group of every leaf, with an empty group where a leaf has
+none of them. So the rows of a range of targets can be read from
+every leaf without reading the rest. `leaves/targets.<digest>.parquet`
+gives the target of each ordinal.
+
+The footer of a leaf file says what made it, as JSON under the key
+`cil_regionalization.leaf`: the weight, the kind, the versions, the
+SHA256 of the two files of the weights artifact, the leaf's level
+values and its source file. No path is part of that identity. Paths
+are recorded and never compared.
+
+`leaves/<output.stem>.leaves.manifest.json` lists the leaves of a run
+with their accounting, sizes and hashes. It is written before the
+first leaf with `"complete": false` and again when every leaf has
+succeeded, so a run that was killed leaves a manifest that says so.
+Runs under different stems can share an output directory when their
+leaves differ, as one stem a scenario does. A run that would write a
+leaf another stem's manifest lists is refused.
+
+```
+cilreg pipeline config.toml --stage aggregate
+```
+
+writes the leaves and their manifest and stops before the statistics.
+
+A leaf's own dimension has to be an integer, a float, a boolean or a
+plain string when leaves are written. A categorical, datetime or
+nullable column is refused, because pandas 2 and pandas 3 write those
+differently.
+
 ## Your own NetCDF
 
 A file on a regular lat-lon grid, with 1-D `lat` and `lon`
