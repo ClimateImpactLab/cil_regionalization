@@ -13,6 +13,8 @@ config.** Files made before v0.6.0 are reproduced by
 `window_means` and `summarize_samples` compute in float64 and return
 float64 whatever the dtype of the value column. That changes their
 result for a float32 or a nullable column under every setting.
+A model weights table with two rows for one model is now refused, and
+the pipeline manifest records the weights each run used.
 
 - Changed: the pipeline sorts the statistics rows before writing them:
   by statistic in the order requested (the mean, then the quantiles as
@@ -119,6 +121,34 @@ result for a float32 or a nullable column under every setting.
   country are compensated, were within 9.4e-8 of the exact sums, and
   are float32 before and after.
 - The pipeline manifest records `quantile_method` and `summation`.
+- New: `read_model_weights` reads a climate model weights table and
+  returns a `ModelWeights`. The file is read once, and the SHA256 it
+  carries is of the bytes the rows were parsed from. `attach` returns
+  the weight of each row's model and raises if a model has no row.
+  `record` returns the entry a manifest should keep, described below.
+  Names match as they did before: a `*` is dropped from the table
+  name, `surrogate_` is dropped from the member, and both are
+  lowercased.
+- Changed: a weights table in which two rows match the same model is
+  refused, with both rows named. Before, the last of the two rows was
+  applied and nothing was said. Neither published SMME table has such
+  rows (32 names in the rcp45 table, 33 in the rcp85 one, all
+  distinct after matching), so no run that worked is refused.
+- Changed: the pipeline reads the model weights file once, in the
+  parent, and hands those rows to the workers. Before, every worker
+  read the file again when it started, and workers are replaced every
+  16 leaves, so the file was read all through a run. A file edited
+  during a run can no longer give different leaves different weights.
+- The pipeline manifest gains `model_weights_record`, next to the
+  `model_weights` path it already had. It holds the path, the SHA256 of
+  the file, `members`, and `unmatched_rows`. `members` has each model
+  that a leaf was actually given the weight of, with the table row it
+  matched, the weight and the number of leaves. That is what ran, not
+  what the config declares, so a model whose leaves were all excluded
+  is not in it. `unmatched_rows` has the rows no leaf matched, with
+  their weights. The two together are the whole table, so a run can be
+  repeated from its manifest when the file is gone. A run without
+  model weights records `null`. No statistic changes.
 
 ## v0.5.0
 

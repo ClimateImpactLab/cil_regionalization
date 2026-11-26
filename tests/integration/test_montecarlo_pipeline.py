@@ -12,6 +12,7 @@ hand-derivable from the leaf's unit values.
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import math
@@ -1001,6 +1002,114 @@ class TestModelWeights:
         raw["stats"]["model_weight_level"] = "nope"
         with pytest.raises(ValueError, match="sample_dims"):
             MonteCarloPipelineConfig.model_validate(raw)
+
+    def _weighted_cfg(
+        self, weights_dir, tree, out, weights_file, *, n_workers=1, exclude=()
+    ) -> MonteCarloPipelineConfig:
+        cfg = _pipeline_cfg(
+            weights_dir, tree, out, levels=_LEVELS, n_workers=n_workers
+        )
+        raw = cfg.model_dump()
+        raw["stats"]["model_weights"] = str(weights_file)
+        raw["stats"]["quantile_method"] = "lower_step"
+        raw["stats"]["model_weight_level"] = "zeppelin"
+        raw["tree"]["exclude"] = [list(cell) for cell in exclude]
+        return MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_two_rows_for_one_model_are_refused(self, weights_dir, tmp_path):
+        """The last of the two rows used to be the one applied. The run
+        stops before any leaf is read, so nothing is written."""
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        p = tmp_path / "weights.tsv"
+        pd.DataFrame(
+            {"model": ["Z0*", "z1", "z2", "z0"], "weight": [0.6, 0.3, 0.1, 0.2]}
+        ).to_csv(p, sep="\t", index=False)
+        cfg = self._weighted_cfg(weights_dir, tree, tmp_path / "out", p)
+        with pytest.raises(ValueError) as error:
+            run_pipeline(cfg)
+        assert "['Z0*', 'z0']" in str(error.value)
+        assert not (tmp_path / "out").exists()
+
+    @pytest.mark.parametrize("n_workers", [1, 2])
+    def test_a_file_edited_during_the_run_changes_nothing(
+        self, weights_dir, tmp_path, monkeypatch, n_workers
+    ):
+        """The file is rewritten with other weights as soon as it has
+        been read once. Every leaf still gets the weights of that first
+        read, and the manifest records its bytes."""
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        p = self._weights_file(tmp_path)
+        original = p.read_bytes()
+        control = run_pipeline(
+            self._weighted_cfg(weights_dir, tree, tmp_path / "control", p)
+        )
+
+        read_csv = pd.read_csv
+
+        def read_then_edit(*args, **kwargs):
+            table = read_csv(*args, **kwargs)
+            if "model" in table.columns and p.read_bytes() == original:
+                pd.DataFrame(
+                    {"model": ["Z0*", "z1", "z2"], "weight": [0.1, 0.3, 0.6]}
+                ).to_csv(p, sep="\t", index=False)
+            return table
+
+        monkeypatch.setattr(pd, "read_csv", read_then_edit)
+        result = run_pipeline(
+            self._weighted_cfg(
+                weights_dir, tree, tmp_path / "out", p, n_workers=n_workers
+            )
+        )
+        monkeypatch.undo()
+
+        assert p.read_bytes() != original
+        # the leaves of a pool are summed in the order they finish
+        pd.testing.assert_frame_equal(
+            result.stats, control.stats, check_exact=False, rtol=1e-12
+        )
+        manifest = json.loads(Path(result.paths["manifest"]).read_text())
+        record = manifest["model_weights_record"]
+        assert record["sha256"] == hashlib.sha256(original).hexdigest()
+        assert [m["weight"] for m in record["members"].values()] == [0.6, 0.3, 0.1]
+
+    def test_the_manifest_records_the_members_attached(self, weights_dir, tmp_path):
+        """Every leaf of z2 is excluded, so z2 is declared and has a row
+        but no leaf was given its weight. It is listed with the rows no
+        member matched, next to a model the tree does not have."""
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        p = tmp_path / "weights.tsv"
+        pd.DataFrame(
+            {"model": ["Z0*", "z1", "z2", "ghost"], "weight": [0.6, 0.3, 0.1, 0.25]}
+        ).to_csv(p, sep="\t", index=False)
+        cfg = self._weighted_cfg(
+            weights_dir, tree, tmp_path / "out", p,
+            exclude=[("k0", "z2"), ("k1", "z2")],
+        )
+        result = run_pipeline(cfg)
+
+        manifest = json.loads(Path(result.paths["manifest"]).read_text())
+        assert manifest["model_weights"] == str(p)
+        assert manifest["model_weights_record"] == {
+            "path": str(p),
+            "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+            "members": {
+                "z0": {"row": "Z0*", "weight": 0.6, "n_leaves": 2},
+                "z1": {"row": "z1", "weight": 0.3, "n_leaves": 2},
+            },
+            "unmatched_rows": {"z2": 0.1, "ghost": 0.25},
+        }
+
+    def test_a_run_without_model_weights_records_none(self, weights_dir, tmp_path):
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        result = run_pipeline(
+            _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
+        )
+        manifest = json.loads(Path(result.paths["manifest"]).read_text())
+        assert manifest["model_weights_record"] is None
 
 
 class TestOutputNaming:
