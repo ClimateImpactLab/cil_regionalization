@@ -18,6 +18,9 @@ values. Under "exact" they cannot. So the tests that compare block
 sizes, or a block with the whole leaf, ask for equality to the bit
 under "exact" and on leaves without missing values, and for agreement
 to twelve digits under "fast" on leaves with them.
+
+Under ``pool_years`` a weighted mean is not a pandas mean, so there
+the bits are asked for with model weights as well.
 """
 from __future__ import annotations
 
@@ -115,9 +118,13 @@ def build_request(
     missing: bool = True,
     windows_of=None,
     quantiles=(0.5, 0.95),
+    pool_years: bool = False,
+    frames=None,
 ) -> tuple[ReduceRequest, pd.DataFrame]:
     """Write the leaves under ``root`` and return the request for them,
-    with the frame of every leaf joined by hand and labelled."""
+    with the frame of every leaf joined by hand and labelled.
+    ``frames`` gives the leaves by model and draw. Without it they are
+    those of `_leaf_frame`."""
     if methods is None:
         methods = ("lower_step" if weighted else "linear", "fast")
     targets = TargetTable.from_frame(pd.DataFrame({"gid": TARGETS}), ["gid"])
@@ -130,8 +137,12 @@ def build_request(
         "aggregation_digest": "synthetic",
     }
     leaves, joined, rows_per_group, schema = [], [], np.zeros(4), None
-    for model, draw in itertools.product(MODELS, DRAWS):
-        frame = _leaf_frame(model, draw, special, missing)
+    if frames is None:
+        frames = {
+            (model, draw): _leaf_frame(model, draw, special, missing)
+            for model, draw in itertools.product(MODELS, DRAWS)
+        }
+    for (model, draw), frame in frames.items():
         file = f"{model}/{draw}/leaf.aggregated.parquet"
         written = write_leaf(
             frame, root / file, targets=targets, value_col="value",
@@ -168,12 +179,16 @@ def build_request(
         include_n_members=n_members,
         quantile_method=methods[0],
         summation=methods[1],
+        pool_years=pool_years,
     )
     return request, pd.concat(joined, ignore_index=True)
 
 
 def _sorted(frame: pd.DataFrame, request: ReduceRequest) -> pd.DataFrame:
-    keys = [c for c in request.columns if c not in (request.value_col, "n_members")]
+    keys = [
+        c for c in request.columns
+        if c not in (request.value_col, "n_members", "n_sample")
+    ]
     return frame.sort_values(keys, kind="stable").reset_index(drop=True)
 
 
@@ -228,8 +243,54 @@ def _one_group_a_block(request: ReduceRequest, n_workers: int = 1) -> PandasBloc
     return _backend(memory_gb=largest * 1.01 * n_workers / 1e9, n_workers=n_workers)
 
 
+def _pooled_by_hand(
+    joined: pd.DataFrame, request: ReduceRequest, weighted: bool, windows_of=None
+) -> pd.DataFrame:
+    """The statistics of pooled years as one call over every leaf gives
+    them. A row is in every window of its leaf that covers its year,
+    and the year is one more sample dimension. The members are counted
+    apart, as the distinct model and draw with a value and, with
+    weights, a weight above zero."""
+    pieces = []
+    for (model, draw), leaf in joined.groupby(["model", "draw"], sort=False):
+        windows = WINDOWS if windows_of is None else windows_of(model, draw)
+        for label, lo, hi in windows:
+            pieces.append(leaf[leaf["year"].between(lo, hi)].assign(window=label))
+    tagged = pd.concat(pieces, ignore_index=True)
+    tagged = tagged[["gid", "band", "window", "model", "draw", "year", "value"]]
+    if weighted:
+        tagged["model_weight"] = tagged["model"].map(MODELS)
+    stats = pooled_statistics(
+        tagged,
+        sample_dims=["model", "draw", "year"],
+        value_col="value",
+        quantiles=list(request.quantiles),
+        weight_col="model_weight" if weighted else None,
+        include_n_members=request.include_n_members,
+        quantile_method=request.quantile_method,
+        summation=request.summation,
+    )
+    if request.include_n_members:
+        stats = stats.rename(columns={"n_members": "n_sample"})
+        counted = tagged[tagged["value"].notna()]
+        if weighted:
+            counted = counted[counted["model_weight"] > 0]
+        members = (
+            counted.assign(member=counted["model"] + "/" + counted["draw"])
+            .groupby(["gid", "band", "window"])["member"]
+            .nunique()
+        )
+        keys = zip(stats["gid"], stats["band"], stats["window"])
+        stats["n_members"] = np.array(
+            [members.get(key, 0) for key in keys], dtype=np.int64
+        )
+    return stats[request.columns]
+
+
 def _by_hand(joined: pd.DataFrame, request: ReduceRequest, weighted: bool) -> pd.DataFrame:
     """The statistics as one call over every leaf gives them."""
+    if request.pool_years:
+        return _pooled_by_hand(joined, request, weighted)
     reduced = window_means(
         joined, time_col="year", windows=[(lo, hi) for _, lo, hi in WINDOWS],
         value_col="value", summation=request.summation,
@@ -251,10 +312,14 @@ def _by_hand(joined: pd.DataFrame, request: ReduceRequest, weighted: bool) -> pd
 
 @METHODS_AND_WEIGHTS
 @pytest.mark.parametrize("n_members", [False, True], ids=["plain", "n_members"])
+@pytest.mark.parametrize("pool_years", [False, True], ids=["means", "years"])
 class TestParity:
-    def test_two_backends_agree(self, tmp_path, methods, weighted, n_members):
+    def test_two_backends_agree(
+        self, tmp_path, methods, weighted, n_members, pool_years
+    ):
         request, _ = build_request(
-            tmp_path, weighted=weighted, n_members=n_members, methods=methods
+            tmp_path, weighted=weighted, n_members=n_members, methods=methods,
+            pool_years=pool_years,
         )
         assert_same_statistics(
             _one_group_a_block(request), _one_group_a_block(request), request
@@ -262,18 +327,22 @@ class TestParity:
 
     @pytest.mark.parametrize("missing", [False, True], ids=["full", "missing"])
     def test_the_pandas_backend_gives_the_statistics_of_the_joined_frame(
-        self, tmp_path, methods, weighted, n_members, missing
+        self, tmp_path, methods, weighted, n_members, pool_years, missing
     ):
         """One block, one group a block, and two workers, against one
         call of `pooled_statistics` over every leaf."""
         request, joined = build_request(
             tmp_path, weighted=weighted, n_members=n_members, methods=methods,
-            missing=missing,
+            missing=missing, pool_years=pool_years,
         )
         expected = _by_hand(joined, request, weighted)
         # windows, bands, statistics: four targets in both windows, T4 in one
         assert len(expected) == 2 * 2 * 3 * 4 + 1 * 2 * 3
-        to_the_bit = request.summation == "exact" or not missing
+        assert ("n_sample" in expected.columns) == (n_members and pool_years)
+        to_the_bit = (
+            request.summation == "exact" or not missing
+            or (pool_years and weighted)
+        )
         backends = [_backend(), _one_group_a_block(request)]
         if weighted and n_members:
             # a pool of two, in a quarter of the cases, for the time it takes
@@ -286,7 +355,7 @@ class TestParity:
 
     @pytest.mark.parametrize("special", ["all_nan", "infinite"])
     def test_what_one_side_refuses_the_other_refuses(
-        self, tmp_path, methods, weighted, n_members, special
+        self, tmp_path, methods, weighted, n_members, pool_years, special
     ):
         """A group whose members are all missing is a NaN row without
         weights and an error with them. An infinite statistic is
@@ -294,7 +363,7 @@ class TestParity:
         refused otherwise."""
         request, joined = build_request(
             tmp_path, weighted=weighted, n_members=n_members, methods=methods,
-            special=special,
+            special=special, pool_years=pool_years,
         )
         assert_same_statistics(
             _one_group_a_block(request), _one_group_a_block(request), request
@@ -321,6 +390,10 @@ class TestParity:
                 stats["value"].isna().any() if special == "all_nan"
                 else np.isinf(stats["value"]).any()
             )
+            if special == "all_nan" and n_members and pool_years:
+                # no member and no row behind a statistic that is NaN
+                empty = stats[stats["value"].isna()]
+                assert set(empty["n_members"]) == set(empty["n_sample"]) == {0}
 
 
 class _Changed(PandasBlocks):
@@ -493,6 +566,49 @@ class TestWindowsOfTheLeaf:
             _sorted(stats, request), _sorted(expected, request), check_exact=True
         )
 
+    @METHODS_AND_WEIGHTS
+    def test_each_leaf_pools_the_years_of_its_own_spans(
+        self, tmp_path, weighted, methods
+    ):
+        request, joined = build_request(
+            tmp_path, weighted=weighted, n_members=True, methods=methods,
+            windows_of=self._windows_of, pool_years=True,
+        )
+        request = dataclasses.replace(
+            request, window_labels=("warm", "late", "also")
+        )
+        expected = _pooled_by_hand(joined, request, weighted, self._windows_of)
+        for backend in (_backend(), _one_group_a_block(request)):
+            stats, _ = backend.run(request)
+            _assert_matches(
+                stats, expected, request,
+                to_the_bit=weighted or request.summation == "exact",
+            )
+        got = _sorted(stats, request)
+        # T5 is in every leaf, with every year. A span is two years. The
+        # span of m2 is 2052 to 2053 and no leaf has a 2053, so its two
+        # leaves give "warm" one row each.
+        counts = got[(got["gid"] == "T5") & (got["statistic"] == "mean")]
+        members = counts.groupby("window")["n_members"].max().to_dict()
+        assert members == {"warm": 4 if weighted else 6, "late": 4, "also": 2}
+        rows = counts.groupby("window")["n_sample"].max().to_dict()
+        assert rows == {"warm": 8 if weighted else 10, "late": 8, "also": 4}
+
+    def test_a_pooled_block_with_rows_and_none_in_any_window_gives_no_statistics(
+        self, tmp_path
+    ):
+        request, joined = build_request(
+            tmp_path, weighted=False, n_members=True, missing=False,
+            windows_of=lambda model, draw: [WINDOWS[1]], pool_years=True,
+        )
+        expected = _pooled_by_hand(
+            joined, request, False, lambda model, draw: [WINDOWS[1]]
+        )
+        stats, report = _one_group_a_block(request).run(request)
+        assert report["blocks"] == 3
+        assert "T4" not in set(stats["gid"])
+        _assert_matches(stats, expected, request, to_the_bit=True)
+
     def test_a_block_is_sized_by_what_each_leaf_keeps(self, tmp_path):
         """Every leaf has five time values. With the same two windows
         each keeps two rows in five. Here m0 has three windows, m1 two
@@ -511,6 +627,216 @@ class TestWindowsOfTheLeaf:
         kept = sum(n / 5 * windows[levels[0]] for levels, n in rows.items())
         assert kept_share(own) == pytest.approx(kept / sum(rows.values()))
         assert kept_share(own) != pytest.approx(2 / 5)
+
+
+def _dyadic_leaves() -> dict:
+    """Four members of one target over four years, every member with
+    every year. The values are exact in binary, and so is every sum of
+    them."""
+    values = {
+        ("m0", "d0"): [0.0, 0.0, 0.0, 8.0],
+        ("m0", "d1"): [1.0, 1.0, 1.0, 1.0],
+        ("m1", "d0"): [4.0, 4.0, 4.0, 4.0],
+        ("m1", "d1"): [2.0, 2.0, 6.0, 6.0],
+    }
+    return {
+        member: pd.DataFrame(
+            {"gid": "T1", "band": "old", "year": [2050, 2051, 2052, 2053],
+             "value": series}
+        )
+        for member, series in values.items()
+    }
+
+
+def _uneven_leaves() -> dict:
+    """One target over three years. m0/d1 has no value in 2051, m1/d0
+    has none at all, and m2 is the model of weight zero."""
+    values = {
+        ("m0", "d0"): [1.0, 2.0, 3.0],
+        ("m0", "d1"): [4.0, np.nan, 6.0],
+        ("m1", "d0"): [np.nan, np.nan, np.nan],
+        ("m2", "d0"): [7.0, 8.0, 9.0],
+    }
+    return {
+        member: pd.DataFrame(
+            {"gid": "T1", "band": "old", "year": [2050, 2051, 2052],
+             "value": series}
+        )
+        for member, series in values.items()
+    }
+
+
+class TestPooledYears:
+    """Under ``pool_years`` the years inside a window are members of
+    the sample, and no window mean is taken."""
+
+    @METHODS_AND_WEIGHTS
+    def test_a_balanced_tree_keeps_its_mean_and_moves_its_quantiles(
+        self, tmp_path, weighted, methods
+    ):
+        """Every member has every year, so the mean over member-years is
+        the mean of the window means. The quantiles are of sixteen
+        member-years where they were of four window means."""
+        window = (("2050-2053", 2050, 2053),)
+        results = {}
+        for pool_years in (False, True):
+            request, _ = build_request(
+                tmp_path / str(pool_years), weighted=weighted, n_members=True,
+                methods=methods, frames=_dyadic_leaves(),
+                windows_of=lambda model, draw: window, quantiles=(0.5, 0.9),
+                pool_years=pool_years,
+            )
+            request = dataclasses.replace(request, window_labels=("2050-2053",))
+            stats, _ = _backend().run(request)
+            results[pool_years] = stats.set_index("statistic")
+        means, years = results[False], results[True]
+        assert (
+            np.float64(years.loc["mean", "value"]).tobytes()
+            == np.float64(means.loc["mean", "value"]).tobytes()
+        )
+        # the window means are 2, 1, 4, 4, and the member-years
+        # 0 0 0 1 1 1 1 2 2 4 4 4 4 6 6 8
+        if not weighted:
+            assert years.loc["mean", "value"] == 2.75
+        if methods[0] == "linear":
+            assert means.loc["q50", "value"] == 3.0
+            assert years.loc["q50", "value"] == 2.0
+        if methods[0] == "inverted_cdf" and not weighted:
+            assert means.loc["q90", "value"] == 4.0
+            assert years.loc["q90", "value"] == 6.0
+        assert years.loc["q90", "value"] != means.loc["q90", "value"]
+        # four members either way, and four years of each
+        assert set(means["n_members"]) == set(years["n_members"]) == {4}
+        assert set(years["n_sample"]) == {16}
+        assert list(years.columns) == [
+            "gid", "band", "window", "value", "n_members", "n_sample",
+        ]
+        assert "n_sample" not in means.columns
+
+    @pytest.mark.parametrize("weighted", [False, True], ids=["unweighted", "weighted"])
+    def test_the_members_are_counted_as_without_pooling_and_the_rows_apart(
+        self, tmp_path, weighted
+    ):
+        """A member counts if it has a value in the window and, with
+        weights, a weight above zero. Its years with no value are not
+        rows of the sample. Counted as rows, the members here came to
+        8 and 5, and as every member in the leaves to 4."""
+        window = (("2050-2052", 2050, 2052),)
+        counts = {}
+        for pool_years in (False, True):
+            request, joined = build_request(
+                tmp_path / str(pool_years), weighted=weighted, n_members=True,
+                frames=_uneven_leaves(), windows_of=lambda model, draw: window,
+                quantiles=(0.75,), pool_years=pool_years,
+            )
+            request = dataclasses.replace(request, window_labels=("2050-2052",))
+            stats, _ = _backend().run(request)
+            counts[pool_years] = stats
+        assert set(counts[False]["n_members"]) == {2 if weighted else 3}
+        assert set(counts[True]["n_members"]) == {2 if weighted else 3}
+        assert set(counts[True]["n_sample"]) == {5 if weighted else 8}
+        assert counts[True]["n_members"].dtype == np.int64
+        assert counts[True]["n_sample"].dtype == np.int64
+        mean = counts[True].set_index("statistic").loc["mean", "value"]
+        # m0 alone carries weight, with five member-years
+        assert mean == ((1 + 2 + 3 + 4 + 6) / 5 if weighted else 40 / 8)
+
+    @METHODS_AND_WEIGHTS
+    def test_a_year_inside_two_windows_is_pooled_in_both(
+        self, tmp_path, weighted, methods
+    ):
+        overlapping = (("2050-2052", 2050, 2052), ("2051-2080", 2051, 2080))
+
+        def windows_of(model, draw):
+            return overlapping
+
+        request, joined = build_request(
+            tmp_path, weighted=weighted, n_members=True, methods=methods,
+            windows_of=windows_of, pool_years=True,
+        )
+        request = dataclasses.replace(
+            request, window_labels=("2050-2052", "2051-2080")
+        )
+        expected = _pooled_by_hand(joined, request, weighted, windows_of)
+        for backend in (_backend(), _one_group_a_block(request)):
+            stats, report = backend.run(request)
+            _assert_matches(
+                stats, expected, request,
+                to_the_bit=weighted or request.summation == "exact",
+            )
+        # 2051 and 2052 are in both windows, so more rows are pooled
+        # than the leaves hold
+        assert report["rows_pooled"] > len(joined)
+        # T5 has every year in every leaf: three years a window, in six
+        # leaves, or in the four that carry weight
+        t5 = stats[(stats["gid"] == "T5") & (stats["statistic"] == "mean")]
+        assert set(t5["n_sample"]) == {12 if weighted else 18}
+
+    def test_a_block_with_no_value_at_all_has_no_member_and_no_row(self, tmp_path):
+        """T1 has no value in any leaf and T5 has every one. They are in
+        different row groups, so with one group a block the block of T1
+        has rows and no member to count."""
+        frames = {
+            (model, draw): pd.DataFrame(
+                {
+                    "gid": ["T1"] * 3 + ["T5"] * 3,
+                    "band": "old",
+                    "year": [2050, 2051, 2052] * 2,
+                    "value": [np.nan] * 3 + [1.0, 2.0, 4.0],
+                }
+            )
+            for model, draw in (("m0", "d0"), ("m1", "d0"))
+        }
+        window = (("2050-2052", 2050, 2052),)
+        request, _ = build_request(
+            tmp_path, weighted=False, n_members=True, frames=frames,
+            windows_of=lambda model, draw: window, pool_years=True,
+        )
+        request = dataclasses.replace(request, window_labels=("2050-2052",))
+        for backend in (_backend(), _one_group_a_block(request)):
+            stats, report = backend.run(request)
+            counts = stats.groupby("gid")[["n_members", "n_sample"]].max()
+            assert counts.loc["T1"].tolist() == [0, 0]
+            assert counts.loc["T5"].tolist() == [2, 6]
+            assert stats.loc[stats["gid"] == "T1", "value"].isna().all()
+            assert stats["n_members"].dtype == np.int64
+        assert report["blocks"] == 2
+
+    def test_a_block_is_sized_by_the_rows_inside_the_windows(self, tmp_path):
+        from cil_regionalization.reduce.pandas_blocks import kept_share
+
+        both, joined = build_request(
+            tmp_path / "both", weighted=False, n_members=False, pool_years=True
+        )
+        # every year of every leaf is in one of the two windows
+        assert kept_share(both) == 1.0
+        late, joined = build_request(
+            tmp_path / "late", weighted=False, n_members=False, pool_years=True,
+            windows_of=lambda model, draw: [WINDOWS[1]],
+        )
+        inside = joined["year"].between(2080, 2081).sum()
+        assert kept_share(late) == pytest.approx(inside / len(joined))
+        assert 0.3 < kept_share(late) < 0.4
+        twice, _ = build_request(
+            tmp_path / "twice", weighted=False, n_members=False, pool_years=True,
+            windows_of=lambda model, draw: [WINDOWS[0], ("again", 2050, 2052)],
+        )
+        early = joined["year"].between(2050, 2052).sum()
+        assert kept_share(twice) == pytest.approx(2 * early / len(joined))
+        assert kept_share(twice) > 1.0
+
+    def test_a_miscounted_sample_fails_the_harness(self, tmp_path):
+        request, _ = build_request(
+            tmp_path, weighted=False, n_members=True, pool_years=True
+        )
+        assert_same_statistics(_backend(), _Changed(lambda stats: stats), request)
+
+        def one_row_more(stats):
+            stats.loc[stats.index[0], "n_sample"] += 1
+            return stats
+
+        with pytest.raises(AssertionError):
+            assert_same_statistics(_backend(), _Changed(one_row_more), request)
 
 
 class TestBlocks:

@@ -21,6 +21,8 @@ before any leaf is read.
 is written in a new layout under a new name.** Leaf files of the old
 layout are left where they are and are not read.
 A new stage, `reduce`, takes the statistics from leaves written before.
+A new experimental option, `stats.pool_years`, pools the years of a
+window with the models and the draws.
 
 - Changed: the pipeline sorts the statistics rows before writing them:
   by statistic in the order requested (the mean, then the quantiles as
@@ -300,6 +302,35 @@ A new stage, `reduce`, takes the statistics from leaves written before.
   repeated. No run of the pipeline built such a frame.
 - The pipeline writes a statistics file and its manifest under a
   temporary name and renames them, the manifest last.
+- New, experimental: `stats.pool_years` in a pipeline config, off by
+  default. With it no window mean is taken. Every year of a member
+  inside a window is a member of the sample, so the statistics are
+  over models, draws and years together, and a year inside two windows
+  is pooled in both. A model weight applies to each member-year. A
+  member that lacks years has fewer rows and counts for less. On a
+  tree where every member has every year, the mean is the mean of the
+  window means up to rounding, and the quantiles differ.
+  The pooled rows are the leaves' own rows, so the statistics come
+  from the leaf files by blocks under every stage. Stage `all` then
+  writes the leaves and reduces them. It needs
+  `output.write_leaves = true` and `[reduce.pandas] memory_gb`, and
+  refuses to start without them. If its second pass fails, the leaves
+  stay and `--stage reduce` runs from them. `output.write_reduced` and
+  a run without `[weights]` are refused, and so is `stats.time_col`
+  among `stats.sample_dims`.
+- New: with `stats.pool_years` and `stats.include_n_members` the
+  statistics file has an `n_sample` column after `n_members`.
+  `n_sample` is the member-years behind a statistic. `n_members` keeps
+  its meaning, the members behind it: those with a value in the window
+  and, with model weights, a weight above zero. Without
+  `stats.pool_years` no file gains a column.
+- Changed: a tree level named `n_sample` is refused before any leaf is
+  read, as `n_members` is.
+- The pipeline manifest records `pool_years`. A run of stage `all`
+  with pooled years writes the manifest the reduce stage writes, with
+  `"stage": "all"`.
+- New: `ReduceRequest.pool_years`, and `ReduceBackend.check_options`,
+  which the pipeline calls before it aggregates anything.
 
 ## v0.5.0
 

@@ -315,6 +315,52 @@ plain string when leaves are written. A categorical, datetime or
 nullable column is refused, because pandas 2 and pandas 3 write those
 differently.
 
+## Pooling the years of a window
+
+By default the years of a member inside a window are averaged first,
+and the statistics are over those means, one value a model and draw.
+`stats.pool_years = true` (experimental) takes no window mean. Every
+year of a member inside a window is a member of the sample, so a
+quantile is over models, draws and years together and carries the
+spread from year to year. A year inside two windows is pooled in both.
+
+```toml
+[stats]
+pool_years = true
+
+[output]
+write_leaves = true
+
+[reduce.pandas]
+memory_gb = 128
+```
+
+The pooled rows are the leaves' own rows, far more than one process
+can hold, so the statistics always come from the leaf files, one block
+of targets at a time. Stage `all` writes the leaves and then reduces
+them. It asks for `output.write_leaves = true` and for the memory
+budget before it reads a leaf. The blocks are sized after the leaves
+are written, so a budget too small for one row group is found then.
+The leaves stay, and `--stage reduce` takes the statistics from them
+with a larger budget. `output.write_reduced` is refused, and so is a
+run without `[weights]`.
+
+What it changes:
+
+- The mean is over member-years. When every member has every year of
+  the window it is the mean of the window means, up to rounding. A
+  member that lacks years has fewer rows in the sample and so counts
+  for less than a member with all of them.
+- A model weight applies to each member-year.
+- `quantile_method` and `summation` work as before. No window mean is
+  taken, so `summation` acts on the pooled mean alone.
+- With `include_n_members` the file has two counts. `n_members` is
+  what it is without pooling, the members behind a statistic: those
+  with a value in the window and, with model weights, a weight above
+  zero. `n_sample` is the member-years behind it.
+- The manifest records `pool_years`, next to `quantile_method` and
+  `summation`.
+
 ## Your own NetCDF
 
 A file on a regular lat-lon grid, with 1-D `lat` and `lon`

@@ -75,6 +75,14 @@ everything else under ``[stats]`` can differ from the run that wrote
 the leaves. The default stage, ``all``, runs everything in one process
 and holds every reduced leaf at once.
 
+Pooled years. With ``stats.pool_years`` no window mean is taken. Every
+year of a member inside a window is a member of the sample, so the
+statistics are over models, draws and years together. The pooled rows
+are the leaves' own rows, far too many to hold at once, so the
+statistics always come from the leaf files, one block of targets at a
+time. Stage ``all`` then writes the leaves, as ``aggregate`` does, and
+reduces them, as ``reduce`` does.
+
 Per-capita to total conversion is deliberately outside: leaves must
 already carry the extensive quantity to aggregate. The hook for such a
 conversion is the step that produces the tree this pipeline reads.
@@ -275,6 +283,13 @@ class StatsConfig(_Strict):
     # `stats.summarize_samples`.
     quantile_method: Literal["linear", "lower_step", "inverted_cdf"]
     summation: Literal["fast", "exact"]
+    # Experimental. The years inside a window are pooled with the models
+    # and the draws, where the default takes each member's mean over the
+    # window first. The statistics then come from the leaf files, by
+    # blocks, under every stage. With include_n_members the file gets an
+    # n_sample column as well, the rows behind a statistic. n_members
+    # stays the members behind it.
+    pool_years: bool = False
     model_weights: Optional[str] = None
     model_weight_level: Optional[str] = None
 
@@ -310,6 +325,11 @@ class StatsConfig(_Strict):
             raise ValueError(
                 f"stats.model_weight_level {self.model_weight_level!r} must "
                 f"be one of stats.sample_dims {self.sample_dims}"
+            )
+        if self.pool_years and self.time_col in self.sample_dims:
+            raise ValueError(
+                f"stats.pool_years pools over stats.time_col {self.time_col!r} "
+                f"itself. Leave it out of stats.sample_dims."
             )
         return self
 
@@ -371,6 +391,12 @@ class MonteCarloPipelineConfig(_Strict):
                 raise ValueError(
                     "[policies] governs how source units meet the weights; "
                     "without [weights] there is nothing for it to govern"
+                )
+            if self.stats.pool_years:
+                raise ValueError(
+                    "stats.pool_years needs [weights]. Pooled years are "
+                    "reduced from the leaf files, and a passthrough run "
+                    "writes none of the kind that reads."
                 )
         elif self.data.region_col is not None:
             raise ValueError(
@@ -566,7 +592,16 @@ def run_pipeline(
     plan = resolve_plan(cfg, stage)
     if stage == "reduce":
         return _run_reduce(cfg, plan, dry_run=dry_run, verify_leaves=verify_leaves)
+    # pooled years are reduced from the leaf files this run writes
+    by_blocks = stage == "all" and cfg.stats.pool_years
+    if by_blocks:
+        # asked before pass 1, which may take hours
+        backend = get_backend(cfg.reduce)
+        backend.check_options()
+        _check_methods_supported(cfg, backend)
     if dry_run:
+        if by_blocks:
+            return _with_notes(plan, _blocks_before_aggregation(cfg, plan))
         return plan
     if plan.missing:
         shown = [str(m.path) for m in plan.missing[:10]]
@@ -590,7 +625,7 @@ def run_pipeline(
 
     leaves_document = None
     job = {
-        "reduce": stage != "aggregate",
+        "reduce": stage == "all" and not by_blocks,
         "artifact_sha256": artifact_sha256,
         "leaf_file": None,
     }
@@ -709,7 +744,9 @@ def run_pipeline(
     files = {tuple(o["leaf"]): o.pop("leaf_file") for o in outcomes}
     if leaves_document is not None:
         _finish_leaves(plan, leaves_document, outcomes, files)
-        print(_unlisted_report(plan.leaves_manifest_path.parent), flush=True)
+        if not by_blocks:
+            # the second pass prints it
+            print(_unlisted_report(plan.leaves_manifest_path.parent), flush=True)
     if stage == "aggregate":
         for o in outcomes:
             o.pop("frame")
@@ -718,6 +755,21 @@ def run_pipeline(
             leaf_reports=outcomes,
             paths={"leaves_manifest": str(plan.leaves_manifest_path)},
         )
+    if by_blocks:
+        del outcomes
+        try:
+            return _run_reduce(
+                cfg, plan, dry_run=False, verify_leaves=False,
+                model_weights=model_weights, stage="all",
+            )
+        except (ValueError, RuntimeError) as error:
+            # a subclass may not take a message alone
+            kind = RuntimeError if isinstance(error, RuntimeError) else ValueError
+            raise kind(
+                f"{error} The leaves are written and their manifest is "
+                f"complete ({plan.leaves_manifest_path}). Stage 'reduce' "
+                f"takes the statistics from them without aggregating again."
+            ) from error
 
     # Leaves arrive already reduced to window means (see _process_leaf),
     # so the pooled frame is targets x dims x windows per leaf, not
@@ -785,6 +837,7 @@ def run_pipeline(
         "quantiles": cfg.stats.quantiles,
         "quantile_method": cfg.stats.quantile_method,
         "summation": cfg.stats.summation,
+        "pool_years": cfg.stats.pool_years,
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
@@ -862,6 +915,13 @@ def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
         raise ValueError(
             f"unknown stage {stage!r}; expected 'all', 'aggregate' or 'reduce'"
         )
+    if cfg.stats.pool_years and stage != "aggregate" and cfg.output.write_reduced:
+        raise ValueError(
+            "stats.pool_years cannot write the reduced file. The pooled "
+            "rows are the leaves' own rows, one block of targets at a "
+            "time, and the leaf files already hold them. Set "
+            "output.write_reduced = false."
+        )
     if stage == "reduce":
         if cfg.weights is None:
             raise ValueError(
@@ -875,6 +935,11 @@ def _check_stage(cfg: MonteCarloPipelineConfig, stage: str) -> None:
                 "with the tree levels ahead of the target. Set "
                 "output.write_reduced = false, or use stage 'all'."
             )
+    if stage == "all" and cfg.stats.pool_years and not cfg.output.write_leaves:
+        raise ValueError(
+            "stats.pool_years takes the statistics from the leaf files, "
+            "so stage 'all' needs output.write_leaves = true"
+        )
     if stage == "aggregate":
         if cfg.weights is None:
             raise ValueError(
@@ -1172,6 +1237,11 @@ def _reduce_request(
             f"stats.time_col {time_col!r} is not a column of the leaves "
             f"(they have {columns})"
         )
+    if cfg.stats.pool_years and "n_sample" in columns:
+        raise ValueError(
+            "the leaves have a column named 'n_sample', which is the column "
+            "stats.pool_years writes its pooled rows in"
+        )
     common = tuple(
         (_window_label(lo, hi), lo, hi) for lo, hi in cfg.stats.windows
     )
@@ -1263,6 +1333,7 @@ def _reduce_request(
         include_n_members=cfg.stats.include_n_members or bool(reasons),
         quantile_method=cfg.stats.quantile_method,
         summation=cfg.stats.summation,
+        pool_years=cfg.stats.pool_years,
         n_workers=cfg.run.n_workers,
     )
     return request, reasons
@@ -1288,22 +1359,80 @@ def _verify_leaves(leaves_dir: Path, entries: list[dict], n_workers: int) -> Non
           flush=True)
 
 
+# the model weights are still to be read
+_UNREAD = object()
+
+
+def _check_methods_supported(cfg: MonteCarloPipelineConfig, backend) -> None:
+    methods = (cfg.stats.quantile_method, cfg.stats.summation)
+    if methods not in backend.supports:
+        raise ValueError(
+            f"the {backend.kind!r} reduce backend does not give "
+            f"quantile_method={methods[0]!r} with summation={methods[1]!r} "
+            f"to the last bit. It supports {sorted(backend.supports)}."
+        )
+
+
+def _with_notes(plan: PipelinePlan, notes: list[str]) -> PipelinePlan:
+    return PipelinePlan(
+        leaves=plan.leaves,
+        missing=plan.missing,
+        stats_path=plan.stats_path,
+        manifest_path=plan.manifest_path,
+        leaves_manifest_path=plan.leaves_manifest_path,
+        stage=plan.stage,
+        notes=tuple(f"  {line.strip()}" for line in notes),
+    )
+
+
+def _blocks_before_aggregation(
+    cfg: MonteCarloPipelineConfig, plan: PipelinePlan
+) -> list[str]:
+    """What a dry run of stage 'all' can say of the blocks under
+    ``stats.pool_years``. They are sized from the leaves manifest, which
+    the run itself writes. If leaves of this stem are on disk and
+    complete, the lines are for those."""
+    after = (
+        "reduce: stats.pool_years takes the statistics from the leaf files, "
+        "by blocks, after every leaf is written"
+    )
+    if not plan.leaves_manifest_path.exists():
+        return [after, "the blocks are sized once the leaves are written"]
+    try:
+        document, _ = _load_leaves_document(plan.leaves_manifest_path)
+        _check_identity(cfg, document)
+        request, _ = _reduce_request(cfg, plan, document, _model_weights(cfg))
+        lines = get_backend(cfg.reduce).describe(request)["text"]
+    except (ValueError, OSError) as error:
+        return [
+            after,
+            f"the leaves on disk now do not say how the blocks will be "
+            f"sized: {error}",
+        ]
+    return [after, "with the leaves on disk now, which this run writes again:"] + lines
+
+
 def _run_reduce(
     cfg: MonteCarloPipelineConfig,
     plan: PipelinePlan,
     *,
     dry_run: bool,
     verify_leaves: bool,
+    model_weights=_UNREAD,
+    stage: str = "reduce",
 ) -> PipelinePlan | PipelineResult:
-    """Pass 2 alone. The statistics come from leaf files a run of stage
+    """Pass 2. The statistics come from leaf files a run of stage
     'aggregate' or 'all' wrote, checked against their manifest first.
     The source tree is not opened, and neither is the weights artifact
-    beyond hashing it if it is still there."""
+    beyond hashing it if it is still there. ``model_weights`` is the
+    table if the caller has read it, and ``stage`` the stage the
+    manifest records."""
     leaves_dir = plan.leaves_manifest_path.parent
     document, document_sha256 = _load_leaves_document(plan.leaves_manifest_path)
     notes = _check_identity(cfg, document)
     _check_level_names(cfg.tree.levels, document["targets"]["id_fields"])
-    model_weights = _model_weights(cfg)
+    if model_weights is _UNREAD:
+        model_weights = _model_weights(cfg)
     request, forced = _reduce_request(cfg, plan, document, model_weights)
     for reason in forced:
         notes.append(
@@ -1311,25 +1440,11 @@ def _run_reduce(
             f"it, because {reason}"
         )
     backend = get_backend(cfg.reduce)
-    if request.methods not in backend.supports:
-        raise ValueError(
-            f"the {backend.kind!r} reduce backend does not give "
-            f"quantile_method={request.quantile_method!r} with "
-            f"summation={request.summation!r} to the last bit. It supports "
-            f"{sorted(backend.supports)}."
-        )
+    _check_methods_supported(cfg, backend)
     description = backend.describe(request)
     summary = description["text"] + [_unlisted_report(leaves_dir)]
     if dry_run:
-        return PipelinePlan(
-            leaves=plan.leaves,
-            missing=plan.missing,
-            stats_path=plan.stats_path,
-            manifest_path=plan.manifest_path,
-            leaves_manifest_path=plan.leaves_manifest_path,
-            stage="reduce",
-            notes=tuple(f"  {line.strip()}" for line in summary + notes),
-        )
+        return _with_notes(plan, summary + notes)
 
     listed = {tuple(entry["leaf"]): entry for entry in document["leaves"]}
     entries = [listed[leaf.values] for leaf in plan.leaves]
@@ -1371,7 +1486,7 @@ def _run_reduce(
     manifest = {
         "leaves": entries,
         "n_leaves": len(entries),
-        "stage": "reduce",
+        "stage": stage,
         "leaves_manifest": str(plan.leaves_manifest_path),
         "leaves_manifest_sha256": document_sha256,
         "leaves_left_out": [
@@ -1399,6 +1514,7 @@ def _run_reduce(
         "quantiles": cfg.stats.quantiles,
         "quantile_method": cfg.stats.quantile_method,
         "summation": cfg.stats.summation,
+        "pool_years": cfg.stats.pool_years,
         "reduced": None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
@@ -1457,6 +1573,7 @@ def _check_level_names(levels: list[str], id_fields: list[str]) -> None:
         "window": "the column of window labels",
         "statistic": "the column of statistic labels",
         "n_members": "the column stats.include_n_members writes",
+        "n_sample": "the column of pooled rows stats.pool_years writes",
         "model_weight": "the column the model weights travel in",
         leaf_format.ORDINAL_COLUMN: "the ordinal column of a leaf file",
     }
@@ -1517,7 +1634,7 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
             )
     for column in frame.columns:
         if column in declared or column in (
-            cfg.data.value_col, "n_members", "model_weight"
+            cfg.data.value_col, "n_members", "n_sample", "model_weight"
         ):
             continue
         col = frame[column]

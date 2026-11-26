@@ -55,6 +55,11 @@ summation = "fast"
 windows = [[2040, 2059], [2080, 2099]]
 quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
 include_mean = true
+# Experimental, off by default. Pools the years inside a window with
+# the models and the draws, and takes no window mean. The statistics
+# then come from the leaf files under every stage, so it needs
+# write_leaves and the memory budget below.
+# pool_years = true
 
 [output]
 dir = "pipeline_out"
@@ -66,8 +71,9 @@ write_leaves = true
 [run]
 n_workers = 1
 
-# Only `--stage reduce` reads this. It takes the statistics from the
-# leaves under pipeline_out/leaves, one block of targets at a time, and
-# memory_gb is what all its workers may hold together.
+# `--stage reduce` reads this, and so does a run with pool_years. It
+# takes the statistics from the leaves under pipeline_out/leaves, one
+# block of targets at a time, and memory_gb is what all its workers may
+# hold together.
 [reduce.pandas]
 memory_gb = 4

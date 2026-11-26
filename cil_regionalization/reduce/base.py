@@ -63,6 +63,10 @@ class ReduceRequest:
     ``quantile_method`` and ``summation`` have no default.
     ``rows_per_group`` are those of ``leaves``, summed. The statistics
     come back with the columns of `columns`.
+
+    Under ``pool_years`` no window mean is taken. Every row inside a
+    window is a member of the sample with its own time value, and a row
+    inside two windows is in both.
     """
 
     leaves_root: str
@@ -82,6 +86,7 @@ class ReduceRequest:
     include_n_members: bool = False
     quantile_method: str = field(kw_only=True)
     summation: str = field(kw_only=True)
+    pool_years: bool = False
     n_workers: int = 1
 
     @property
@@ -111,6 +116,7 @@ class ReduceRequest:
             + kept_levels
             + ["window", "statistic", self.value_col]
             + (["n_members"] if self.include_n_members else [])
+            + (["n_sample"] if self.include_n_members and self.pool_years else [])
         )
 
 
@@ -123,6 +129,10 @@ class ReduceBackend(ABC):
 
     kind: str
     supports: frozenset[Methods] = ALL_METHODS
+
+    def check_options(self) -> None:
+        """Raise if the options rule out every request. The pipeline
+        asks before it aggregates anything."""
 
     @abstractmethod
     def describe(self, request: ReduceRequest) -> dict:
