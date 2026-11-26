@@ -34,7 +34,7 @@ google-cloud-storage-control==1.13.0
 google-crc32c==1.8.0
 google-resumable-media==2.10.1
 googleapis-common-protos==1.75.1
-grpc-google-iam-v1==0.14.5
+grpc-google-iam-v1==0.14.6
 grpcio==1.83.0
 grpcio-status==1.83.0
 idna==3.18
