@@ -149,6 +149,31 @@ class TestTargetTable:
         assert path.stat().st_mtime_ns == stamp
         assert [p.name for p in path.parent.iterdir()] == [path.name]
 
+    def test_a_table_out_of_ordinal_order_is_not_read(self, tmp_path):
+        path = _targets().write(tmp_path)
+        table = pq.read_table(path)
+        pq.write_table(table.take([1, 0, 2, 3, 4]), path)
+        with pytest.raises(ValueError, match="is not in ordinal order"):
+            TargetTable.read(path)
+
+    def test_a_table_whose_ids_are_not_its_footer_is_not_read(self, tmp_path):
+        """One id changed after the file was written. The digest is worked
+        out again from the ids, so the footer no longer matches."""
+        path = _targets().write(tmp_path)
+        table = pq.read_table(path)
+        ids = table.column("gid").to_pylist()
+        ids[0] = "T0"
+        changed = table.set_column(1, "gid", pa.array(ids, type=pa.string()))
+        pq.write_table(changed.replace_schema_metadata(table.schema.metadata), path)
+        with pytest.raises(ValueError, match="holds targets with digest"):
+            TargetTable.read(path)
+
+    def test_a_parquet_file_with_no_target_footer_is_not_read(self, tmp_path):
+        path = tmp_path / "targets.parquet"
+        pq.write_table(pa.table({ORDINAL_COLUMN: [0], "gid": ["T1"]}), path)
+        with pytest.raises(ValueError, match="is not a target table"):
+            TargetTable.read(path)
+
     def test_a_file_of_other_targets_under_its_name_is_refused(self, tmp_path):
         table = _targets()
         other = _targets(IDS[:4])

@@ -1371,7 +1371,11 @@ class TestModelWeights:
         raw["stats"]["quantile_method"] = "lower_step"
         raw["stats"]["model_weight_level"] = "zeppelin"
         cfg = MonteCarloPipelineConfig.model_validate(raw)
-        with pytest.raises(ValueError, match="no row in the model"):
+        # the check of the values the tree declares, not the lookup of
+        # one leaf's weight, which says "has no row"
+        with pytest.raises(
+            ValueError, match=r"values of 'zeppelin' have no row in the model"
+        ):
             run_pipeline(cfg)
 
     def test_weight_level_must_be_sample_dim(self, weights_dir, tmp_path):
@@ -3958,6 +3962,18 @@ class TestWarmingLevels:
         raw["output"]["write_leaves"] = True
         raw["reduce"] = {"pandas": {"memory_gb": 1.0}}
         return raw, out
+
+    @pytest.mark.parametrize("name", ["warming_level", "n_bin_members"])
+    def test_a_leaf_column_named_like_one_it_writes_is_refused(
+        self, weights_dir, tmp_path, name
+    ):
+        raw, _ = self._raw(weights_dir, tmp_path)
+        for path in (tmp_path / "tree").rglob("damages.parquet"):
+            pd.read_parquet(path).assign(**{name: 1}).to_parquet(path, index=False)
+        with pytest.raises(
+            ValueError, match=f"the leaves have a column named '{name}'"
+        ):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
 
     @staticmethod
     def _by_hand(cfg: MonteCarloPipelineConfig, out: Path) -> pd.DataFrame:

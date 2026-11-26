@@ -80,6 +80,15 @@ class TestRebasing:
         assert got.means[("b", "rcp45")] == (2.0, 3.5)
         assert got.levels[("b", "rcp45")] == (2.0, None)
 
+    def test_the_reference_is_the_mean_of_every_year_of_the_period(self):
+        """The reference years go -0.75, -0.25, 0.25 and 0.75 five times
+        over, so their mean is 0 and their first year is -0.75."""
+        series = _series(0.0, 1.0, 2.5)
+        series.update({1986 + i: (-0.75, -0.25, 0.25, 0.75)[i % 4] for i in range(20)})
+        got = _assign(_table({("a", "rcp45"): series}))
+        assert got.means[("a", "rcp45")] == (1.5, 3.0)
+        assert got.levels[("a", "rcp45")] == (1.5, 3.0)
+
     def test_another_reference_period_and_offset_give_other_levels(self):
         """The same table against 2040 to 2059 with no offset. Both are
         values, and neither has a default."""
