@@ -145,6 +145,8 @@ from cil_regionalization.stats import (
 
 
 VariableKind = Literal["extensive", "intensive", "ratio"]
+# in a cell of tree.exclude, every value of the level
+EVERY_VALUE = "*"
 Stage = Literal["all", "aggregate", "reduce"]
 
 
@@ -164,6 +166,8 @@ class TreeConfig(_Strict):
     values per level, and the expected leaf set is their full cross
     product: a leaf path is ``root/<v1>/.../<vN>/filename``. Anything
     declared but absent on disk fails the run before any processing.
+    ``exclude`` takes cells out of that product. A cell has one value
+    for each level, and ``"*"`` stands for every value of its level.
     """
 
     root: str = Field(min_length=1)
@@ -194,8 +198,12 @@ class TreeConfig(_Strict):
                     f"tree.exclude entry {cell} must have one value per "
                     f"level {self.levels}"
                 )
+            if all(value == EVERY_VALUE for value in cell):
+                raise ValueError(
+                    f"tree.exclude entry {cell} leaves out every leaf"
+                )
             for level, value in zip(self.levels, cell):
-                if value not in self.expect[level]:
+                if value != EVERY_VALUE and value not in self.expect[level]:
                     raise ValueError(
                         f"tree.exclude entry {cell}: {value!r} is not a "
                         f"declared value of level {level!r}"
@@ -514,11 +522,14 @@ def resolve_plan(
     root = Path(cfg.tree.root)
     out_root = Path(cfg.output.dir)
     value_lists = [cfg.tree.expect[level] for level in cfg.tree.levels]
-    excluded = {tuple(cell) for cell in cfg.tree.exclude}
+    excluded = [tuple(cell) for cell in cfg.tree.exclude]
     leaves: list[Leaf] = []
     missing: list[Leaf] = []
     for combo in itertools.product(*value_lists):
-        if tuple(combo) in excluded:
+        if any(
+            all(want in (EVERY_VALUE, value) for want, value in zip(cell, combo))
+            for cell in excluded
+        ):
             continue
         rel = Path(*combo)
         path = root / rel / cfg.tree.filename

@@ -368,6 +368,10 @@ and goes on, because the hashes in the manifest say what they were.
 which reads all of them and is the way to rule out a file changed in
 place.
 
+A cell of `tree.exclude` has one value for each level, and `"*"`
+stands for every value of its level, so `["*", "rcp85", "ACCESS1-0"]`
+leaves that model out of that scenario in every batch.
+
 Reducing fewer leaves than were aggregated is allowed, with a narrower
 `tree.expect` or a longer `tree.exclude`. The statistics file then has
 an `n_members` column whether the config asks for it or not, so that

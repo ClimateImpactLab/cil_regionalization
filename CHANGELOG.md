@@ -361,6 +361,10 @@ its warming level in a calendar period.
   entry: the table's hash, every setting, each member's mean and level,
   the count at each declared level and the members with none. The
   pipeline does not use any of this yet.
+- New: a cell of `tree.exclude` takes `"*"` for every value of a
+  level, so a model that one scenario lacks is one line and not one
+  line for each batch, socioeconomic model and scenario. A cell of
+  stars alone is refused. The manifest records the cells as written.
 
 ## v0.5.0
 

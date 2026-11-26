@@ -1191,6 +1191,54 @@ class TestExclude:
         result = run_pipeline(cfg)
         assert len(result.leaf_reports) == 5
 
+    def test_a_star_leaves_out_every_value_of_its_level(self, weights_dir, tmp_path):
+        """A model that one scenario lacks, in every batch, is one line
+        and not one line a batch."""
+        import shutil
+
+        levels = {
+            "batch": ["b0", "b1", "b2"], "rcp": ["r45", "r85"], "model": ["m0", "m1"],
+        }
+        tree = tmp_path / "tree"
+        _build_tree(tree, levels)
+        for batch in levels["batch"]:
+            shutil.rmtree(tree / batch / "r85" / "m1")
+        raw = _pipeline_cfg(
+            weights_dir, tree, tmp_path / "out", levels=levels
+        ).model_dump()
+        missing = run_pipeline(
+            MonteCarloPipelineConfig.model_validate(raw), dry_run=True
+        ).missing
+        assert len(missing) == 3
+        raw["tree"]["exclude"] = [["*", "r85", "m1"]]
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        plan = run_pipeline(cfg, dry_run=True)
+        assert plan.missing == [] and len(plan.leaves) == 9
+        assert ("b1", "r85", "m1") not in {leaf.values for leaf in plan.leaves}
+        assert ("b1", "r85", "m0") in {leaf.values for leaf in plan.leaves}
+        result = run_pipeline(cfg)
+        assert len(result.leaf_reports) == 9
+        manifest = json.loads(Path(result.paths["manifest"]).read_text())
+        assert manifest["excluded_leaves"] == [["*", "r85", "m1"]]
+        # two stars, and a star next to a cell written out
+        raw["tree"]["exclude"] = [["*", "*", "m1"], ["b0", "r45", "m0"]]
+        plan = run_pipeline(MonteCarloPipelineConfig.model_validate(raw), dry_run=True)
+        assert sorted(leaf.values for leaf in plan.leaves) == [
+            ("b0", "r85", "m0"), ("b1", "r45", "m0"), ("b1", "r85", "m0"),
+            ("b2", "r45", "m0"), ("b2", "r85", "m0"),
+        ]
+
+    def test_a_cell_of_stars_alone_is_refused(self, weights_dir, tmp_path):
+        raw = _pipeline_cfg(
+            weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS
+        ).model_dump()
+        raw["tree"]["exclude"] = [["*", "*"]]
+        with pytest.raises(ValueError, match="leaves out every leaf"):
+            MonteCarloPipelineConfig.model_validate(raw)
+        raw["tree"]["exclude"] = [["*", "z9"]]
+        with pytest.raises(ValueError, match="'z9' is not a declared value"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
     def test_exclude_of_undeclared_value_is_rejected(self, weights_dir, tmp_path):
         cfg = _pipeline_cfg(weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS)
         raw = cfg.model_dump()
