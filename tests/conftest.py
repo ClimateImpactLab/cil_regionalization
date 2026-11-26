@@ -239,6 +239,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "the [netcdf] extra is not installed: the NetCDF leaf and "
             "pipeline tests were skipped"
         )
+    if _extra_missing("marimo") or _extra_missing("matplotlib"):
+        gaps.append(
+            "the [examples] extra is not installed: the France example's "
+            "run from end to end was skipped"
+        )
     if _git_repo_missing():
         gaps.append(
             "git or the git checkout is not available: the checks that "

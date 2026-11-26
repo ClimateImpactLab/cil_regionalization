@@ -453,6 +453,12 @@ its warming level in a calendar period.
   to classify a region, although the package declared 2.0.
 - Fixed: the data scripts of `examples/energy` and `examples/labor`
   failed with a NameError when they copied the SMME weights.
+- New: `examples/france/`, the whole chain in one marimo notebook, for
+  mortality in metropolitan France. It builds weights on ADMIN EXPRESS
+  boundaries, compares them with the published GADM weights, applies
+  them three ways, and runs the pipeline for the three time reductions
+  and the warming levels. The test suite runs it on synthetic data.
+  The `[examples]` extra adds marimo, and CI installs it.
 - New: `docs/reference.md` lists every public name with its signature
   and its docstring, and every key of the weights config and of the
   pipeline config with its type and its default. `docs/make_reference.py`

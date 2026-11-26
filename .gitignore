@@ -302,3 +302,7 @@ scratch/
 
 # data committed with the examples
 !examples/*/data/**/*.parquet
+
+# what the France notebook writes when it runs, and marimo's cache
+examples/france/out/
+__marimo__/

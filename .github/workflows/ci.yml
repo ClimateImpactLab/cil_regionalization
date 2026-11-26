@@ -28,7 +28,7 @@ jobs:
       - name: Install uv
         run: python -m pip install uv
       - name: Install the package with all extras
-        run: uv pip install --system ".[netcdf,bigquery,dask,dev]"
+        run: uv pip install --system ".[netcdf,bigquery,dask,dev,examples]"
       # The suite prints a COVERAGE GAP banner when an optional module
       # is missing and its tests silently skip. All extras are
       # installed above, so a banner means the pass count excludes
@@ -55,12 +55,17 @@ jobs:
           python-version: "3.10"
       - name: Install uv
         run: python -m pip install uv
+      # The France example's test needs marimo and matplotlib, at the
+      # floors of the [examples] extra. The rest of that extra is
+      # jupyter, which no test uses.
       - name: Install the declared floors
-        run: uv pip install --system --resolution lowest-direct ".[netcdf,bigquery,dask,dev]"
+        run: >
+          uv pip install --system --resolution lowest-direct
+          ".[netcdf,bigquery,dask,dev]" "marimo>=0.25.2" "matplotlib>=3.7"
       - name: Say which versions those are
         run: >
           uv pip list --system |
-          grep -iE "^(pandas|numpy|pyarrow|scipy|geopandas|shapely|pyproj|rasterio|exactextract|pydantic|xarray|netcdf4|dask|google-cloud-bigquery) "
+          grep -iE "^(pandas|numpy|pyarrow|scipy|geopandas|shapely|pyproj|rasterio|exactextract|pydantic|xarray|netcdf4|dask|google-cloud-bigquery|marimo|matplotlib) "
       - name: Run the suite
         run: |
           set -o pipefail

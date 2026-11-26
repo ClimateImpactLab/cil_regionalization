@@ -620,6 +620,14 @@ no data; a cell masked in only some slices raises.
 
 ## Worked example
 
+`examples/france/` is the whole chain in one notebook, for mortality in
+metropolitan France. It builds weights on boundaries of its own with
+`cilreg run`, fetches the published ones, applies them three ways,
+takes the statistics with and without the climate model weights, runs
+`cilreg pipeline` over a Monte Carlo tree for the three time
+reductions and the warming levels, and checks the manifests against
+the files. Each of the other examples covers one piece.
+
 `examples/aggregation/` aggregates one batch of Monte Carlo mortality
 projections, all 33 climate models, for Colombia. Its notebook maps a
 single draw next to a pooled quantile, shows percent of GDP with the
