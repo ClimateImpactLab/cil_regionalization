@@ -45,14 +45,16 @@ version = "world-combo-201710"
 # that assumes about GCM weighting). They are usually tree levels.
 sample_dims = ["batch", "gcm"]
 time_col = "year"
+# How a quantile is computed: "linear" (no weighted form), "lower_step"
+# or "inverted_cdf", the standard inverse of the empirical
+# distribution. How a mean is summed: "fast", whose last bits depend on
+# the order the leaves come back in, or "exact". Neither has a default,
+# and the manifest records both.
+quantile_method = "linear"
+summation = "fast"
 windows = [[2040, 2059], [2080, 2099]]
 quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
 include_mean = true
-# Experimental, both "legacy" by default. "inverted_cdf" is the standard
-# inverse of the empirical distribution; "exact" takes the means from
-# exactly rounded sums. The manifest records them.
-# quantile_method = "inverted_cdf"
-# summation = "exact"
 
 [output]
 dir = "pipeline_out"

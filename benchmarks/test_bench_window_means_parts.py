@@ -26,7 +26,7 @@ from cil_regionalization.stats import (
 
 pytestmark = pytest.mark.benchmark
 
-_KW = dict(time_col="year", windows=WINDOWS, value_col="pct")
+_KW = dict(time_col="year", windows=WINDOWS, value_col="pct", summation="fast")
 
 
 def test_labels_after_reducing_match_labels_before():

@@ -69,6 +69,8 @@ def crop_adm0(crop: str, rcp: str, smme: pd.DataFrame) -> None:
         value_col="rebased",
         quantiles=QUANTILES,
         weight_col="model_weight",
+        quantile_method="lower_step",
+        summation="fast",
     )
     out = BASE / crop / "adm0"
     out.mkdir(parents=True, exist_ok=True)

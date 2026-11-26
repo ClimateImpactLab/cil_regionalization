@@ -3,12 +3,16 @@
 ## Unreleased
 
 **The rows of a pipeline statistics file, and of the reduced file,
-come in a new order. No value changed.** Two experimental options
-change how the statistics are computed; both default to `"legacy"`,
-which is what every release so far has done.
+come in a new order. No value changed.** **`quantile_method` and
+`summation` are new, have no default, and have to be given: in every
+call of `summarize_samples` and `pooled_statistics`, in every call of
+`window_means` for `summation`, and under `[stats]` in every pipeline
+config.** Files made before v0.6.0 are reproduced by
+`quantile_method = "lower_step"` if the run had model weights and
+`"linear"` if it had none, with `summation = "fast"`.
 `window_means` and `summarize_samples` compute in float64 and return
 float64 whatever the dtype of the value column. That changes their
-result for a float32 or a nullable column, under `"legacy"` too.
+result for a float32 or a nullable column under every setting.
 
 - Changed: the pipeline sorts the statistics rows before writing them:
   by statistic in the order requested (the mean, then the quantiles as
@@ -21,62 +25,70 @@ result for a float32 or a nullable column, under `"legacy"` too.
   workers finish in, so two runs of one config could list the same
   rows differently. A run with one worker usually listed them this way
   already. The frame `run_pipeline` returns is sorted the same.
-- New, experimental: `quantile_method` on `summarize_samples` and
+- New: `quantile_method` on `summarize_samples` and
   `pooled_statistics`, and `stats.quantile_method` in a pipeline
-  config. `"inverted_cdf"` is the standard inverse of the empirical
-  distribution (Hyndman and Fan type 1): the smallest member value
-  whose cumulative weight share reaches q. It is one definition with
-  or without weights, and every quantile is the value of a member with
-  positive weight.
-  `"legacy"` is two definitions. Without weights it interpolates. With
-  weights it returns the member just before the one that reaches q,
-  one member below the standard inverse, as the historical extraction
-  tool did. Three things follow from that. A quantile is `-inf` when
+  config. It names a computation. `"linear"` interpolates between
+  members, as pandas does, and is refused with weights.
+  `"lower_step"` returns the member just before the one whose
+  cumulative weight share reaches q, one member below the standard
+  inverse, as the historical extraction tool did. Without weights
+  every member counts the same, which is what that tool did when told
+  to use no model weights. `"inverted_cdf"` is the standard inverse of
+  the empirical distribution (Hyndman and Fan type 1): the smallest
+  member value whose cumulative weight share reaches q. It is one
+  definition with or without weights, and every quantile is the value
+  of a member with positive weight.
+  It has no default. Earlier releases had no such option and used
+  `"lower_step"` with weights and `"linear"` without. A pipeline
+  manifest records the value.
+  Three things follow from `"lower_step"`. A quantile is `-inf` when
   the first member already reaches q. The value of a member with
   weight zero can come back as a quantile, although the mean leaves
   that member out: with one such model among 33, about 3% of the cells
   of each quantile on synthetic samples. And at 0.5 with equal weights
   it switches to the midpoint of the two middle members.
-- New, experimental: `summation` on the same two functions and on
-  `window_means`, and `stats.summation` in a pipeline config.
-  `"exact"` takes the window means and the pooled mean from exactly
-  rounded sums (`math.fsum`), so the order of the rows cannot change
-  them. Under `"legacy"` the order can change the means, and in a pipeline run with several
+- New: `summation` on the same two functions and on `window_means`,
+  and `stats.summation` in a pipeline config. It has no default.
+  `"fast"` is the vectorised sum of pandas and numpy, which is what
+  earlier releases used. `"exact"` takes the window means and the
+  pooled mean from exactly rounded sums (`math.fsum`), so the order of
+  the rows cannot change them. Under `"fast"` the order can change the
+  means, and in a pipeline run with several
   workers it does, because the leaves are pooled in the order the
   workers finish. Two runs of one config over a synthetic tree (240
   leaves, 8 workers, model weights) disagreed in the last bits of
   about a third of the means, 119 to 133 of 388, by at most 8.9e-16 on
   values of order 1. Without model weights 2 of 388 differed. No
   quantile differed.
-- Under either new setting a statistic that comes out infinite raises
+- Under `"inverted_cdf"` or `"exact"` a statistic that comes out infinite raises
   instead of being returned or written: in impact data an infinity
   means something upstream broke. It is the statistic that is checked,
   so an infinity in a year no window covers does not fail a run, and
   one that a quantile selects does. NaN is left alone; a group with no
   value has no statistic. Under `"exact"` a sum over infinities of
-  both signs, or one that overflows, raises too. The legacy settings
-  return whatever comes out, `-inf` included, as before.
+  both signs, or one that overflows, raises too. `"linear"` and `"lower_step"`
+  with the fast sum return whatever comes out, `-inf` included, as before.
 - Changed: `window_means` and `summarize_samples` take the window mean
   in float64 and return the value column as float64, under every
   setting and whatever the column's dtype. A float64 column gives what
   it gave, to the last bit. Two things change for other columns, under
-  `"legacy"` as well as under the new settings:
+  every setting:
   - A nullable `Float64` column used to come back nullable. It now
     comes back as float64 with NaN where it had no value: the mask is
     gone. A caller that tested the result for `pd.NA` has to test for
     NaN.
   - A float32 column is widened before the mean, so its results differ
     from the old ones from the seventh or eighth digit (by up to 9e-7
-    of the value on synthetic samples). `"legacy"` therefore no longer
-    reproduces the old values of a float32 column bit for bit. That is
-    a wart in a setting that exists to reproduce old results. The
+    of the value on synthetic samples). The pair that reproduces
+    earlier releases therefore no longer does so bit for bit for a
+    float32 column. The
     other choice was to keep seven digits, and under `"exact"` to round
     an exactly rounded sum back to float32.
 
   Before, the dtype and the precision followed the column, the pandas
   version and, on the newest pandas, the data. `window_means` returned
   a float32 column as float32 through pandas 3.0 (seen on 2.3.3 and
-  3.0.3). On pandas 3.1.1 under `"legacy"` it returned float64 for a
+  3.0.3). On pandas 3.1.1 with the fast sum it returned float64 for a
   column with no missing value and float32 for one with a missing
   value, in the cases tried, and float32 under `"exact"`.
   `summarize_samples` took its window means in float32 where

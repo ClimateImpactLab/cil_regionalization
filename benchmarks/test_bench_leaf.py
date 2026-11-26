@@ -32,7 +32,7 @@ from cil_regionalization.stats import window_means
 
 pytestmark = pytest.mark.benchmark
 
-_KW = dict(time_col="year", windows=WINDOWS, value_col="pct")
+_KW = dict(time_col="year", windows=WINDOWS, value_col="pct", summation="fast")
 _COLUMNS = ID_FIELDS + list(LABELS) + ["window", "pct"]
 
 # Eight full-size workers need about 16 GiB, so the pool runs on leaves

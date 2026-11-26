@@ -132,6 +132,8 @@ def _pipeline_cfg(
             "stats": {
                 "sample_dims": list(levels),
                 "time_col": "year",
+                "quantile_method": "linear",
+                "summation": "fast",
                 "windows": [[2050, 2051], [2080, 2081]],
                 "quantiles": [0.05, 0.95],
             },
@@ -229,15 +231,99 @@ class TestStatisticMethods:
         raw["output"]["write_reduced"] = True
         return MonteCarloPipelineConfig.model_validate(raw)
 
-    def test_the_default_is_legacy_and_the_manifest_says_so(
-        self, weights_dir, tmp_path
-    ):
+    @staticmethod
+    def _table(tmp_path: Path, weights=(0.6, 0.3, 0.1)) -> dict:
+        table = tmp_path / "model_weights.tsv"
+        table.write_text(
+            "quantile\tmodel\tweight\n"
+            + "".join(f"1\tz{i}\t{w}\n" for i, w in enumerate(weights))
+        )
+        return dict(model_weights=str(table), model_weight_level="zeppelin")
+
+    def test_the_manifest_records_both_options(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)
         result = run_pipeline(self._cfg(weights_dir, tree, tmp_path / "out"))
         manifest = json.loads(Path(result.paths["manifest"]).read_text())
-        assert manifest["quantile_method"] == "legacy"
-        assert manifest["summation"] == "legacy"
+        assert manifest["quantile_method"] == "linear"
+        assert manifest["summation"] == "fast"
+
+        weighted = run_pipeline(self._cfg(
+            weights_dir, tree, tmp_path / "weighted", quantiles=[0.5, 0.95],
+            quantile_method="lower_step", summation="exact",
+            **self._table(tmp_path),
+        ))
+        manifest = json.loads(Path(weighted.paths["manifest"]).read_text())
+        assert manifest["quantile_method"] == "lower_step"
+        assert manifest["summation"] == "exact"
+
+        for name in ("linear", "lower_step", "inverted_cdf"):
+            named = run_pipeline(self._cfg(
+                weights_dir, tree, tmp_path / name, quantile_method=name,
+                quantiles=[0.5, 0.95],
+            ))
+            manifest = json.loads(Path(named.paths["manifest"]).read_text())
+            assert manifest["quantile_method"] == name
+
+    def test_lower_step_without_weights_is_the_step_with_every_weight_one(
+        self, weights_dir, tmp_path
+    ):
+        """What the extraction tool gave when told to use no model
+        weights. A table of ones is the same step, and "linear"
+        interpolates."""
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        quantiles = dict(quantiles=[0.5, 0.75, 0.95])
+        step = run_pipeline(self._cfg(
+            weights_dir, tree, tmp_path / "step", quantile_method="lower_step",
+            **quantiles,
+        ))
+        ones = run_pipeline(self._cfg(
+            weights_dir, tree, tmp_path / "ones", quantile_method="lower_step",
+            **quantiles, **self._table(tmp_path, weights=(1, 1, 1)),
+        ))
+        pd.testing.assert_frame_equal(step.stats, ones.stats, check_exact=True)
+        assert (
+            step.stats["value"].to_numpy().tobytes()
+            == ones.stats["value"].to_numpy().tobytes()
+        )
+        linear = run_pipeline(self._cfg(
+            weights_dir, tree, tmp_path / "linear", quantile_method="linear",
+            **quantiles,
+        ))
+        high = step.stats["statistic"].isin(["q75", "q95"]).to_numpy()
+        assert (step.stats.loc[high, "value"] < linear.stats.loc[high, "value"]).all()
+
+    @pytest.mark.parametrize("left_out", ["quantile_method", "summation"])
+    def test_a_config_has_to_name_both_options(self, weights_dir, tmp_path, left_out):
+        raw = _pipeline_cfg(
+            weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS
+        ).model_dump()
+        del raw["stats"][left_out]
+        with pytest.raises(ValueError, match=f"stats.{left_out}"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_a_config_that_names_the_former_value_is_told_which_to_use(
+        self, weights_dir, tmp_path
+    ):
+        """Both options were once "legacy". For a quantile it meant one
+        of two computations, by whether the run had model weights."""
+        args = (weights_dir, tmp_path / "t", tmp_path / "o")
+        with pytest.raises(ValueError, match="no weights, so use 'linear'"):
+            self._cfg(*args, quantile_method="legacy")
+        with pytest.raises(ValueError, match="weights, so use 'lower_step'"):
+            self._cfg(*args, quantile_method="legacy", **self._table(tmp_path))
+        with pytest.raises(ValueError, match="summation='legacy'.*Use 'fast'"):
+            self._cfg(*args, summation="legacy")
+
+    def test_linear_with_model_weights_is_refused_when_the_config_is_read(
+        self, weights_dir, tmp_path
+    ):
+        with pytest.raises(ValueError, match="has no weighted form"):
+            self._cfg(
+                weights_dir, tmp_path / "t", tmp_path / "o",
+                quantile_method="linear", **self._table(tmp_path),
+            )
 
     def test_the_options_reach_both_stages_and_the_manifest(
         self, weights_dir, tmp_path, monkeypatch
@@ -277,13 +363,13 @@ class TestStatisticMethods:
             assert got[target, window, "q95"] == max(values)
             assert got[target, window, "mean"] == math.fsum(values) / 6
 
-        legacy = run_pipeline(self._cfg(weights_dir, tree, tmp_path / "out_l"))
+        linear = run_pipeline(self._cfg(weights_dir, tree, tmp_path / "out_l"))
         both = result.stats.merge(
-            legacy.stats, on=["target_id", "window", "statistic"],
-            suffixes=("", "_legacy"),
+            linear.stats, on=["target_id", "window", "statistic"],
+            suffixes=("", "_linear"),
         )
         quantiles = both[both["statistic"] != "mean"]
-        assert (quantiles["value"] != quantiles["value_legacy"]).all()
+        assert (quantiles["value"] != quantiles["value_linear"]).all()
 
     def test_serial_and_parallel_runs_agree_to_the_bit(
         self, weights_dir, tmp_path
@@ -451,6 +537,8 @@ class TestConfigurableTree:
                     # per (target, flavor).
                     "sample_dims": ["draw_tag"],
                     "time_col": "year",
+                    "quantile_method": "linear",
+                    "summation": "fast",
                     "windows": [[2050, 2051]],
                     "quantiles": [0.5],
                 },
@@ -569,6 +657,8 @@ version = "{SOURCE_VERSION}"
 [stats]
 sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
+quantile_method = "linear"
+summation = "fast"
 windows = [[2050, 2051]]
 quantiles = [0.5]
 
@@ -614,6 +704,8 @@ version = "{SOURCE_VERSION}"
 [stats]
 sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
+quantile_method = "linear"
+summation = "fast"
 windows = [[2050, 2051]]
 
 [output]
@@ -699,6 +791,8 @@ class TestNetcdfVariant:
                 "stats": {
                     "sample_dims": list(_LEVELS),
                     "time_col": "year",
+                    "quantile_method": "linear",
+                    "summation": "fast",
                     "windows": [[2050, 2051], [2080, 2081]],
                     "quantiles": [0.05, 0.95],
                 },
@@ -743,6 +837,8 @@ version = "{SOURCE_VERSION}"
 [stats]
 sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
+quantile_method = "linear"
+summation = "fast"
 windows = [[2050, 2051]]
 quantiles = [0.5]
 
@@ -862,6 +958,7 @@ class TestModelWeights:
         cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
         raw = cfg.model_dump()
         raw["stats"]["model_weights"] = str(self._weights_file(tmp_path))
+        raw["stats"]["quantile_method"] = "lower_step"
         raw["stats"]["model_weight_level"] = "zeppelin"
         raw["stats"]["quantiles"] = []
         cfg = MonteCarloPipelineConfig.model_validate(raw)
@@ -890,6 +987,7 @@ class TestModelWeights:
         cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
         raw = cfg.model_dump()
         raw["stats"]["model_weights"] = str(p)
+        raw["stats"]["quantile_method"] = "lower_step"
         raw["stats"]["model_weight_level"] = "zeppelin"
         cfg = MonteCarloPipelineConfig.model_validate(raw)
         with pytest.raises(ValueError, match="no row in the model"):
@@ -899,6 +997,7 @@ class TestModelWeights:
         cfg = _pipeline_cfg(weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS)
         raw = cfg.model_dump()
         raw["stats"]["model_weights"] = "x.tsv"
+        raw["stats"]["quantile_method"] = "lower_step"
         raw["stats"]["model_weight_level"] = "nope"
         with pytest.raises(ValueError, match="sample_dims"):
             MonteCarloPipelineConfig.model_validate(raw)
@@ -962,6 +1061,8 @@ class TestPassthrough:
             "stats": {
                 "sample_dims": list(_LEVELS),
                 "time_col": "year",
+                "quantile_method": "linear",
+                "summation": "fast",
                 "windows": windows or [[2050, 2051], [2080, 2081]],
                 "quantiles": [0.05, 0.95],
             },

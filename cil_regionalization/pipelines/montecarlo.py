@@ -100,6 +100,8 @@ from cil_regionalization.manifest import collect_package_versions
 from cil_regionalization.stats import (
     _quantile_label,
     _window_label,
+    check_quantile_method,
+    check_summation,
     pooled_statistics,
     window_means,
 )
@@ -231,16 +233,33 @@ class StatsConfig(_Strict):
     # statistic was computed from. Off by default, so the file keeps its
     # columns unless a recipe asks.
     include_n_members: bool = False
-    # Experimental, and "legacy" is what every release so far has done.
+    # How a quantile is computed. "linear" interpolates between members
+    # and has no weighted form, "lower_step" is the extraction tool's
+    # step, with equal weights when there are no model weights, and
     # "inverted_cdf" is the standard inverse of the empirical
-    # distribution, the same with or without model weights; "exact"
-    # takes the means from exactly rounded sums, so the order the
-    # workers hand their leaves back in cannot change them. The
-    # manifest records both. See `stats.summarize_samples`.
-    quantile_method: Literal["legacy", "inverted_cdf"] = "legacy"
-    summation: Literal["legacy", "exact"] = "legacy"
+    # distribution. How a mean is summed. "fast" is the vectorised sum,
+    # whose last bits depend on the order the workers hand their leaves
+    # back in, and "exact" is the exactly rounded one. Neither has a
+    # default, and the manifest records both. See
+    # `stats.summarize_samples`.
+    quantile_method: Literal["linear", "lower_step", "inverted_cdf"]
+    summation: Literal["fast", "exact"]
     model_weights: Optional[str] = None
     model_weight_level: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _former_values_are_named(cls, data):
+        # Both options were once "legacy". The message says which value
+        # it meant for this config.
+        if isinstance(data, dict):
+            if data.get("quantile_method") == "legacy":
+                check_quantile_method(
+                    "legacy", weighted=data.get("model_weights") is not None
+                )
+            if data.get("summation") == "legacy":
+                check_summation("legacy")
+        return data
 
     @model_validator(mode="after")
     def _weights_come_together(self) -> "StatsConfig":
@@ -250,6 +269,11 @@ class StatsConfig(_Strict):
                 "together: the file says what the weights are, the level "
                 "says which sample dimension they attach to"
             )
+        # "linear" with model weights is refused here, when the config is
+        # read, and not after the leaves
+        check_quantile_method(
+            self.quantile_method, weighted=self.model_weights is not None
+        )
         if (self.model_weight_level is not None
                 and self.model_weight_level not in self.sample_dims):
             raise ValueError(

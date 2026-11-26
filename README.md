@@ -34,6 +34,8 @@ stats = cilreg.summarize_samples(
     time_col="year",
     window=(2080, 2099),
     quantiles=[0.05, 0.5, 0.95],
+    quantile_method="linear",
+    summation="fast",
 )
 ```
 
@@ -154,6 +156,8 @@ stats = cilreg.summarize_samples(
     window=(2080, 2099),
     quantiles=[0.05, 0.5, 0.95],
     weight_col="weight",
+    quantile_method="lower_step",
+    summation="fast",
 )
 ```
 
@@ -171,19 +175,44 @@ dimension named `gcm` without weights warns once; filter
 (`examples/rates`) the weights barely move the median and pull the
 95th percentile down by about a fifth.
 
-Two experimental options replace those definitions; both default to
-`"legacy"`, the behaviour above. `quantile_method="inverted_cdf"` is
-the standard inverse of the empirical distribution (Hyndman and Fan
-type 1), the smallest member value whose cumulative weight share
-reaches q. It is the same with or without weights, never returns
-`-inf`, and never returns the value of a member whose weight is zero,
-which the legacy step can. `summation="exact"` takes the window means
-and the pooled mean from exactly rounded sums, so the order of the
-rows, and in a pipeline run the order the workers finish in, cannot
-change them. Under either of the two a statistic that comes out
-infinite raises instead of being returned; NaN does not. `summarize_samples` and `pooled_statistics` take both,
-`window_means` takes `summation`, and a pipeline config sets them
-under `[stats]`; the manifest records what a file was made with.
+`quantile_method` says how a quantile is computed, by the name of
+the computation:
+
+- `"linear"` interpolates between members, as pandas does. It has no
+  weighted form and is refused with weights.
+- `"lower_step"` is the step of the historical extraction tool: the
+  member one below the one whose cumulative weight share reaches q.
+  Without weights every member counts the same, which is what that
+  tool did when it was told to use no model weights. A quantile below
+  the first step is `-inf`, and the value of a member with weight zero
+  can come back.
+- `"inverted_cdf"` is the standard inverse of the empirical
+  distribution (Hyndman and Fan type 1), the smallest member value
+  whose cumulative weight share reaches q. It is the same with or
+  without weights, never returns `-inf`, and never returns the value
+  of a member whose weight is zero.
+
+With four members that count equally the three give three different
+95th percentiles: the third member, a value between the third and the
+fourth, and the fourth.
+
+`summation` says how a mean is summed:
+
+- `"fast"` is the vectorised sum of pandas and numpy. Its last bits
+  depend on the order the rows arrive in, which in a pipeline run with
+  several workers is the order the workers finish in.
+- `"exact"` takes the window means and the pooled mean from exactly
+  rounded sums, so the order cannot change them.
+
+Neither option has a default. `summarize_samples` and
+`pooled_statistics` take both, `window_means` takes `summation`, and a
+pipeline config sets them under `[stats]`. The manifest records both.
+Under `"inverted_cdf"` or `"exact"` a statistic that comes out
+infinite raises instead of being returned; NaN does not.
+
+Files made before v0.6.0 had no such options. They are reproduced by
+`"lower_step"` if the run had weights and `"linear"` if it had none,
+with `"fast"`.
 
 ## Your own NetCDF
 

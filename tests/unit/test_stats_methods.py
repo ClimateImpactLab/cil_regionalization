@@ -1,7 +1,9 @@
-"""The experimental ``quantile_method`` and ``summation`` options.
+"""The ``quantile_method`` and ``summation`` options.
 
-These tests cover "inverted_cdf" and "exact". The rest of the suite
-holds the "legacy" defaults to what they have always returned.
+These tests cover the three quantile computations and the two sums by
+name. Neither option has a default. `_pooled` gives a test that names
+none the pair every release before the names gave it: "lower_step"
+with weights and "linear" without, and the "fast" sum.
 """
 from __future__ import annotations
 
@@ -35,7 +37,14 @@ def _members(values, weights=None, target="t") -> pd.DataFrame:
     return frame
 
 
+def _plain(weighted: bool) -> str:
+    """The quantile computation releases before the names used."""
+    return "lower_step" if weighted else "linear"
+
+
 def _pooled(frame, quantiles, **options) -> dict[str, float]:
+    options.setdefault("quantile_method", _plain("w" in frame.columns))
+    options.setdefault("summation", "fast")
     out = pooled_statistics(
         frame,
         sample_dims=["draw"],
@@ -85,38 +94,91 @@ def _sorted(frame: pd.DataFrame) -> pd.DataFrame:
 class TestOptionNames:
     def test_unknown_names_are_refused(self):
         frame = _members([1.0, 2.0, 3.0])
-        with pytest.raises(ValueError, match="quantile_method must be one of"):
-            pooled_statistics(frame, sample_dims=["draw"], quantile_method="type7")
-        with pytest.raises(ValueError, match="summation must be one of"):
-            pooled_statistics(frame, sample_dims=["draw"], summation="kahan")
+        with pytest.raises(
+            ValueError,
+            match=r"quantile_method must be one of \['linear', 'lower_step', "
+            r"'inverted_cdf'\]; got 'type7'",
+        ):
+            pooled_statistics(
+                frame, sample_dims=["draw"], quantile_method="type7", summation="fast"
+            )
+        with pytest.raises(
+            ValueError, match=r"summation must be one of \['fast', 'exact'\]"
+        ):
+            pooled_statistics(
+                frame, sample_dims=["draw"], summation="kahan",
+                quantile_method="linear",
+            )
         timed = frame.assign(year=2050)
         with pytest.raises(ValueError, match="quantile_method must be one of"):
             summarize_samples(
                 timed, sample_dims=["draw"], time_col="year",
-                window=(2050, 2050), quantile_method="step",
+                window=(2050, 2050), quantile_method="step", summation="fast",
             )
         with pytest.raises(ValueError, match="summation must be one of"):
             window_means(
                 timed, time_col="year", windows=[(2050, 2050)], summation="fsum"
             )
 
-    @pytest.mark.parametrize("weighted", [False, True])
-    def test_legacy_by_name_is_the_default(self, weighted):
-        frame = _random_frame(0)
-        if not weighted:
-            frame = frame.drop(columns="w")
-        kwargs = dict(
-            sample_dims=["draw"],
-            quantiles=QUANTILES,
-            weight_col="w" if weighted else None,
-        )
-        pd.testing.assert_frame_equal(
-            pooled_statistics(frame, **kwargs),
+    def test_neither_option_has_a_default(self):
+        frame = _members([1.0, 2.0, 3.0])
+        with pytest.raises(TypeError, match="summation"):
+            pooled_statistics(frame, sample_dims=["draw"], quantile_method="linear")
+        with pytest.raises(TypeError, match="quantile_method"):
+            pooled_statistics(frame, sample_dims=["draw"], summation="fast")
+        timed = frame.assign(year=2050)
+        with pytest.raises(TypeError, match="quantile_method"):
+            summarize_samples(
+                timed, sample_dims=["draw"], time_col="year", window=(2050, 2050),
+                summation="fast",
+            )
+        with pytest.raises(TypeError, match="summation"):
+            window_means(timed, time_col="year", windows=[(2050, 2050)])
+
+    def test_the_former_value_is_refused_with_the_value_to_use(self):
+        """Both options were once "legacy". For a quantile it meant one
+        of two computations, by whether the call had weights."""
+        frame = _members([1.0, 2.0, 3.0])
+        with pytest.raises(
+            ValueError, match="no weights, so use 'linear'"
+        ):
             pooled_statistics(
-                frame, quantile_method="legacy", summation="legacy", **kwargs
-            ),
-            check_exact=True,
-        )
+                frame, sample_dims=["draw"], quantile_method="legacy",
+                summation="fast",
+            )
+        with pytest.raises(ValueError, match="weights, so use 'lower_step'"):
+            pooled_statistics(
+                frame.assign(w=1.0), sample_dims=["draw"], weight_col="w",
+                quantile_method="legacy", summation="fast",
+            )
+        with pytest.raises(
+            ValueError, match="summation='legacy' is not a value any more. Use 'fast'"
+        ):
+            pooled_statistics(
+                frame, sample_dims=["draw"], quantile_method="linear",
+                summation="legacy",
+            )
+        with pytest.raises(ValueError, match="Use 'fast'"):
+            window_means(
+                frame.assign(year=2050), time_col="year", windows=[(2050, 2050)],
+                summation="legacy",
+            )
+
+    def test_linear_has_no_weighted_form(self):
+        frame = _members([1.0, 2.0, 3.0], [0.5, 0.25, 0.25])
+        with pytest.raises(
+            ValueError, match="'linear' interpolates.*has no weighted form"
+        ):
+            pooled_statistics(
+                frame, sample_dims=["draw"], weight_col="w",
+                quantile_method="linear", summation="fast",
+            )
+        with pytest.raises(ValueError, match="has no weighted form"):
+            summarize_samples(
+                frame.assign(year=2050), sample_dims=["draw"], time_col="year",
+                window=(2050, 2050), weight_col="w", quantile_method="linear",
+                summation="fast",
+            )
 
 
 class TestInvertedCdf:
@@ -163,7 +225,7 @@ class TestInvertedCdf:
 
     def test_the_median_is_a_member(self):
         """With an even count q50 is the lower of the two middle
-        members, where the legacy paths return their midpoint."""
+        members, where "linear" and "lower_step" return their midpoint."""
         values = [4.0, 1.0, 3.0, 2.0]
         for weights in (None, [0.25] * 4):
             got = _pooled(
@@ -174,11 +236,11 @@ class TestInvertedCdf:
 
     def test_never_minus_infinity(self):
         """The first member holds 60% of the weight, so it already
-        reaches q = 0.05. The legacy step looks for the member before
-        it, finds none and returns -inf."""
+        reaches q = 0.05. "lower_step" looks for the member before it,
+        finds none and returns -inf."""
         frame = _members([1.0, 2.0, 3.0], [0.6, 0.2, 0.2])
-        legacy = _pooled(frame, [0.05], include_mean=False)
-        assert legacy == {"q05": float("-inf")}
+        step = _pooled(frame, [0.05], include_mean=False)
+        assert step == {"q05": float("-inf")}
         got = _pooled(
             frame, [0.05], quantile_method="inverted_cdf", include_mean=False
         )
@@ -197,15 +259,15 @@ class TestInvertedCdf:
     def test_a_member_with_weight_zero_is_never_returned(self):
         """A weights table can carry a model at weight zero to leave it
         out. Of the members 1 to 33 the 21st has weight zero and the
-        22nd reaches q = 0.64. The legacy step returns the one before
-        it, 21.0, which the mean leaves out."""
+        22nd reaches q = 0.64. "lower_step" returns the one before it,
+        21.0, which the mean leaves out."""
         values = np.arange(1.0, 34.0)
         weights = np.full(33, 1 / 32)
         weights[20] = 0.0
         frame = _members(values, weights)
 
-        legacy = _pooled(frame, [0.64], include_mean=False)
-        assert legacy == {"q64": 21.0}
+        step = _pooled(frame, [0.64], include_mean=False)
+        assert step == {"q64": 21.0}
 
         got = _pooled(
             frame, [0.64], quantile_method="inverted_cdf", include_mean=False
@@ -226,6 +288,7 @@ class TestInvertedCdf:
             _members(np.arange(1.0, 34.0), weights),
             sample_dims=["draw"], quantiles=[0.5], weight_col="w",
             include_n_members=True, quantile_method="inverted_cdf",
+            summation="fast",
         )
         assert out["n_members"].tolist() == [32, 32]
 
@@ -286,6 +349,103 @@ class TestInvertedCdf:
         assert out["value"].tolist() == [2.0, 2.0]
 
 
+class TestLowerStep:
+    """The step of the historical extraction tool, the member one below
+    the one whose running share reaches q. Without weights every member
+    counts the same."""
+
+    def test_four_members_by_hand(self):
+        """The share of each member is a quarter. A quantile is the
+        member before the one whose running share reaches it, so the
+        95th is the third of four. The median is the plain one, and a
+        quantile below a quarter has no member before it."""
+        frame = _members([4.0, 1.0, 3.0, 2.0])
+        got = _pooled(frame, [0.05, 0.5, 0.75, 0.95], quantile_method="lower_step")
+        assert got == {
+            "mean": 2.5, "q05": -np.inf, "q50": 2.5, "q75": 2.0, "q95": 3.0,
+        }
+        # the two other computations, on the same members
+        linear = _pooled(frame, [0.75, 0.95], quantile_method="linear")
+        assert linear["q75"] == 3.25 and linear["q95"] == pytest.approx(3.85)
+        inverted = _pooled(frame, [0.75, 0.95], quantile_method="inverted_cdf")
+        assert inverted["q75"] == 3.0 and inverted["q95"] == 4.0
+
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
+    @pytest.mark.parametrize("seed", range(3))
+    def test_no_weights_is_the_step_with_every_weight_one(self, seed, summation):
+        """To the bit, the mean and the member counts included."""
+        frame = _random_frame(seed).drop(columns="w")
+        kwargs = dict(
+            sample_dims=["draw"], quantiles=[0.25, 0.5, 0.75, 0.95],
+            include_n_members=True, summation=summation,
+            quantile_method="lower_step",
+        )
+        got = pooled_statistics(frame, **kwargs)
+        ones = pooled_statistics(frame.assign(w=1.0), weight_col="w", **kwargs)
+        pd.testing.assert_frame_equal(got, ones, check_exact=True)
+        assert got["value"].to_numpy().tobytes() == ones["value"].to_numpy().tobytes()
+
+    def test_summarize_samples_takes_it(self):
+        frame = _timed()
+        kwargs = dict(
+            sample_dims=["draw"], time_col="year", window=(2040, 2049),
+            quantiles=[0.5, 0.95], quantile_method="lower_step", summation="fast",
+        )
+        got = summarize_samples(frame, **kwargs)
+        ones = summarize_samples(frame.assign(w=1.0), weight_col="w", **kwargs)
+        pd.testing.assert_frame_equal(got, ones, check_exact=True)
+
+    def test_a_group_with_no_value_is_nan_without_weights(self):
+        """As on the other paths without weights, and the count says
+        nobody is behind it. With weights such a group is an error."""
+        frame = pd.concat(
+            [_members([1.0, 2.0, 3.0], target="a"), _members([np.nan] * 3, target="b")]
+        )
+        got = pooled_statistics(
+            frame, sample_dims=["draw"], quantiles=[0.5],
+            quantile_method="lower_step", include_n_members=True,
+            summation="fast",
+        )
+        empty = got[got["target"] == "b"]
+        assert empty["value"].isna().all() and len(empty) == 2
+        assert set(empty["n_members"]) == {0}
+        assert set(got.loc[got["target"] == "a", "n_members"]) == {3}
+        with pytest.raises(ValueError, match="weights sum to zero"):
+            pooled_statistics(
+                frame.assign(w=1.0), sample_dims=["draw"], quantiles=[0.5],
+                weight_col="w", quantile_method="lower_step",
+                summation="fast",
+            )
+
+    def test_missing_values_drop_out(self):
+        got = _pooled(
+            _members([4.0, np.nan, 1.0, 3.0, 2.0]), [0.95],
+            quantile_method="lower_step",
+        )
+        assert got == {"mean": 2.5, "q95": 3.0}
+
+    def test_minus_infinity_is_returned_with_the_fast_sum_and_refused_with_exact(
+        self,
+    ):
+        """It is what the tool returned. Asked for with exact sums it is
+        an infinite statistic like any other."""
+        frame = _members([1.0, 2.0, 3.0])
+        assert _pooled(frame, [0.05], quantile_method="lower_step")["q05"] == -np.inf
+        with pytest.raises(ValueError, match=r"statistics are infinite \(q05: 1"):
+            _pooled(frame, [0.05], quantile_method="lower_step", summation="exact")
+
+    def test_a_nullable_value_column_gives_floats(self):
+        frame = _members([1.0, 2.0, 3.0, 4.0])
+        frame["value"] = pd.array([1.0, None, 3.0, 4.0], dtype="Float64")
+        got = pooled_statistics(
+            frame, sample_dims=["draw"], quantiles=[0.95],
+            quantile_method="lower_step",
+            summation="fast",
+        )
+        assert got["value"].dtype == np.float64
+        assert got["value"].tolist() == [8.0 / 3.0, 3.0]
+
+
 class TestExactSummation:
     def test_the_mean_does_not_depend_on_the_order(self):
         """1e16 + 1 is not a float, so a sum taken in row order loses
@@ -305,6 +465,7 @@ class TestExactSummation:
         out = pooled_statistics(
             frame, sample_dims=["draw"],
             weight_col="w" if weighted else None, summation="exact",
+            quantile_method="lower_step" if weighted else "linear",
         )
         got = out.set_index(["target", "scenario"])["value"]
         for key, group in frame.dropna(subset=["value"]).groupby(
@@ -344,10 +505,10 @@ class TestExactSummation:
         windows = [(2040, 2049), (2050, 2059), (2045, 2054)]
         kwargs = dict(time_col="year", windows=windows)
         got = window_means(frame, summation="exact", **kwargs)
-        legacy = window_means(frame, **kwargs)
+        fast = window_means(frame, summation="fast", **kwargs)
 
         # same rows in the same order, same dtypes; only the sum differs
-        pd.testing.assert_frame_equal(got, legacy, rtol=1e-12)
+        pd.testing.assert_frame_equal(got, fast, rtol=1e-12)
         for (lo, hi), label in zip(windows, ["2040-2049", "2050-2059", "2045-2054"]):
             part = frame[frame["year"].between(lo, hi)]
             rows = got[got["window"] == label].set_index(["target", "draw"])["value"]
@@ -378,7 +539,7 @@ class TestExactSummation:
             first, _sorted(window_means(frame, **kwargs)), check_exact=True
         )
 
-    @pytest.mark.parametrize("summation", ["legacy", "exact"])
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
     @pytest.mark.parametrize("dtype", ["float32", "Float64", "float64"])
     def test_window_means_are_float64_whatever_the_value_dtype(
         self, dtype, summation
@@ -394,7 +555,7 @@ class TestExactSummation:
         )
         assert got["value"].dtype == np.dtype("float64")
 
-    @pytest.mark.parametrize("summation", ["legacy", "exact"])
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
     @pytest.mark.parametrize("dtype", ["float32", "Float64"])
     def test_a_narrow_or_nullable_column_is_widened_before_the_mean(
         self, dtype, summation
@@ -419,7 +580,7 @@ class TestExactSummation:
                       & (got["window"] == "2040-2059")]
             assert row["value"].item() == math.fsum(part["value"]) / len(part)
 
-    @pytest.mark.parametrize("summation", ["legacy", "exact"])
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
     @pytest.mark.parametrize("dtype", ["float32", "Float64", "float64"])
     def test_summarize_samples_is_float64_whatever_the_value_dtype(
         self, dtype, summation
@@ -435,12 +596,13 @@ class TestExactSummation:
             got = summarize_samples(
                 frame, sample_dims=["draw"], time_col="year",
                 window=(2040, 2059), quantiles=quantiles, summation=summation,
+                quantile_method="linear",
             )
             assert got["value"].dtype == np.dtype("float64")
 
     @pytest.mark.parametrize("weighted", [False, True])
-    @pytest.mark.parametrize("quantile_method", ["legacy", "inverted_cdf"])
-    @pytest.mark.parametrize("summation", ["legacy", "exact"])
+    @pytest.mark.parametrize("quantile_method", ["plain", "inverted_cdf"])
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
     @pytest.mark.parametrize("dtype", ["float32", "Float64"])
     def test_summarize_samples_widens_before_the_window_mean(
         self, dtype, summation, quantile_method, weighted
@@ -454,7 +616,7 @@ class TestExactSummation:
         frame.loc[(frame["target"] == "t1") & (frame["draw"] == "d2"), "value"] = np.nan
         frame.loc[(frame["target"] == "t3") & (frame["year"] < 2047), "value"] = np.nan
         if weighted:
-            # no member holds half the weight, so the legacy quantiles
+            # no member holds half the weight, so the step quantiles
             # asked for below are never the -inf that "exact" refuses
             frame["w"] = frame["draw"].map(
                 {"d0": 0.3, "d1": 0.1, "d2": 0.2, "d3": 0.15, "d4": 0.25})
@@ -463,7 +625,10 @@ class TestExactSummation:
         kwargs = dict(
             sample_dims=["draw"], time_col="year", window=(2040, 2059),
             quantiles=[0.5, 0.83], weight_col="w" if weighted else None,
-            quantile_method=quantile_method, summation=summation,
+            quantile_method=(
+                _plain(weighted) if quantile_method == "plain" else quantile_method
+            ),
+            summation=summation,
         )
         got = summarize_samples(narrow, **kwargs)
         assert got["value"].dtype == np.dtype("float64")
@@ -472,7 +637,7 @@ class TestExactSummation:
 
 
 class TestInfiniteStatistics:
-    """Under either experimental setting an infinite statistic is
+    """Under "inverted_cdf" or "exact" an infinite statistic is
     refused. An infinity in the data that reaches no statistic is not
     an error."""
 
@@ -489,7 +654,7 @@ class TestInfiniteStatistics:
         frame = _members(values, weights)
         with pytest.raises(ValueError, match=r"1 statistics are infinite \(mean: 1"):
             _pooled(frame, [], **options)
-        # the legacy settings are left as they are: it comes back
+        # "linear" and "lower_step" with the fast sum return it
         assert np.isinf(_pooled(frame, [])["mean"])
 
     @pytest.mark.parametrize("options", SETTINGS)
@@ -499,8 +664,8 @@ class TestInfiniteStatistics:
         frame = _members([1.0, 2.0, np.inf])
         with pytest.raises(ValueError, match=r"statistics are infinite \(q100: 1"):
             _pooled(frame, [0.5, 1.0], include_mean=False, **options)
-        legacy = _pooled(frame, [0.5, 1.0], include_mean=False)
-        assert list(legacy.values()) == [2.0, np.inf]
+        plain = _pooled(frame, [0.5, 1.0], include_mean=False)
+        assert list(plain.values()) == [2.0, np.inf]
 
     def test_an_infinity_that_reaches_no_statistic_is_let_through(self):
         """Cannot go red by reverting, because without the check
@@ -532,13 +697,14 @@ class TestInfiniteStatistics:
         frame.loc[7, "value"] = -np.inf
         kwargs = dict(time_col="year", windows=[(2040, 2059)])
         exact = window_means(frame, summation="exact", **kwargs)
-        legacy = window_means(frame, **kwargs)
+        fast = window_means(frame, summation="fast", **kwargs)
         assert (exact["value"] == -np.inf).sum() == 1
-        assert ((exact["value"] == -np.inf) == (legacy["value"] == -np.inf)).all()
+        assert ((exact["value"] == -np.inf) == (fast["value"] == -np.inf)).all()
         with pytest.raises(ValueError, match=r"statistics are infinite \(mean: 1"):
             summarize_samples(
                 frame, sample_dims=["draw"], time_col="year",
                 window=(2040, 2059), summation="exact",
+                quantile_method="linear",
             )
 
     def test_infinities_of_both_signs_have_no_sum(self):
@@ -559,8 +725,8 @@ class TestInfiniteStatistics:
             _pooled(_members([1e308, 1.0], [10.0, 1.0]), [], summation="exact")
         assert _pooled(_members([1e308, 1e308]), []) == {"mean": np.inf}
 
-    def test_the_legacy_minus_infinity_is_refused_too(self):
-        """The legacy weighted quantile returns -inf below the first
+    def test_the_minus_infinity_of_the_step_is_refused_too(self):
+        """"lower_step" returns -inf below the first
         step. Asked for together with exact sums it is an infinite
         statistic like any other."""
         frame = _members([1.0, 2.0, 3.0], [0.6, 0.2, 0.2])
@@ -575,6 +741,7 @@ class TestInfiniteStatistics:
             [_members([1.0, 2.0], target="a"), _members([np.nan, np.nan], target="b")]
         )
         for options in self.SETTINGS:
+            options = {"quantile_method": "linear", "summation": "fast", **options}
             out = pooled_statistics(
                 frame, sample_dims=["draw"], quantiles=[0.5], **options
             )
@@ -587,7 +754,8 @@ class TestInfiniteStatistics:
         )
         with pytest.raises(ValueError) as error:
             pooled_statistics(
-                frame, sample_dims=["draw"], quantiles=[1.0], summation="exact"
+                frame, sample_dims=["draw"], quantiles=[1.0], summation="exact",
+                quantile_method="linear"
             )
         message = str(error.value)
         assert "2 statistics are infinite (mean: 1, q100: 1" in message
