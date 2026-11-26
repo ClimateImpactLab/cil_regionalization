@@ -2,6 +2,17 @@ name: tests
 
 on: [push, pull_request]
 
+# A newer push to a branch or a pull request cancels the runs still going
+# for it, so two pushes in a row leave one set of runs, not two racing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# uv installs everything. It is itself installed with pip, because the
+# action that installs it is pinned by a major version this file does
+# not guess at. setup-python's pip cache is left out, since uv keeps its
+# own and installs in seconds without one.
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -14,10 +25,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
+      - name: Install uv
+        run: python -m pip install uv
       - name: Install the package with all extras
-        run: pip install ".[netcdf,bigquery,dask,dev]"
+        run: uv pip install --system ".[netcdf,bigquery,dask,dev]"
       # The suite prints a COVERAGE GAP banner when an optional module
       # is missing and its tests silently skip. All extras are
       # installed above, so a banner means the pass count excludes
@@ -30,6 +41,90 @@ jobs:
             echo "coverage gap: an optional module is missing"
             exit 1
           fi
+
+  # The lowest version of every dependency pyproject.toml declares, on
+  # the lowest Python it allows. The job above installs the newest on
+  # every run, so without this one the floors are a promise nobody
+  # checks.
+  floors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install uv
+        run: python -m pip install uv
+      - name: Install the declared floors
+        run: uv pip install --system --resolution lowest-direct ".[netcdf,bigquery,dask,dev]"
+      - name: Say which versions those are
+        run: >
+          uv pip list --system |
+          grep -iE "^(pandas|numpy|pyarrow|scipy|geopandas|shapely|pyproj|rasterio|exactextract|pydantic|xarray|netcdf4|dask|google-cloud-bigquery) "
+      - name: Run the suite
+        run: |
+          set -o pipefail
+          pytest tests 2>&1 | tee pytest.log
+          if grep -q "COVERAGE GAP" pytest.log; then
+            echo "coverage gap: an optional module is missing"
+            exit 1
+          fi
+
+  # The ruff version is pinned here, so a new release of it cannot fail
+  # a pull request that changed nothing. The rules are in pyproject.toml.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install uv
+      - name: ruff check
+        run: uvx ruff@0.17.6 check .
+      - name: ruff format --check
+        run: uvx ruff@0.17.6 format --check .
+
+  # The wheel, installed alone into an environment that has never seen
+  # the source tree, imports, computes and runs its command line.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install uv
+      - name: Build the sdist and the wheel
+        run: uv build --out-dir dist
+      - name: Install the wheel into a clean environment
+        run: |
+          uv venv "$RUNNER_TEMP/clean" --python 3.12
+          uv pip install --python "$RUNNER_TEMP/clean/bin/python" dist/*.whl
+      - name: Import it and compute, outside the source tree
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/clean/bin/python" -I - <<'EOF'
+          import pandas as pd
+          import cil_regionalization as cilreg
+          import cil_regionalization.pipelines.montecarlo
+          import cil_regionalization.reduce
+          import cil_regionalization.warming_levels
+
+          frame = pd.DataFrame(
+              {"target": ["a"] * 4, "member": list("wxyz"), "value": [1.0, 2.0, 3.0, 4.0]}
+          )
+          stats = cilreg.pooled_statistics(
+              frame, sample_dims=["member"], quantiles=[0.5],
+              quantile_method="linear", summation="exact",
+          )
+          assert stats.set_index("statistic")["value"].to_dict() == {"mean": 2.5, "q50": 2.5}
+          assert cilreg.__version__ != "unavailable"
+          print("cil_regionalization", cilreg.__version__, "imports and computes")
+          EOF
+          "$RUNNER_TEMP/clean/bin/cilreg" --help
 
   # Timing runs on synthetic data. Each asserts that two code paths give
   # identical output and prints wall times for a person to read in the
@@ -44,9 +139,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+      - name: Install uv
+        run: python -m pip install uv
       - name: Install the package
-        run: pip install ".[dev]"
+        run: uv pip install --system ".[dev]"
       - name: Run the benchmarks
         run: pytest benchmarks -m benchmark -s
