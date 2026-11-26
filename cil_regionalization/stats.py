@@ -434,7 +434,7 @@ def _statistic_pieces(
     summation: str,
 ) -> list[pd.DataFrame]:
     """One frame per statistic over each identity group's members.
-    Under "linear" the statistics come from pandas, and under
+    Under "linear" the quantiles come from numpy, and under
     "lower_step" from the historical step distribution, with every
     member weighted equally if there are no weights. Pass ``groups``
     if the caller already has them. ``count_members`` adds to every
@@ -457,16 +457,15 @@ def _statistic_pieces(
                 .groupby(identity, sort=False, observed=True)[value_col]
                 .first().reset_index())
         pieces: list[pd.DataFrame] = []
-        if quantile_method != "linear" or summation != "fast":
-            floats = _float_values(values)
+        floats = _float_values(values)
 
-            def by_group(result: np.ndarray) -> pd.Series:
-                out = pd.Series(result, index=range(n_groups))
-                # a nullable value dtype stays nullable, as under
-                # "linear" with the fast sum
-                if isinstance(values.dtype, pd.api.extensions.ExtensionDtype):
-                    out = out.astype("Float64")
-                return out
+        def by_group(result: np.ndarray) -> pd.Series:
+            out = pd.Series(result, index=range(n_groups))
+            # a nullable value dtype stays nullable, as the pandas mean
+            # keeps it
+            if isinstance(values.dtype, pd.api.extensions.ExtensionDtype):
+                out = out.astype("Float64")
+            return out
 
         if not include_mean:
             stats = []
@@ -477,11 +476,13 @@ def _statistic_pieces(
             stats = [("mean", lambda: grouped.mean())]
         if quantile_method == "inverted_cdf":
             table = _equal_weight_quantiles(floats, gid, n_groups, quantiles)
-            stats += [(_quantile_label(q), lambda i=i: by_group(table[i]))
-                      for i, q in enumerate(quantiles)]
         else:
-            stats += [(_quantile_label(q), lambda q=q: grouped.quantile(q))
-                      for q in quantiles]
+            table = _linear_quantiles(floats, gid, n_groups, quantiles)
+            _refuse_nan_interpolation(
+                table, floats, gid, n_groups, keys[identity], quantiles
+            )
+        stats += [(_quantile_label(q), lambda i=i: by_group(table[i]))
+                  for i, q in enumerate(quantiles)]
         if count_members:
             # count() leaves out NaN, as mean() and quantile() do
             counts = (grouped.count().reindex(range(n_groups), fill_value=0)
@@ -642,6 +643,62 @@ def _equal_weight_quantiles(
             index = min(int(np.searchsorted(share, q)), n - 1)
             out[i, same] = values[starts[same] + index]
     return out + 0.0
+
+
+def _group_rows(
+    values: np.ndarray, gid: np.ndarray, n_groups: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``values`` without NaN, put in group order, with the start and
+    the number of values of each group."""
+    keep = ~np.isnan(values)
+    if not keep.all():
+        values, gid = values[keep], gid[keep]
+    order = np.argsort(gid, kind="stable")
+    counts = np.bincount(gid, minlength=n_groups)
+    return values[order], np.cumsum(counts) - counts, counts
+
+
+def _linear_quantiles(
+    values: np.ndarray, gid: np.ndarray, n_groups: int,
+    quantiles: Sequence[float],
+) -> np.ndarray:
+    """The linear quantiles of every group, computed by numpy, so that
+    they are those of ``numpy.quantile`` and of xarray to the last bit.
+    Returns one row per quantile and one column per group. NaN values
+    are left out, and a group with no value gets NaN."""
+    out = np.full((len(quantiles), n_groups), np.nan)
+    if not len(quantiles) or not len(values):
+        return out
+    values, starts, counts = _group_rows(values, gid, n_groups)
+    for n in np.unique(counts[counts > 0]).tolist():
+        same = np.flatnonzero(counts == n)
+        # every group with n values at once, one group a row
+        table = values[starts[same][:, None] + np.arange(n)]
+        with np.errstate(invalid="ignore"):
+            out[:, same] = np.quantile(table, list(quantiles), axis=1, method="linear")
+    return out
+
+
+def _refuse_nan_interpolation(
+    table: np.ndarray, values: np.ndarray, gid: np.ndarray, n_groups: int,
+    keys: pd.DataFrame, quantiles: Sequence[float],
+) -> None:
+    """Raise where a linear quantile came out NaN for a group that has
+    values. numpy's interpolation gives NaN when a member next to the
+    point it interpolates at is infinite, where pandas gave the
+    neighbour or an infinity, and a NaN would read as a group with no
+    value."""
+    counts = np.bincount(gid[~np.isnan(values)], minlength=n_groups)
+    bad = np.isnan(table) & (counts > 0)
+    if not bad.any():
+        return
+    row, group = np.argwhere(bad)[0]
+    raise ValueError(
+        f"{int(bad.sum())} linear quantiles interpolate next to an infinite "
+        f"member and have no value (first: {_quantile_label(quantiles[row])} "
+        f"of {keys.iloc[group].to_dict()}). An infinity in impact data means "
+        f"something upstream of the statistics broke."
+    )
 
 
 def _fsum(values: list[float]) -> float:

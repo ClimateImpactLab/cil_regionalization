@@ -195,8 +195,12 @@ dimension named `gcm` without weights warns once; filter
 `quantile_method` says how a quantile is computed, by the name of
 the computation:
 
-- `"linear"` interpolates between members, as pandas does. It has no
-  weighted form and is refused with weights.
+- `"linear"` interpolates between members. It is computed by numpy,
+  so it is `numpy.quantile(method="linear")` and xarray's `.quantile`
+  to the last bit. It has no weighted form and is refused with
+  weights. Where numpy's interpolation meets an infinite member it
+  gives NaN, even for a median of 1, 2 and an infinity, and such a
+  quantile is refused rather than written as a group with no value.
 - `"lower_step"` is the step of the historical extraction tool: the
   member one below the one whose cumulative weight share reaches q.
   Without weights every member counts the same, which is what that
@@ -229,7 +233,9 @@ infinite raises instead of being returned; NaN does not.
 
 Files made before v0.6.0 had no such options. They are reproduced by
 `"lower_step"` if the run had weights and `"linear"` if it had none,
-with `"fast"`.
+with `"fast"`. Those without weights took their quantiles from pandas,
+whose arithmetic for the same interpolation differs from numpy's in
+the last bit of about one quantile in a hundred.
 
 ## Warming levels
 
@@ -289,7 +295,10 @@ member of its own and needs its own rows. A member that lacks a year
 of the reference period or of a `gmst_span` is refused by name.
 
 In a pipeline config the same settings go under
-`[stats.warming_levels]`, in place of `stats.windows`:
+`[stats.warming_levels]`, in place of `stats.windows`. The example is
+a physical product as the Inequality Paper makes one: each member's
+window is collapsed to its mean first, over nineteen impact years, and
+the quantile is the extraction tool's step.
 
 ```toml
 [stats]
@@ -346,8 +355,15 @@ years.
 A config that leaves out `reference_period`, `offset`, `levels`,
 `half_width`, `smoothing` or `periods` is refused. So is one that sets
 `stats.windows` or `stats.model_weights` as well: the members at a
-warming level count equally. `quantile_method = "lower_step"` is the
-extraction tool's quantile for that case. A member the tree declares
+warming level count equally.
+
+The paper's two families differ in both settings. Its physical
+products collapse each member's window first and take the extraction
+tool's step, so `quantile_method = "lower_step"`, as in the example.
+Its valued products pool the years with the models and the draws over
+twenty years and take xarray's quantile, so `stats.pool_years = true`
+with `quantile_method = "linear"` and periods whose impact span is
+twenty years. A member the tree declares
 that has no row in the table is refused before any leaf is read. A
 leaf that lacks a year of an impact span its member is pooled over, as
 a row or as a value, is refused by name, since its mean would be over

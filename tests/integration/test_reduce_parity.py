@@ -365,8 +365,9 @@ class TestParity:
     ):
         """A group whose members are all missing is a NaN row without
         weights and an error with them. An infinite statistic is
-        returned under "linear" and "lower_step" with the fast sum, and
-        refused otherwise."""
+        returned under "lower_step" with the fast sum and refused under
+        "inverted_cdf" or "exact". Under "linear" the quantile next to
+        the infinity has no number and is refused."""
         request, joined = build_request(
             tmp_path, weighted=weighted, n_members=n_members, methods=methods,
             special=special, pool_years=pool_years,
@@ -376,7 +377,7 @@ class TestParity:
         )
         raises = (special == "all_nan" and weighted) or (
             special == "infinite"
-            and (methods[0] == "inverted_cdf" or methods[1] == "exact")
+            and (methods[0] in ("inverted_cdf", "linear") or methods[1] == "exact")
         )
         if raises:
             for backend in (_backend(), _one_group_a_block(request)):

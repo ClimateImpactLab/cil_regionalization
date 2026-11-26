@@ -349,6 +349,64 @@ class TestInvertedCdf:
         assert out["value"].tolist() == [2.0, 2.0]
 
 
+class TestLinear:
+    """"linear" is numpy's linear interpolation, computed by numpy."""
+
+    @pytest.mark.parametrize("seed", range(3))
+    def test_it_is_numpy_to_the_last_bit(self, seed):
+        """Groups of every size from 1 to 60, values of every magnitude,
+        and missing values. Failed with the quantiles taken by pandas,
+        whose arithmetic for the same definition parts from numpy's in
+        the last bit of about one quantile in a hundred."""
+        rng = np.random.default_rng(seed)
+        frames, expected = [], {}
+        for i in range(400):
+            n = int(rng.integers(1, 61))
+            values = rng.normal(size=n) * 10.0 ** int(rng.integers(-4, 5))
+            values[rng.random(n) < 0.05] = np.nan
+            frames.append(_members(values, target=f"t{i}"))
+            kept = values[~np.isnan(values)]
+            expected[f"t{i}"] = (
+                np.quantile(kept, QUANTILES, method="linear") if len(kept)
+                else np.full(len(QUANTILES), np.nan)
+            )
+        got = pooled_statistics(
+            pd.concat(frames, ignore_index=True), sample_dims=["draw"],
+            quantiles=QUANTILES, include_mean=False, quantile_method="linear",
+            summation="fast",
+        )
+        table = got.pivot(index="target", columns="statistic", values="value")
+        labels = [stats._quantile_label(q) for q in QUANTILES]
+        for target, want in expected.items():
+            have = table.loc[target, labels].to_numpy(dtype=np.float64)
+            assert have.tobytes() == np.asarray(want, dtype=np.float64).tobytes(), target
+
+    def test_a_quantile_next_to_an_infinity_is_refused(self):
+        """numpy's interpolation gives NaN there, even at the median of
+        1, 2 and an infinity, and a NaN would read as a group with no
+        value. A group with no value still gives NaN."""
+        frame = pd.concat(
+            [_members([1.0, 2.0, np.inf], target="a"), _members([np.nan] * 2, target="b")]
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"1 linear quantiles interpolate next to an infinite member and "
+            r"have no value \(first: q50 of \{'target': 'a'\}\)",
+        ):
+            pooled_statistics(
+                frame, sample_dims=["draw"], quantiles=[0.5], include_mean=False,
+                quantile_method="linear", summation="fast",
+            )
+        got = pooled_statistics(
+            frame[frame["target"] == "b"], sample_dims=["draw"], quantiles=[0.5],
+            quantile_method="linear", summation="fast",
+        )
+        assert got["value"].isna().all()
+        # an infinity numpy does reach is returned, as with the fast sum
+        low = _pooled(_members([-np.inf, 1.0, 2.0]), [0.25], include_mean=False)
+        assert low == {"q25": -np.inf}
+
+
 class TestLowerStep:
     """The step of the historical extraction tool, the member one below
     the one whose running share reaches q. Without weights every member
@@ -660,12 +718,17 @@ class TestInfiniteStatistics:
     @pytest.mark.parametrize("options", SETTINGS)
     def test_an_infinite_member_a_quantile_selects_is_refused(self, options):
         """No sum is taken here. The largest member is infinite and
-        q100 returns it."""
+        q100 returns it under "inverted_cdf". Under "linear" numpy's
+        interpolation next to it gives no number, and that is refused
+        whatever the sum."""
         frame = _members([1.0, 2.0, np.inf])
-        with pytest.raises(ValueError, match=r"statistics are infinite \(q100: 1"):
+        message = (
+            r"statistics are infinite \(q100: 1"
+            if options.get("quantile_method") == "inverted_cdf"
+            else "interpolate next to an infinite member"
+        )
+        with pytest.raises(ValueError, match=message):
             _pooled(frame, [0.5, 1.0], include_mean=False, **options)
-        plain = _pooled(frame, [0.5, 1.0], include_mean=False)
-        assert list(plain.values()) == [2.0, np.inf]
 
     def test_an_infinity_that_reaches_no_statistic_is_let_through(self):
         """Cannot go red by reverting, because without the check
@@ -755,7 +818,7 @@ class TestInfiniteStatistics:
         with pytest.raises(ValueError) as error:
             pooled_statistics(
                 frame, sample_dims=["draw"], quantiles=[1.0], summation="exact",
-                quantile_method="linear"
+                quantile_method="inverted_cdf"
             )
         message = str(error.value)
         assert "2 statistics are infinite (mean: 1, q100: 1" in message

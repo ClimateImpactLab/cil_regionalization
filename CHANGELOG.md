@@ -9,7 +9,8 @@ call of `summarize_samples` and `pooled_statistics`, in every call of
 `window_means` for `summation`, and under `[stats]` in every pipeline
 config.** Files made before v0.6.0 are reproduced by
 `quantile_method = "lower_step"` if the run had model weights and
-`"linear"` if it had none, with `summation = "fast"`.
+`"linear"` if it had none, with `summation = "fast"`, those without
+weights to the last bit in about 99 quantiles in a hundred.
 `window_means` and `summarize_samples` compute in float64 and return
 float64 whatever the dtype of the value column. That changes their
 result for a float32 or a nullable column under every setting.
@@ -395,6 +396,17 @@ its warming level in a calendar period.
   refused before any leaf is read.
 - Changed: `stats.windows` may be left out when `[stats.warming_levels]`
   is set. A config with neither is refused, as it was.
+- Changed: `quantile_method="linear"` is computed by numpy, so its
+  quantiles are those of `numpy.quantile(method="linear")` and of
+  xarray's `.quantile` to the last bit, and so those of the Inequality
+  Paper's valued path. Before, pandas computed them. The definition is
+  the same, and pandas' arithmetic differs from numpy's in the last
+  bit of about one quantile in a hundred on synthetic samples, up to
+  256 units in the last place next to zero. Where numpy's
+  interpolation meets an infinite member it gives NaN, even for the
+  median of 1, 2 and an infinity, where pandas gave 2. Such a quantile
+  is refused, naming the group, rather than written as a NaN that
+  would read as a group with no value.
 
 ## v0.5.0
 
