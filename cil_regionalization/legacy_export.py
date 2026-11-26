@@ -25,6 +25,7 @@ Env note for the RCC HPC where this exporter is used::
     module load python
     source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
 """
+
 from __future__ import annotations
 
 import logging
@@ -90,8 +91,7 @@ def to_legacy_frame(result: WeightsResult) -> pd.DataFrame:
     id_fields = result.schema.id_fields
     if list(id_fields) != ["hierid"]:
         raise ValueError(
-            f"legacy_export: requires id_fields == ['hierid'] "
-            f"(got {list(id_fields)})"
+            f"legacy_export: requires id_fields == ['hierid'] (got {list(id_fields)})"
         )
 
     out = pd.DataFrame(
@@ -110,9 +110,7 @@ def to_legacy_frame(result: WeightsResult) -> pd.DataFrame:
     totals = (
         out.groupby("hierid", sort=False)[["area", "crop", "pop"]]
         .transform("sum")
-        .rename(
-            columns={"area": "areatotal", "crop": "croptotal", "pop": "poptotal"}
-        )
+        .rename(columns={"area": "areatotal", "crop": "croptotal", "pop": "poptotal"})
     )
     out["areatotal"] = totals["areatotal"]
     out["croptotal"] = totals["croptotal"]

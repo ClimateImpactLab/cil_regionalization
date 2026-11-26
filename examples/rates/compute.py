@@ -27,6 +27,7 @@ prepare_data.py. Two impact regions (MEX.25.1309 and MEX.23.1234,
 together fewer than 150 people) hold no values in this tree and are
 excluded.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -71,9 +72,11 @@ def load_draw(batch: str, gcm: str) -> pd.DataFrame:
     histclim impact, both read from the committed leaf pair.
     """
     full = _read_rebased(
-        batch, gcm, "Agespec_interaction_response-combined.nc4", "fulladapt")
+        batch, gcm, "Agespec_interaction_response-combined.nc4", "fulladapt"
+    )
     hist = _read_rebased(
-        batch, gcm, "Agespec_interaction_response-combined-histclim.nc4", "histclim")
+        batch, gcm, "Agespec_interaction_response-combined-histclim.nc4", "histclim"
+    )
     df = full.merge(hist, on=["hierid", "year"])
     for col in ("fulladapt", "histclim"):
         df[col] = df[col].astype("float64")
@@ -87,9 +90,7 @@ def load_draw(batch: str, gcm: str) -> pd.DataFrame:
 
 def load_weights(version: str, direction: str) -> "cilreg.WeightsArtifact":
     name = {"2.0": "gadm20", "4.1": "gadm41"}[version]
-    return cilreg.WeightsArtifact.load(
-        DATA / "weights" / f"{name}_adm2_{direction}"
-    )
+    return cilreg.WeightsArtifact.load(DATA / "weights" / f"{name}_adm2_{direction}")
 
 
 def target_keys(version: str) -> list[str]:

@@ -17,6 +17,7 @@ Run on the cluster:
 
     python run_valued_mortality.py --adm adm1 --rcp rcp85 --workers 16
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,9 @@ import xarray as xr
 import cil_regionalization as cilreg
 from cil_regionalization.stats import pooled_statistics, window_means
 
-ZARRS = Path("/project/cil/gcp/outputs/mortality/impacts-darwin-montecarlo-damages/new_format")
+ZARRS = Path(
+    "/project/cil/gcp/outputs/mortality/impacts-darwin-montecarlo-damages/new_format"
+)
 WEIGHTS = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/weights/ir_{adm}_full"
 SMME = "/project/cil/gcp/climate/SMME-weights/{rcp}_SMME_weights.tsv"
 OUT = "/project/cil/gcp/impact_map/mortality"
@@ -53,8 +56,7 @@ def weighted_gcms(rcp: str, gcms: list[str]) -> list[str]:
     """
     smme = pd.read_csv(SMME.format(rcp=rcp), sep="\t")["model"]
     declared = set(smme.str.replace("*", "", regex=False).str.lower())
-    kept = [g for g in gcms
-            if g.replace("surrogate_", "").lower() in declared]
+    kept = [g for g in gcms if g.replace("surrogate_", "").lower() in declared]
     dropped = sorted(set(gcms) - set(kept))
     if dropped:
         print(f"{rcp}: not in the SMME table, skipped: {dropped}", flush=True)
@@ -76,19 +78,24 @@ def batch_frames(task) -> list[pd.DataFrame]:
     gcms = weighted_gcms(rcp, [str(g) for g in ds["gcm"].values])
     out = []
     for model, iam in IAMS.items():
-        block = ds.sel(rcp=rcp, model=model, ssp=ssp,
-                       valuation=VALUATION, scaling=SCALING)
+        block = ds.sel(
+            rcp=rcp, model=model, ssp=ssp, valuation=VALUATION, scaling=SCALING
+        )
         effect = block["monetized_deaths"] - block["monetized_histclim_deaths"]
         for gcm in gcms:
-            arr = (effect.sel(gcm=gcm).squeeze()
-                   .transpose("year", "region").values)
+            arr = effect.sel(gcm=gcm).squeeze().transpose("year", "region").values
             frame = pd.DataFrame(
-                {"hierid": pd.Series(regions).repeat(len(years)).values,
-                 "year": years * len(regions),
-                 "value": arr.T.reshape(-1)}
+                {
+                    "hierid": pd.Series(regions).repeat(len(years)).values,
+                    "year": years * len(regions),
+                    "value": arr.T.reshape(-1),
+                }
             )
             applied = cilreg.apply_weights(
-                weights, frame, kind="extensive", weight="pop",
+                weights,
+                frame,
+                kind="extensive",
+                weight="pop",
                 data_version="world-combo-201710",
             ).frame
             applied["batch"] = batch
@@ -96,8 +103,11 @@ def batch_frames(task) -> list[pd.DataFrame]:
             applied["iam"] = iam
             applied["ssp"] = ssp
             reduced = window_means(
-                applied, time_col="year", windows=WINDOWS, value_col="value",
-                summation="fast"
+                applied,
+                time_col="year",
+                windows=WINDOWS,
+                value_col="value",
+                summation="fast",
             )
             out.append(reduced)
         print(batch, rcp, ssp, flush=True)
@@ -107,12 +117,16 @@ def batch_frames(task) -> list[pd.DataFrame]:
 def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
     smme = pd.read_csv(SMME.format(rcp=rcp), sep="\t")[["model", "weight"]]
     smme["key"] = smme["model"].str.replace("*", "", regex=False).str.lower()
-    frame = reduced.assign(
-        key=reduced["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-    ).merge(
-        smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
-        on="key",
-    ).drop(columns="key")
+    frame = (
+        reduced.assign(
+            key=reduced["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
+        )
+        .merge(
+            smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
+            on="key",
+        )
+        .drop(columns="key")
+    )
     if len(frame) != len(reduced):
         raise ValueError("a climate model has no SMME weight row")
     return pooled_statistics(
@@ -126,8 +140,9 @@ def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
     )
 
 
-def write_product(stats: pd.DataFrame, reduced: pd.DataFrame | None,
-                  adm: str, rcp: str, n_frames: int) -> None:
+def write_product(
+    stats: pd.DataFrame, reduced: pd.DataFrame | None, adm: str, rcp: str, n_frames: int
+) -> None:
     out = Path(OUT) / adm
     out.mkdir(parents=True, exist_ok=True)
     stem = f"mortality_valued_{rcp}"
@@ -168,8 +183,9 @@ def main() -> int:
     reduced = pd.concat(frames, ignore_index=True)
 
     stats = weighted_stats(reduced, args.rcp)
-    write_product(stats, reduced if args.adm == "adm1" else None,
-                  args.adm, args.rcp, len(frames))
+    write_product(
+        stats, reduced if args.adm == "adm1" else None, args.adm, args.rcp, len(frames)
+    )
 
     if args.adm == "adm1":
         # ADM0: regroup the reduced frame by ISO before pooling; exact
@@ -181,10 +197,16 @@ def main() -> int:
         out.mkdir(parents=True, exist_ok=True)
         stem = f"mortality_valued_{args.rcp}"
         adm0_stats.to_parquet(out / f"{stem}.parquet", index=False)
-        (out / f"{stem}.manifest.json").write_text(json.dumps(
-            {"derived_from": f"{OUT}/adm1/{stem}.reduced.parquet",
-             "method": "ISO sum of the adm1 reduced frame before pooling",
-             "units": "2019 USD"}, indent=2))
+        (out / f"{stem}.manifest.json").write_text(
+            json.dumps(
+                {
+                    "derived_from": f"{OUT}/adm1/{stem}.reduced.parquet",
+                    "method": "ISO sum of the adm1 reduced frame before pooling",
+                    "units": "2019 USD",
+                },
+                indent=2,
+            )
+        )
         print(f"wrote {out}/{stem}.parquet rows={len(adm0_stats)}")
     return 0
 

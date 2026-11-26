@@ -3,6 +3,7 @@
 Dimension names are deliberately unrealistic (kumquat, zeppelin, epoch)
 so nothing can depend on batch, gcm, or year.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -161,7 +162,10 @@ class TestShapeAndPooling:
         rows = []
         rng = np.random.default_rng(7)
         for tgt, flavor, kum, zep, epoch in itertools.product(
-            ["T1", "T2"], ["f1", "f2"], ["k1", "k2", "k3"], ["z1", "z2"],
+            ["T1", "T2"],
+            ["f1", "f2"],
+            ["k1", "k2", "k3"],
+            ["z1", "z2"],
             [2050, 2051, 2052, 2080],
         ):
             rows.append(
@@ -246,9 +250,12 @@ class TestShapeAndPooling:
             ]
         )
         out = summarize_samples(
-            df, sample_dims=["zeppelin"], time_col="epoch", window=(2050, 2050),
+            df,
+            sample_dims=["zeppelin"],
+            time_col="epoch",
+            window=(2050, 2050),
             quantile_method="linear",
-            summation="fast"
+            summation="fast",
         )
         assert list(out.columns) == ["statistic", "value"]
         assert float(out["value"].iloc[0]) == pytest.approx(2.0)
@@ -261,9 +268,12 @@ class TestShapeAndPooling:
             ]
         )
         out = summarize_samples(
-            df, sample_dims=["zeppelin"], time_col="epoch", window=(2050, 2050),
+            df,
+            sample_dims=["zeppelin"],
+            time_col="epoch",
+            window=(2050, 2050),
             quantile_method="linear",
-            summation="fast"
+            summation="fast",
         )
         assert float(out["value"].iloc[0]) == pytest.approx(4.0)
 
@@ -298,9 +308,12 @@ class TestGuards:
         df = pd.concat([self._tiny()] * 2, ignore_index=True)
         with pytest.raises(ValueError, match="duplicated"):
             summarize_samples(
-                df, sample_dims=["zeppelin"], time_col="epoch", window=(2050, 2050),
+                df,
+                sample_dims=["zeppelin"],
+                time_col="epoch",
+                window=(2050, 2050),
                 quantile_method="linear",
-                summation="fast"
+                summation="fast",
             )
 
     def test_no_statistics_requested_raises(self):
@@ -357,7 +370,10 @@ class TestStagedEquivalence:
         rng = np.random.default_rng(11)
         rows = []
         for tgt, flavor, kum, zep, epoch in itertools.product(
-            ["T1", "T2"], ["f1", "f2"], ["k1", "k2", "k3"], ["z1", "z2"],
+            ["T1", "T2"],
+            ["f1", "f2"],
+            ["k1", "k2", "k3"],
+            ["z1", "z2"],
             [2050, 2051, 2052, 2080, 2081],
         ):
             rows.append(
@@ -383,8 +399,11 @@ class TestStagedEquivalence:
         # members: reduce each independently, concatenate, pool once.
         leaves = [
             window_means(
-                part, time_col="epoch", windows=windows, value_col="value",
-                summation="fast"
+                part,
+                time_col="epoch",
+                windows=windows,
+                value_col="value",
+                summation="fast",
             )
             for _, part in df.groupby("kumquat", sort=False)
         ]
@@ -435,8 +454,7 @@ class TestWindowMeansGuards:
         from cil_regionalization.stats import window_means
 
         reduced = window_means(
-            self._tiny(), time_col="epoch", windows=[(2050, 2051)],
-            summation="fast"
+            self._tiny(), time_col="epoch", windows=[(2050, 2051)], summation="fast"
         )
         assert list(reduced.columns) == ["zeppelin", "window", "value"]
         # A changed window cannot be applied to reduced data: the time
@@ -444,7 +462,10 @@ class TestWindowMeansGuards:
         # the contents.
         with pytest.raises(ValueError, match="Windows are final"):
             window_means(
-                reduced, time_col="window", windows=[(2050, 2050)], summation="fast",
+                reduced,
+                time_col="window",
+                windows=[(2050, 2050)],
+                summation="fast",
             )
 
     def test_presummarized_input_refused(self):
@@ -487,18 +508,26 @@ class TestWindowMeansCodes:
     @staticmethod
     def _yearly(seed: int) -> pd.DataFrame:
         rng = np.random.default_rng(seed)
-        keys = pd.DataFrame({
-            "kumquat": rng.choice(["a", "b", "c", None], 80, p=[0.4, 0.3, 0.28, 0.02]),
-            "quince": rng.integers(0, 7, 80).astype("float64"),
-            "fig": pd.Categorical(rng.choice(["x", "y", "z"], 80),
-                                  categories=["z", "y", "x", "unused"]),
-        })
+        keys = pd.DataFrame(
+            {
+                "kumquat": rng.choice(
+                    ["a", "b", "c", None], 80, p=[0.4, 0.3, 0.28, 0.02]
+                ),
+                "quince": rng.integers(0, 7, 80).astype("float64"),
+                "fig": pd.Categorical(
+                    rng.choice(["x", "y", "z"], 80),
+                    categories=["z", "y", "x", "unused"],
+                ),
+            }
+        )
         keys.loc[rng.random(80) < 0.03, "quince"] = np.nan
         keys.loc[rng.random(80) < 0.03, "fig"] = np.nan
         df = keys.merge(pd.DataFrame({"epoch": range(2015, 2045)}), how="cross")
         df["value"] = rng.normal(size=len(df))
         df.loc[rng.random(len(df)) < 0.05, "value"] = np.nan
-        df = df.sample(frac=1.0, random_state=seed)  # first appearance differs per window
+        df = df.sample(
+            frac=1.0, random_state=seed
+        )  # first appearance differs per window
         return df.drop_duplicates(subset=["kumquat", "quince", "fig", "epoch"])
 
     @staticmethod
@@ -508,9 +537,12 @@ class TestWindowMeansCodes:
         group = [c for c in df.columns if c not in ("epoch", "value")]
         pieces = []
         for lo, hi in windows:
-            piece = (df.loc[df["epoch"].between(lo, hi)]
-                     .groupby(group, sort=False, observed=True)["value"]
-                     .mean().reset_index())
+            piece = (
+                df.loc[df["epoch"].between(lo, hi)]
+                .groupby(group, sort=False, observed=True)["value"]
+                .mean()
+                .reset_index()
+            )
             piece["window"] = _window_label(lo, hi)
             pieces.append(piece)
         return pd.concat(pieces, ignore_index=True)[group + ["window", "value"]]
@@ -521,8 +553,9 @@ class TestWindowMeansCodes:
 
         df = self._yearly(seed)
         out = window_means(df, time_col="epoch", windows=self.WINDOWS, summation="fast")
-        pd.testing.assert_frame_equal(out, self._by_columns(df, self.WINDOWS),
-                                      check_exact=True)
+        pd.testing.assert_frame_equal(
+            out, self._by_columns(df, self.WINDOWS), check_exact=True
+        )
 
     def test_window_whose_rows_all_miss_a_key(self):
         from cil_regionalization.stats import window_means
@@ -531,8 +564,9 @@ class TestWindowMeansCodes:
         df.loc[df["epoch"].between(2030, 2039), "kumquat"] = None
         df = df.drop_duplicates(subset=["kumquat", "quince", "fig", "epoch"])
         out = window_means(df, time_col="epoch", windows=self.WINDOWS, summation="fast")
-        pd.testing.assert_frame_equal(out, self._by_columns(df, self.WINDOWS),
-                                      check_exact=True)
+        pd.testing.assert_frame_equal(
+            out, self._by_columns(df, self.WINDOWS), check_exact=True
+        )
 
     def test_duplicates_outside_every_window_are_refused(self):
         from cil_regionalization.stats import window_means
@@ -541,17 +575,21 @@ class TestWindowMeansCodes:
         outside = df.loc[df["epoch"] == 2016].iloc[[0]]
         with pytest.raises(ValueError, match="1 rows duplicated"):
             window_means(
-                pd.concat([df, outside]), time_col="epoch", windows=self.WINDOWS,
+                pd.concat([df, outside]),
+                time_col="epoch",
+                windows=self.WINDOWS,
                 summation="fast",
             )
 
     def test_rows_differing_only_in_missing_keys_are_duplicates(self):
         from cil_regionalization.stats import window_means
 
-        df = _frame([
-            {"kumquat": None, "quince": np.nan, "epoch": 2050, "value": 1.0},
-            {"kumquat": None, "quince": np.nan, "epoch": 2050, "value": 2.0},
-        ])
+        df = _frame(
+            [
+                {"kumquat": None, "quince": np.nan, "epoch": 2050, "value": 1.0},
+                {"kumquat": None, "quince": np.nan, "epoch": 2050, "value": 2.0},
+            ]
+        )
         with pytest.raises(ValueError, match="1 rows duplicated"):
             window_means(df, time_col="epoch", windows=[(2050, 2050)], summation="fast")
 
@@ -567,8 +605,7 @@ class TestWindowMeansCodes:
         assert out["value"].dtype == np.dtype("float64")
         expected = self._by_columns(df, self.WINDOWS)
         assert expected["value"].dtype == "Float64"
-        expected["value"] = expected["value"].to_numpy(dtype="float64",
-                                                       na_value=np.nan)
+        expected["value"] = expected["value"].to_numpy(dtype="float64", na_value=np.nan)
         pd.testing.assert_frame_equal(out, expected, check_exact=True)
 
 
@@ -579,8 +616,10 @@ class TestPooledStatisticsGuards:
         df = _frame([{"zeppelin": "d1", "statistic": "q50", "value": 1.0}])
         with pytest.raises(ValueError, match="comonotone"):
             pooled_statistics(
-                df, sample_dims=["zeppelin"],
-                quantile_method="linear", summation="fast",
+                df,
+                sample_dims=["zeppelin"],
+                quantile_method="linear",
+                summation="fast",
             )
 
     def test_matches_summarize_samples_shape(self):
@@ -593,8 +632,11 @@ class TestPooledStatisticsGuards:
             ]
         )
         out = pooled_statistics(
-            df, sample_dims=["zeppelin"], quantiles=[0.5],
-            quantile_method="linear", summation="fast",
+            df,
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
+            quantile_method="linear",
+            summation="fast",
         )
         assert list(out.columns) == ["target", "statistic", "value"]
         assert set(out["statistic"]) == {"mean", "q50"}
@@ -620,8 +662,10 @@ class TestMemberCount:
         from cil_regionalization.stats import pooled_statistics
 
         out = pooled_statistics(
-            self._members(), sample_dims=["zeppelin"],
-            quantile_method="linear", summation="fast",
+            self._members(),
+            sample_dims=["zeppelin"],
+            quantile_method="linear",
+            summation="fast",
         )
         assert list(out.columns) == ["target", "statistic", "value"]
 
@@ -696,7 +740,10 @@ class TestMemberCount:
         )
         staged = pooled_statistics(
             window_means(
-                df, time_col="epoch", windows=[(2050, 2051)], summation="fast",
+                df,
+                time_col="epoch",
+                windows=[(2050, 2051)],
+                summation="fast",
             ),
             sample_dims=["zeppelin"],
             quantiles=[0.5],
@@ -726,8 +773,11 @@ class TestMemberCount:
         df = self._members().assign(n_members=4)
         with pytest.raises(ValueError, match="n_members"):
             pooled_statistics(
-                df, sample_dims=["zeppelin"], include_n_members=True,
-                quantile_method="linear", summation="fast",
+                df,
+                sample_dims=["zeppelin"],
+                include_n_members=True,
+                quantile_method="linear",
+                summation="fast",
             )
         with pytest.raises(ValueError, match="n_members"):
             summarize_samples(
@@ -741,7 +791,10 @@ class TestMemberCount:
             )
         # Without the keyword it is an identity column, as before.
         out = pooled_statistics(
-            df, sample_dims=["zeppelin"], quantile_method="linear", summation="fast",
+            df,
+            sample_dims=["zeppelin"],
+            quantile_method="linear",
+            summation="fast",
         )
         assert list(out.columns) == ["target", "n_members", "statistic", "value"]
 
@@ -755,16 +808,21 @@ class TestIdentityGroups:
     @staticmethod
     def _members(seed: int, n: int = 3000) -> pd.DataFrame:
         rng = np.random.default_rng(seed)
-        df = pd.DataFrame({
-            "kumquat": rng.choice(["a", "b", "c", None], n, p=[0.4, 0.3, 0.28, 0.02]),
-            "quince": rng.integers(0, 7, n).astype("float64"),
-            "fig": pd.Categorical(rng.choice(["x", "y", "z"], n),
-                                  categories=["z", "y", "x", "unused"]),
-            "zeppelin": rng.integers(0, 5, n),
-            "blimp": pd.Categorical(rng.choice(["p", "q"], n)),
-            "value": rng.normal(size=n),
-            "w": rng.random(n),
-        })
+        df = pd.DataFrame(
+            {
+                "kumquat": rng.choice(
+                    ["a", "b", "c", None], n, p=[0.4, 0.3, 0.28, 0.02]
+                ),
+                "quince": rng.integers(0, 7, n).astype("float64"),
+                "fig": pd.Categorical(
+                    rng.choice(["x", "y", "z"], n), categories=["z", "y", "x", "unused"]
+                ),
+                "zeppelin": rng.integers(0, 5, n),
+                "blimp": pd.Categorical(rng.choice(["p", "q"], n)),
+                "value": rng.normal(size=n),
+                "w": rng.random(n),
+            }
+        )
         df.loc[rng.random(n) < 0.02, "quince"] = np.nan
         df.loc[rng.random(n) < 0.02, "fig"] = np.nan
         df.loc[rng.random(n) < 0.02, "blimp"] = np.nan
@@ -793,20 +851,26 @@ class TestIdentityGroups:
         key = self.IDENTITY + self.SAMPLE
         unique = df.drop_duplicates(subset=key).reset_index(drop=True)
         for frame in (df, unique):
-            got = _has_duplicates(frame, _identity_groups(frame, self.IDENTITY), self.SAMPLE)
+            got = _has_duplicates(
+                frame, _identity_groups(frame, self.IDENTITY), self.SAMPLE
+            )
             assert got == frame.duplicated(subset=key).any()
 
     def test_rows_differing_only_in_missing_keys_are_duplicates(self):
         from cil_regionalization.stats import pooled_statistics
 
-        df = _frame([
-            {"kumquat": None, "quince": np.nan, "zeppelin": "d1", "value": 1.0},
-            {"kumquat": None, "quince": np.nan, "zeppelin": "d1", "value": 2.0},
-        ])
+        df = _frame(
+            [
+                {"kumquat": None, "quince": np.nan, "zeppelin": "d1", "value": 1.0},
+                {"kumquat": None, "quince": np.nan, "zeppelin": "d1", "value": 2.0},
+            ]
+        )
         with pytest.raises(ValueError, match="1 rows duplicated"):
             pooled_statistics(
-                df, sample_dims=["zeppelin"],
-                quantile_method="linear", summation="fast",
+                df,
+                sample_dims=["zeppelin"],
+                quantile_method="linear",
+                summation="fast",
             )
 
     def test_extending_codes_leaves_them_unchanged(self):
@@ -839,10 +903,14 @@ class TestIdentityGroups:
         df = self._members(3).drop_duplicates(subset=self.IDENTITY + self.SAMPLE)
         if not weighted:
             df = df.drop(columns="w")
-        out = pooled_statistics(df, sample_dims=self.SAMPLE, quantiles=[0.17, 0.5],
-                                weight_col="w" if weighted else None,
-                                quantile_method="lower_step" if weighted else "linear",
-                                summation="fast")
+        out = pooled_statistics(
+            df,
+            sample_dims=self.SAMPLE,
+            quantiles=[0.17, 0.5],
+            weight_col="w" if weighted else None,
+            quantile_method="lower_step" if weighted else "linear",
+            summation="fast",
+        )
         mean = out.loc[out["statistic"] == "mean"].reset_index(drop=True)
         grouped = df.groupby(self.IDENTITY, sort=False, observed=True)
         if weighted:
@@ -865,15 +933,25 @@ class TestIdentityGroups:
         df["value"] = df["value"].astype("Float64")
         df.loc[df.index[::23], "value"] = pd.NA
         out = pooled_statistics(
-            df, sample_dims=self.SAMPLE, quantiles=[0.5],
-            quantile_method="linear", summation="fast",
+            df,
+            sample_dims=self.SAMPLE,
+            quantiles=[0.5],
+            quantile_method="linear",
+            summation="fast",
         )
         assert out["value"].dtype == "Float64"
         grouped = df.groupby(self.IDENTITY, sort=False, observed=True)["value"]
-        for label, expected in (("mean", grouped.mean()), ("q50", grouped.quantile(0.5))):
+        for label, expected in (
+            ("mean", grouped.mean()),
+            ("q50", grouped.quantile(0.5)),
+        ):
             got = out.loc[out["statistic"] == label, "value"].reset_index(drop=True)
-            pd.testing.assert_series_equal(got, expected.reset_index(drop=True),
-                                           check_exact=True, check_names=False)
+            pd.testing.assert_series_equal(
+                got,
+                expected.reset_index(drop=True),
+                check_exact=True,
+                check_names=False,
+            )
 
 
 class TestWeightedStatistics:
@@ -999,9 +1077,7 @@ class TestWeightedStatistics:
         assert float(unweighted["value"].iloc[0]) == pytest.approx(
             np.quantile(values, 0.95)
         )
-        assert float(weighted["value"].iloc[0]) != float(
-            unweighted["value"].iloc[0]
-        )
+        assert float(weighted["value"].iloc[0]) != float(unweighted["value"].iloc[0])
 
     def test_zero_weight_excludes_member(self):
         from cil_regionalization.stats import pooled_statistics
@@ -1023,14 +1099,19 @@ class TestWeightedStatistics:
 
         df = self._members([1.0, 2.0, 7.0], [0.9, 0.05, 0.05])
         weighted = pooled_statistics(
-            df, sample_dims=["zeppelin"], quantiles=[0.5], weight_col="w",
+            df,
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
+            weight_col="w",
             quantile_method="lower_step",
-            summation="fast"
+            summation="fast",
         )
         unweighted = pooled_statistics(
-            df.drop(columns="w"), sample_dims=["zeppelin"], quantiles=[0.5],
+            df.drop(columns="w"),
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
             quantile_method="linear",
-            summation="fast"
+            summation="fast",
         )
         assert list(weighted.columns) == list(unweighted.columns)
         assert "w" not in weighted.columns
@@ -1045,9 +1126,7 @@ class TestWeightedStatistics:
             "d2": (10.0, 0.4),
         }.items():
             for year in (2050, 2051):
-                rows.append(
-                    {"zeppelin": member, "epoch": year, "value": level, "w": w}
-                )
+                rows.append({"zeppelin": member, "epoch": year, "value": level, "w": w})
         out = summarize_samples(
             _frame(rows),
             sample_dims=["zeppelin"],
@@ -1139,8 +1218,10 @@ class TestUnweightedGcmWarning:
             with warnings.catch_warnings():
                 warnings.simplefilter("always")
                 pooled_statistics(
-                    self._gcm_frame(), sample_dims=["gcm"],
-                    quantile_method="linear", summation="fast",
+                    self._gcm_frame(),
+                    sample_dims=["gcm"],
+                    quantile_method="linear",
+                    summation="fast",
                 )
 
     def test_weighted_gcm_does_not_warn(self):
@@ -1152,8 +1233,11 @@ class TestUnweightedGcmWarning:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             pooled_statistics(
-                df, sample_dims=["gcm"], weight_col="w",
-                quantile_method="lower_step", summation="fast",
+                df,
+                sample_dims=["gcm"],
+                weight_col="w",
+                quantile_method="lower_step",
+                summation="fast",
             )
 
     def test_other_sample_dims_do_not_warn(self):
@@ -1165,8 +1249,10 @@ class TestUnweightedGcmWarning:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             pooled_statistics(
-                df, sample_dims=["zeppelin"],
-                quantile_method="linear", summation="fast",
+                df,
+                sample_dims=["zeppelin"],
+                quantile_method="linear",
+                summation="fast",
             )
 
     def test_warning_is_suppressible(self):
@@ -1179,12 +1265,12 @@ class TestUnweightedGcmWarning:
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            warnings.filterwarnings(
-                "ignore", category=UnweightedModelWeightsWarning
-            )
+            warnings.filterwarnings("ignore", category=UnweightedModelWeightsWarning)
             pooled_statistics(
-                self._gcm_frame(), sample_dims=["gcm"],
-                quantile_method="linear", summation="fast",
+                self._gcm_frame(),
+                sample_dims=["gcm"],
+                quantile_method="linear",
+                summation="fast",
             )
 
 
@@ -1269,14 +1355,20 @@ class TestCategoricalIdentityColumns:
         plain = self._members()
         cat = plain.assign(target=plain["target"].astype("category"))
         out_plain = pooled_statistics(
-            plain, sample_dims=["zeppelin"], quantiles=[0.5], weight_col="w",
+            plain,
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
+            weight_col="w",
             quantile_method="lower_step",
-            summation="fast"
+            summation="fast",
         )
         out_cat = pooled_statistics(
-            cat, sample_dims=["zeppelin"], quantiles=[0.5], weight_col="w",
+            cat,
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
+            weight_col="w",
             quantile_method="lower_step",
-            summation="fast"
+            summation="fast",
         )
         out_cat["target"] = out_cat["target"].astype(str)
         key = ["target", "statistic"]
@@ -1293,13 +1385,18 @@ class TestCategoricalIdentityColumns:
         plain = self._members().drop(columns="w")
         cat = plain.assign(target=plain["target"].astype("category"))
         out_plain = pooled_statistics(
-            plain, sample_dims=["zeppelin"], quantiles=[0.5],
+            plain,
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
             quantile_method="linear",
-            summation="fast"
+            summation="fast",
         )
         out_cat = pooled_statistics(
-            cat, sample_dims=["zeppelin"], quantiles=[0.5],
-            quantile_method="linear", summation="fast",
+            cat,
+            sample_dims=["zeppelin"],
+            quantiles=[0.5],
+            quantile_method="linear",
+            summation="fast",
         )
         out_cat["target"] = out_cat["target"].astype(str)
         key = ["target", "statistic"]
@@ -1322,7 +1419,10 @@ class TestCategoricalIdentityColumns:
         )
         rows["target"] = rows["target"].astype("category")
         out = window_means(
-            rows, time_col="epoch", windows=[(2050, 2051)], summation="fast",
+            rows,
+            time_col="epoch",
+            windows=[(2050, 2051)],
+            summation="fast",
         )
         assert len(out) == 2
         assert set(out["value"]) == {2.0}
@@ -1342,7 +1442,9 @@ class TestMixtureQuantile:
         assert np.allclose(got, want, rtol=0, atol=1e-12)
 
     def test_symmetric_pair_has_median_at_center(self):
-        assert mixture_quantile([1, 1], [5.0, 9.0], [1.0, 1.0], 0.5) == pytest.approx(7.0, abs=1e-12)
+        assert mixture_quantile([1, 1], [5.0, 9.0], [1.0, 1.0], 0.5) == pytest.approx(
+            7.0, abs=1e-12
+        )
         lo, hi = mixture_quantile([1, 1], [-2.0, 2.0], [0.5, 0.5], [0.1, 0.9])
         assert lo == pytest.approx(-hi, abs=1e-12)
 
@@ -1351,7 +1453,9 @@ class TestMixtureQuantile:
         dists = [NormalDist(mi, np.sqrt(vi)) for mi, vi in zip(m, v)]
         for q in self.QS:
             x = mixture_quantile(w, m, v, q)
-            assert sum(wi * d.cdf(x) for wi, d in zip(w, dists)) == pytest.approx(q, abs=1e-12)
+            assert sum(wi * d.cdf(x) for wi, d in zip(w, dists)) == pytest.approx(
+                q, abs=1e-12
+            )
 
     def test_far_tails(self):
         for q in (1e-10, 1 - 1e-10):
@@ -1371,8 +1475,12 @@ class TestMixtureQuantile:
     def test_zero_variance_component_is_a_point_mass(self):
         # half the mass sits at 0, half is N(10, 1): everything between
         # about 0 and 0.5 maps to 0, and 0.75 is the normal's median
-        assert mixture_quantile([1, 1], [0.0, 10.0], [0.0, 1.0], 0.25) == pytest.approx(0.0, abs=1e-12)
-        assert mixture_quantile([1, 1], [0.0, 10.0], [0.0, 1.0], 0.75) == pytest.approx(10.0, abs=1e-12)
+        assert mixture_quantile([1, 1], [0.0, 10.0], [0.0, 1.0], 0.25) == pytest.approx(
+            0.0, abs=1e-12
+        )
+        assert mixture_quantile([1, 1], [0.0, 10.0], [0.0, 1.0], 0.75) == pytest.approx(
+            10.0, abs=1e-12
+        )
         assert mixture_quantile([1.0], [2.5], [0.0], 0.3) == 2.5
 
     def test_quantiles_at_zero_and_one(self):
@@ -1409,7 +1517,8 @@ class TestMixtureQuantile:
         got = mixture_quantile(weights, means, variances, [0.1, 0.9])
         assert got.shape == (2, 3, 2)
         assert got[1, 2, 0] == pytest.approx(
-            mixture_quantile(weights[1, 2], means[1, 2], variances[1, 2], 0.1), abs=1e-13
+            mixture_quantile(weights[1, 2], means[1, 2], variances[1, 2], 0.1),
+            abs=1e-13,
         )
 
     def test_bad_inputs_raise(self):

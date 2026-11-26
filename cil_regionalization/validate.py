@@ -22,6 +22,7 @@ quantity it aggregated, and `check_source_coverage` +
 `enforce_source_policies` account for every source unit that could not
 flow through a run.
 """
+
 from __future__ import annotations
 
 import logging
@@ -110,9 +111,7 @@ def check_sum_to_one(
     if rows:
         failures = pd.concat(rows, ignore_index=True)
     else:
-        failures = pd.DataFrame(
-            columns=group_fields + ["weight", "sum", "deviation"]
-        )
+        failures = pd.DataFrame(columns=group_fields + ["weight", "sum", "deviation"])
     return SumToOneReport(
         weight_names=tuple(schema.weight_names),
         n_regions=region_count,
@@ -126,7 +125,9 @@ class GridInvariantsReport:
     """Result of `check_grid_invariants`. `failures` empty means OK."""
 
     n_rows: int
-    failures: pd.DataFrame  # cols: id_fields + cell_ix + cell_iy + cell_lon + cell_lat + _invariant
+    failures: (
+        pd.DataFrame
+    )  # cols: id_fields + cell_ix + cell_iy + cell_lon + cell_lat + _invariant
     n_ix: int
     n_iy: int
     lon_domain: tuple[float, float]
@@ -316,9 +317,7 @@ def check_polygon_invariants(
         }
         unknown = present - expected
         if unknown:
-            unknown_mask = weights_frame[source_keys].apply(
-                tuple, axis=1
-            ).isin(unknown)
+            unknown_mask = weights_frame[source_keys].apply(tuple, axis=1).isin(unknown)
             _flag(unknown_mask, "unknown_source_unit")
         missing = tuple(sorted(expected - present))
 
@@ -422,13 +421,11 @@ def check_mass_balance(
     for name, df in (("source", source), ("target", target)):
         if value_col not in df.columns:
             raise ValueError(
-                f"check_mass_balance: {name} frame missing value column "
-                f"{value_col!r}"
+                f"check_mass_balance: {name} frame missing value column {value_col!r}"
             )
         if group_col is not None and group_col not in df.columns:
             raise ValueError(
-                f"check_mass_balance: {name} frame missing group column "
-                f"{group_col!r}"
+                f"check_mass_balance: {name} frame missing group column {group_col!r}"
             )
 
     source_total = float(source[value_col].sum())
@@ -446,8 +443,7 @@ def check_mass_balance(
         merged = merged.rename(columns={group_col: "group"})
         merged["abs_error"] = (merged["source_sum"] - merged["target_sum"]).abs()
         merged["rel_error"] = [
-            _rel_error(a, b)
-            for a, b in zip(merged["source_sum"], merged["target_sum"])
+            _rel_error(a, b) for a, b in zip(merged["source_sum"], merged["target_sum"])
         ]
         failures = merged.loc[merged["rel_error"] > tolerance].reset_index(drop=True)
 
@@ -506,9 +502,7 @@ def check_source_coverage(
     source_keys = list(schema.source_units.key_columns)
     col = weight_column(weight_name)
     if col not in weights_frame.columns:
-        raise ValueError(
-            f"check_source_coverage: weights frame missing column {col!r}"
-        )
+        raise ValueError(f"check_source_coverage: weights frame missing column {col!r}")
 
     data_ids = {tuple(t) for t in data_source_ids}
     mass_per_unit = (
@@ -516,9 +510,7 @@ def check_source_coverage(
         .groupby(source_keys, sort=False)["_abs"]
         .sum(min_count=1)
     )
-    weight_ids = {
-        t if isinstance(t, tuple) else (t,) for t in mass_per_unit.index
-    }
+    weight_ids = {t if isinstance(t, tuple) else (t,) for t in mass_per_unit.index}
     zero_ids = {
         t if isinstance(t, tuple) else (t,)
         for t, total in mass_per_unit.items()
@@ -548,7 +540,12 @@ def enforce_source_policies(
     """
     cases: list[tuple[str, str, tuple[tuple, ...], str]] = [
         ("unmatched", policies.on_unmatched, coverage.unmatched, "on_unmatched"),
-        ("zero_weight", policies.on_zero_weight, coverage.zero_weight, "on_zero_weight"),
+        (
+            "zero_weight",
+            policies.on_zero_weight,
+            coverage.zero_weight,
+            "on_zero_weight",
+        ),
         (
             "absent_from_data",
             policies.on_absent_from_data,

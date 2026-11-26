@@ -26,6 +26,7 @@ Run on the cluster:
 
     python run_valued_agriculture.py --adm adm1 --rcp rcp85 --workers 16
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,16 +49,41 @@ SSPS = ["SSP2", "SSP3", "SSP4"]
 IAMS = ["high", "low"]
 WINDOWS = [(2020, 2039), (2040, 2059), (2080, 2098)]
 QUANTILES = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
-GCMS = ["ACCESS1-0", "BNU-ESM", "CCSM4", "CESM1-BGC", "CNRM-CM5",
-        "CSIRO-Mk3-6-0", "CanESM2", "GFDL-CM3", "GFDL-ESM2G", "GFDL-ESM2M",
-        "IPSL-CM5A-LR", "IPSL-CM5A-MR", "MIROC-ESM", "MIROC-ESM-CHEM",
-        "MIROC5", "MPI-ESM-LR", "MPI-ESM-MR", "MRI-CGCM3", "NorESM1-M",
-        "bcc-csm1-1", "inmcm4",
-        "surrogate_CanESM2_89", "surrogate_CanESM2_94", "surrogate_CanESM2_99",
-        "surrogate_GFDL-CM3_89", "surrogate_GFDL-CM3_94", "surrogate_GFDL-CM3_99",
-        "surrogate_GFDL-ESM2G_01", "surrogate_GFDL-ESM2G_06",
-        "surrogate_GFDL-ESM2G_11", "surrogate_MRI-CGCM3_01",
-        "surrogate_MRI-CGCM3_06", "surrogate_MRI-CGCM3_11"]
+GCMS = [
+    "ACCESS1-0",
+    "BNU-ESM",
+    "CCSM4",
+    "CESM1-BGC",
+    "CNRM-CM5",
+    "CSIRO-Mk3-6-0",
+    "CanESM2",
+    "GFDL-CM3",
+    "GFDL-ESM2G",
+    "GFDL-ESM2M",
+    "IPSL-CM5A-LR",
+    "IPSL-CM5A-MR",
+    "MIROC-ESM",
+    "MIROC-ESM-CHEM",
+    "MIROC5",
+    "MPI-ESM-LR",
+    "MPI-ESM-MR",
+    "MRI-CGCM3",
+    "NorESM1-M",
+    "bcc-csm1-1",
+    "inmcm4",
+    "surrogate_CanESM2_89",
+    "surrogate_CanESM2_94",
+    "surrogate_CanESM2_99",
+    "surrogate_GFDL-CM3_89",
+    "surrogate_GFDL-CM3_94",
+    "surrogate_GFDL-CM3_99",
+    "surrogate_GFDL-ESM2G_01",
+    "surrogate_GFDL-ESM2G_06",
+    "surrogate_GFDL-ESM2G_11",
+    "surrogate_MRI-CGCM3_01",
+    "surrogate_MRI-CGCM3_06",
+    "surrogate_MRI-CGCM3_11",
+]
 SKIP = {"rcp45": "surrogate_GFDL-ESM2G_06", "rcp85": "ACCESS1-0"}
 
 
@@ -73,12 +99,16 @@ def read_leaf(leafdir: Path) -> pd.DataFrame:
     """
     with xr.open_dataset(leafdir / "disaggregated_damages.nc4") as ds:
         wc = ds["wc_no_reallocation"].squeeze(drop=True)
-        frame = pd.DataFrame({
-            "hierid": [str(r) for r in wc["region"].values],
-        }).join(pd.DataFrame(
-            wc.transpose("region", "year").values,
-            columns=[int(y) for y in wc["year"].values],
-        ))
+        frame = pd.DataFrame(
+            {
+                "hierid": [str(r) for r in wc["region"].values],
+            }
+        ).join(
+            pd.DataFrame(
+                wc.transpose("region", "year").values,
+                columns=[int(y) for y in wc["year"].values],
+            )
+        )
     long = frame.melt(id_vars="hierid", var_name="year", value_name="value")
     long = long.dropna(subset=["value"]).reset_index(drop=True)
     long["value"] = long["value"].astype("float64")
@@ -95,18 +125,27 @@ def batch_frames(task) -> list[pd.DataFrame]:
             leafdir = TREE / batch / rcp / gcm / iam / ssp
             df = read_leaf(leafdir)
             applied = cilreg.apply_weights(
-                weights, df, kind="extensive", weight="pop",
-                value_col="value", data_version="world-combo-201710",
+                weights,
+                df,
+                kind="extensive",
+                weight="pop",
+                value_col="value",
+                data_version="world-combo-201710",
                 restrict_to_sources={(h,) for h in df["hierid"].unique()},
             ).frame
             applied["batch"] = batch
             applied["gcm"] = gcm
             applied["iam"] = iam
             applied["ssp"] = ssp
-            out.append(window_means(
-                applied, time_col="year", windows=WINDOWS, value_col="value",
-                summation="fast"
-            ))
+            out.append(
+                window_means(
+                    applied,
+                    time_col="year",
+                    windows=WINDOWS,
+                    value_col="value",
+                    summation="fast",
+                )
+            )
         print(batch, rcp, ssp, iam, flush=True)
     return out
 
@@ -114,12 +153,16 @@ def batch_frames(task) -> list[pd.DataFrame]:
 def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
     smme = pd.read_csv(SMME.format(rcp=rcp), sep="\t")[["model", "weight"]]
     smme["key"] = smme["model"].str.replace("*", "", regex=False).str.lower()
-    frame = reduced.assign(
-        key=reduced["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-    ).merge(
-        smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
-        on="key",
-    ).drop(columns="key")
+    frame = (
+        reduced.assign(
+            key=reduced["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
+        )
+        .merge(
+            smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
+            on="key",
+        )
+        .drop(columns="key")
+    )
     if len(frame) != len(reduced):
         raise ValueError("a climate model has no SMME weight row")
     return pooled_statistics(
@@ -133,8 +176,13 @@ def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
     )
 
 
-def write_product(stats: pd.DataFrame, reduced: pd.DataFrame | None,
-                  adm: str, rcp: str, extra: dict | None = None) -> None:
+def write_product(
+    stats: pd.DataFrame,
+    reduced: pd.DataFrame | None,
+    adm: str,
+    rcp: str,
+    extra: dict | None = None,
+) -> None:
     out = Path(OUT) / adm
     out.mkdir(parents=True, exist_ok=True)
     stem = f"agriculture_valued_{rcp}"
@@ -146,17 +194,17 @@ def write_product(stats: pd.DataFrame, reduced: pd.DataFrame | None,
         "ssps": SSPS,
         "units": "2019 USD, welfare change (consumer plus producer surplus)",
         "counterfactual": "already inside the valuation: climate-change "
-                          "yields against the same batch's histclim yields; "
-                          "the delta-only object the agriculture paper "
-                          "published, with no histclim-variability "
-                          "correction",
+        "yields against the same batch's histclim yields; "
+        "the delta-only object the agriculture paper "
+        "published, with no histclim-variability "
+        "correction",
         "crops": ["rice", "sorghum", "cassava", "soy", "maize", "wheat"],
         "dropped_regions": ["ATA", "BVT", "CA-", "HMD", "SGS"],
         "dropped_note": "NaN in every year in the source; Guatemala is NaN "
-                        "in 2017 only, outside every window",
+        "in 2017 only, outside every window",
         "windows": [f"{a}-{b}" for a, b in WINDOWS],
         "window_note": "last window ends at 2098; NEX-GDDP lacks "
-                       "precipitation for some models after that",
+        "precipitation for some models after that",
         "quantiles": QUANTILES,
         "model_weights": SMME.format(rcp=rcp),
     }
@@ -185,16 +233,27 @@ def main() -> int:
     reduced = pd.concat(frames, ignore_index=True)
 
     stats = weighted_stats(reduced, args.rcp)
-    write_product(stats, reduced if args.adm == "adm1" else None,
-                  args.adm, args.rcp, {"n_members": len(frames)})
+    write_product(
+        stats,
+        reduced if args.adm == "adm1" else None,
+        args.adm,
+        args.rcp,
+        {"n_members": len(frames)},
+    )
 
     if args.adm == "adm1":
         keys = ["ISO", "window", "batch", "gcm", "iam", "ssp"]
         adm0 = reduced.groupby(keys, sort=False)["value"].sum().reset_index()
         adm0_stats = weighted_stats(adm0, args.rcp)
-        write_product(adm0_stats, None, "adm0", args.rcp, {
-            "method": "ISO sum of the adm1 reduced frame before pooling",
-        })
+        write_product(
+            adm0_stats,
+            None,
+            "adm0",
+            args.rcp,
+            {
+                "method": "ISO sum of the adm1 reduced frame before pooling",
+            },
+        )
     return 0
 
 

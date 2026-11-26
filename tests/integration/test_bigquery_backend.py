@@ -10,10 +10,11 @@ Two groups:
 - Real-backend tests, marked ``bigquery`` and skipped by default
   (``pytest -m bigquery``): tiny end-to-end on cilresearch.
 """
+
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -202,9 +203,7 @@ class TestGeometryFetch:
         )
         client.query.return_value = fake_job
         backend = self._backend()
-        backend._fetch_geometries(
-            client, regions, ["ABW", "BHS"], "us-west1", cfg
-        )
+        backend._fetch_geometries(client, regions, ["ABW", "BHS"], "us-west1", cfg)
         sql = client.query.call_args[0][0]
         assert _IR_TABLE in sql
         assert _POP_TABLE not in sql
@@ -221,9 +220,7 @@ class TestGeometryFetch:
         client.query.return_value.to_dataframe.return_value = pd.DataFrame(
             {"hierid": ["ABW"], "geometry": ["POLYGON((0 0,1 0,1 1,0 1,0 0))"]}
         )
-        self._backend()._fetch_geometries(
-            client, regions, ["ABW"], "us-west1", cfg
-        )
+        self._backend()._fetch_geometries(client, regions, ["ABW"], "us-west1", cfg)
         assert client.query.call_args.kwargs["location"] == "us-west1"
 
     def test_hierids_passed_as_array_parameter(self):
@@ -261,7 +258,10 @@ class TestGeometryContentHash:
         df = pd.DataFrame(
             {
                 "hierid": ["ABW", "AND"],
-                "geometry": ["POLYGON((0 0,1 0,1 1,0 1,0 0))", "POLYGON((2 2,3 2,3 3,2 3,2 2))"],
+                "geometry": [
+                    "POLYGON((0 0,1 0,1 1,0 1,0 0))",
+                    "POLYGON((2 2,3 2,3 3,2 3,2 2))",
+                ],
             }
         )
         backend = BigQueryBackend()
@@ -275,15 +275,17 @@ class TestGeometryContentHash:
         df1 = pd.DataFrame(
             {
                 "hierid": ["A", "B"],
-                "geometry": ["POLYGON((0 0,1 0,1 1,0 1,0 0))", "POLYGON((2 2,3 2,3 3,2 3,2 2))"],
+                "geometry": [
+                    "POLYGON((0 0,1 0,1 1,0 1,0 0))",
+                    "POLYGON((2 2,3 2,3 3,2 3,2 2))",
+                ],
             }
         )
         df2 = df1.iloc[::-1].reset_index(drop=True)
         backend = BigQueryBackend()
-        assert (
-            backend._geometry_content_hash(df1, "hierid")
-            == backend._geometry_content_hash(df2, "hierid")
-        )
+        assert backend._geometry_content_hash(
+            df1, "hierid"
+        ) == backend._geometry_content_hash(df2, "hierid")
 
     def test_changes_with_content(self):
         from cil_regionalization.backends.bigquery import BigQueryBackend
@@ -295,10 +297,9 @@ class TestGeometryContentHash:
             {"hierid": ["A"], "geometry": ["POLYGON((0 0,2 0,2 2,0 2,0 0))"]}
         )
         backend = BigQueryBackend()
-        assert (
-            backend._geometry_content_hash(df1, "hierid")
-            != backend._geometry_content_hash(df2, "hierid")
-        )
+        assert backend._geometry_content_hash(
+            df1, "hierid"
+        ) != backend._geometry_content_hash(df2, "hierid")
 
 
 class TestMainSql:
@@ -313,9 +314,7 @@ class TestMainSql:
         regions = RegionSet.from_config(cfg.regions)
         grid = GridSpec.from_config(cfg.grid)
         weights = from_config_list(cfg.weights)
-        temp_table = (
-            "compute-impactlab.temp_workspace.cilreg_geom_deadbeefdeadbeef"
-        )
+        temp_table = "compute-impactlab.temp_workspace.cilreg_geom_deadbeefdeadbeef"
         sql = backend._build_main_sql(temp_table, regions, grid, weights, cfg)
         return sql, temp_table
 
@@ -468,10 +467,7 @@ class TestToDataframeHelper:
         cfg = _bq_cfg()
         job = MagicMock()
         backend._to_dataframe(job, cfg)
-        assert (
-            job.to_dataframe.call_args.kwargs["create_bqstorage_client"]
-            is False
-        )
+        assert job.to_dataframe.call_args.kwargs["create_bqstorage_client"] is False
 
     def test_override_true_forwards(self):
         from cil_regionalization.backends.bigquery import BigQueryBackend
@@ -485,10 +481,7 @@ class TestToDataframeHelper:
         cfg = Config.model_validate(d)
         job = MagicMock()
         backend._to_dataframe(job, cfg)
-        assert (
-            job.to_dataframe.call_args.kwargs["create_bqstorage_client"]
-            is True
-        )
+        assert job.to_dataframe.call_args.kwargs["create_bqstorage_client"] is True
 
 
 class TestDryRunGate:
@@ -549,10 +542,9 @@ class TestTempTableLifecycle:
         def _query(sql, job_config=None, location=None):
             job = MagicMock()
             if "is_unknown" in sql or "WITH requested" in sql:
-                rows = (
-                    [(h, True, False) for h in unknown_hierids]
-                    + [(h, False, True) for h in null_hierids]
-                )
+                rows = [(h, True, False) for h in unknown_hierids] + [
+                    (h, False, True) for h in null_hierids
+                ]
                 job.to_dataframe.return_value = pd.DataFrame(
                     rows, columns=["hierid", "is_unknown", "is_null"]
                 )
@@ -855,9 +847,7 @@ class TestShapefileSourcePath:
         cfg = self._cfg(self._gdf_parquet(tmp_path))
         regions = RegionSet.from_config(cfg.regions)
         client = MagicMock()  # no .query call expected
-        df = BigQueryBackend()._fetch_geometries(
-            client, regions, None, "us-west1", cfg
-        )
+        df = BigQueryBackend()._fetch_geometries(client, regions, None, "us-west1", cfg)
         client.query.assert_not_called()
         assert set(df.columns) == {"hierid", "geometry"}
         assert set(df["hierid"]) == {"ABW", "CAN.5"}
@@ -919,7 +909,10 @@ class TestShapefileSourcePath:
         regions = RegionSet.from_config(cfg.regions)
         client = _client_with_locations()
         ir_loc, compute_loc = BigQueryBackend()._resolve_locations(
-            client, regions, [w for w in from_config_list(cfg.weights) if not w.is_area], cfg
+            client,
+            regions,
+            [w for w in from_config_list(cfg.weights) if not w.is_area],
+            cfg,
         )
         assert ir_loc is None
         assert compute_loc == "US"
@@ -1008,7 +1001,6 @@ class TestLoadRetry:
 
     def test_does_not_retry_on_schema_error(self, monkeypatch):
         """Non-transient failures fail fast; retrying won't help."""
-        from cil_regionalization.backends.bigquery import BigQueryBackend
         from google.api_core.exceptions import BadRequest
 
         backend = self._backend_with_no_real_sleep(monkeypatch)
@@ -1029,9 +1021,7 @@ class TestLoadRetry:
         # Only one attempt for non-retryable failures.
         assert client.load_table_from_uri.call_count == 1
 
-    def test_upload_logs_staging_size_and_max_wkt(
-        self, monkeypatch, caplog
-    ):
+    def test_upload_logs_staging_size_and_max_wkt(self, monkeypatch, caplog):
         """Pre-load logs name the staging size, row count, and max
         per-row WKT length so support escalations have a concrete
         payload reference."""
@@ -1084,9 +1074,7 @@ class TestUnknownIdHandling:
         from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
-        client = TestTempTableLifecycle()._full_client(
-            unknown_hierids=["AND", "BMU"]
-        )
+        client = TestTempTableLifecycle()._full_client(unknown_hierids=["AND", "BMU"])
         backend = self._backend()
         backend._bq.Client = MagicMock(return_value=client)
         cfg = _bq_cfg()
@@ -1107,9 +1095,7 @@ class TestUnknownIdHandling:
         from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
-        client = TestTempTableLifecycle()._full_client(
-            unknown_hierids=["AND"]
-        )
+        client = TestTempTableLifecycle()._full_client(unknown_hierids=["AND"])
         backend = self._backend()
         backend._bq.Client = MagicMock(return_value=client)
         d = _bq_cfg().model_dump()
@@ -1187,9 +1173,7 @@ class TestNullGeometryHandling:
         from cil_regionalization.weights import from_config_list
 
         TestTempTableLifecycle()._mock_gcsfs(monkeypatch)
-        client = TestTempTableLifecycle()._full_client(
-            null_hierids=["CAN.5"]
-        )
+        client = TestTempTableLifecycle()._full_client(null_hierids=["CAN.5"])
         backend = self._backend()
         backend._bq.Client = MagicMock(return_value=client)
         d = _bq_cfg().model_dump()
@@ -1203,8 +1187,6 @@ class TestNullGeometryHandling:
         assert result.manifest.extra["null_geometry_regions"] == ["CAN.5"]
 
     def test_fetch_sql_filters_null_geometry(self):
-        from cil_regionalization.grid import GridSpec
-        from cil_regionalization.weights import from_config_list
 
         cfg = _bq_cfg()
         regions = self._specs(cfg)
@@ -1212,9 +1194,7 @@ class TestNullGeometryHandling:
         client.query.return_value.to_dataframe.return_value = pd.DataFrame(
             {"hierid": ["ABW"], "geometry": ["POLYGON((0 0,1 0,1 1,0 1,0 0))"]}
         )
-        self._backend()._fetch_geometries(
-            client, regions, ["ABW"], "us-west1", cfg
-        )
+        self._backend()._fetch_geometries(client, regions, ["ABW"], "us-west1", cfg)
         sql = client.query.call_args[0][0]
         assert "geometry IS NOT NULL" in sql
 
@@ -1227,9 +1207,7 @@ class TestNullGeometryHandling:
         gcsfs_mock = MagicMock()
         fs = MagicMock()
         gcsfs_mock.GCSFileSystem.return_value = fs
-        monkeypatch.setitem(
-            __import__("sys").modules, "gcsfs", gcsfs_mock
-        )
+        monkeypatch.setitem(__import__("sys").modules, "gcsfs", gcsfs_mock)
 
         backend = BigQueryBackend()
         cfg = _bq_cfg()
@@ -1246,9 +1224,7 @@ class TestNullGeometryHandling:
             }
         )
         with pytest.raises(ValueError, match="NULL geometry after the fetch"):
-            backend._upload_temp_table(
-                client, geom_df, "tbl_id", "hierid", cfg, "US"
-            )
+            backend._upload_temp_table(client, geom_df, "tbl_id", "hierid", cfg, "US")
 
 
 class TestAssembleResult:
@@ -1298,8 +1274,14 @@ class TestAssembleResult:
             }
         )
         result = backend._assemble_result(
-            downloaded, ["hierid"], weights, non_area, cfg, regions,
-            geom_df, grid,
+            downloaded,
+            ["hierid"],
+            weights,
+            non_area,
+            cfg,
+            regions,
+            geom_df,
+            grid,
         )
         assert result.sum_report.ok
         y_rows = result.frame.loc[result.frame["hierid"] == "Y"]
@@ -1399,7 +1381,9 @@ class TestRealBackend:
         # We can't easily isolate the dry-run path without running the upload,
         # so go end-to-end and assert the manifest captured a sub-ceiling cost.
         result = backend.compute(
-            __import__("cil_regionalization").regions.RegionSet.from_config(cfg.regions),
+            __import__("cil_regionalization").regions.RegionSet.from_config(
+                cfg.regions
+            ),
             __import__("cil_regionalization").grid.GridSpec.from_config(cfg.grid),
             __import__("cil_regionalization").weights.from_config_list(cfg.weights),
             cfg,
@@ -1487,10 +1471,7 @@ class TestRealBackend:
         # match the per-weight method tallies.
         if nc > 0:
             for w in ("pop", "area"):
-                assert (
-                    result.manifest.fallback_counts[w].get("nearest_cell", 0)
-                    == nc
-                )
+                assert result.manifest.fallback_counts[w].get("nearest_cell", 0) == nc
 
     def test_null_geometry_error_default(self, bq_client, tmp_path):
         """A known NULL hierid in the keep list aborts under the default
@@ -1630,9 +1611,7 @@ class TestRealBackend:
         n_unknown = result.manifest.extra["unknown_id_count"]
         assert n_returned + n_null + n_unknown == len(d["regions"]["keep"]["hierid"])
 
-    def test_can5_spherical_invalid_supplement_end_to_end(
-        self, bq_client, tmp_path
-    ):
+    def test_can5_spherical_invalid_supplement_end_to_end(self, bq_client, tmp_path):
         """CAN.5 (Newfoundland; ~20 MB WKT) is the proven spherical-
         invalid case from the 2022 SAFE.ST_GEOGFROMTEXT swallow event.
         With GEOGRAPHY-schema staging it produced BQ 500; with planar-

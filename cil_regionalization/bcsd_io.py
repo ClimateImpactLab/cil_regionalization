@@ -32,13 +32,14 @@ days entering each count. Counting after averaging would give a
 different and wrong answer, so nothing here accepts aggregated input:
 the arrays are (time, lat, lon).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
 
-HOT_K = 308.15   # 35 C = 95 F, applied to daily tasmax
+HOT_K = 308.15  # 35 C = 95 F, applied to daily tasmax
 COLD_K = 273.15  # 0 C = 32 F, applied to daily tasmin
 # the grid read_bcsd_daily returns, as GridSpec.source_version writes it
 BCSD_GRID = "grid-0.25deg-center-[-180,180)"
@@ -55,8 +56,7 @@ def _import_netcdf4():
         import netCDF4
     except ImportError as e:
         raise ImportError(
-            "reading BCSD daily files requires netCDF4; install the "
-            "[netcdf] extra"
+            "reading BCSD daily files requires netCDF4; install the [netcdf] extra"
         ) from e
     return netCDF4
 
@@ -105,29 +105,39 @@ class DailyGrid:
                     f"field {name!r} has shape {np.shape(arr)}; expected "
                     f"(lat, lon) = {shape}"
                 )
-        lon = np.mod(np.asarray(self.lon, dtype="float64") - spec.lon_origin,
-                     360.0) + spec.lon_origin
+        lon = (
+            np.mod(np.asarray(self.lon, dtype="float64") - spec.lon_origin, 360.0)
+            + spec.lon_origin
+        )
         lat = np.asarray(self.lat, dtype="float64")
         ix, _ = spec.index_of(lon, np.zeros_like(lon))
         _, iy = spec.index_of(np.full_like(lat, spec.lon_origin), lat)
         c_lon, _ = spec.centroid(ix, np.zeros_like(ix))
         _, c_lat = spec.centroid(np.zeros_like(iy), iy)
         tol = 1e-6 * spec.resolution
-        for axis, given, centre, idx, n in (("lon", lon, c_lon, ix, spec.n_ix),
-                                             ("lat", lat, c_lat, iy, spec.n_iy)):
+        for axis, given, centre, idx, n in (
+            ("lon", lon, c_lon, ix, spec.n_ix),
+            ("lat", lat, c_lat, iy, spec.n_iy),
+        ):
             with np.errstate(invalid="ignore"):
-                bad = (~np.isfinite(given) | (idx < 0) | (idx >= n)
-                       | (np.abs(given - centre) > tol))
+                bad = (
+                    ~np.isfinite(given)
+                    | (idx < 0)
+                    | (idx >= n)
+                    | (np.abs(given - centre) > tol)
+                )
             if bad.any():
                 raise ValueError(
                     f"{int(bad.sum())} {axis} values are not cell centres on "
                     f"{grid}; first: {given[bad][:5].tolist()}"
                 )
-        frame = pd.DataFrame({
-            "cell_ix": np.tile(ix, len(iy)),
-            "cell_iy": np.repeat(iy, len(ix)),
-            **{name: np.asarray(arr).reshape(-1) for name, arr in fields.items()},
-        })
+        frame = pd.DataFrame(
+            {
+                "cell_ix": np.tile(ix, len(iy)),
+                "cell_iy": np.repeat(iy, len(ix)),
+                **{name: np.asarray(arr).reshape(-1) for name, arr in fields.items()},
+            }
+        )
         if fields:
             frame = frame[np.isfinite(frame[list(fields)]).all(axis=1)]
         return frame.reset_index(drop=True)
@@ -161,7 +171,9 @@ def _decode_dates(ds, time_dim: str, path: str):
         )
     netCDF4 = _import_netcdf4()
     dates = netCDF4.num2date(
-        np.asarray(tvar[:]), units=units, calendar=calendar,
+        np.asarray(tvar[:]),
+        units=units,
+        calendar=calendar,
         only_use_cftime_datetimes=True,
     )
     return calendar, np.atleast_1d(np.asarray(dates, dtype=object))
@@ -222,8 +234,9 @@ def read_bcsd_daily(
                 f"{path}: time coordinate has {len(cf_dates)} steps but "
                 f"{variable!r} has {values.shape[time_axis]}"
             )
-        keep = np.array([not (d.month == 2 and d.day == 29)
-                         for d in cf_dates], dtype=bool)
+        keep = np.array(
+            [not (d.month == 2 and d.day == 29) for d in cf_dates], dtype=bool
+        )
         if not keep.all():
             values = np.compress(keep, values, axis=time_axis)
             cf_dates = cf_dates[keep]
@@ -257,7 +270,8 @@ def read_bcsd_daily(
     out_lon = rolled[order]
     probe_new = int(np.searchsorted(out_lon, rolled[probe_raw]))
     if not np.array_equal(
-        values[0, :, probe_raw], out_values[0, :, probe_new],
+        values[0, :, probe_raw],
+        out_values[0, :, probe_new],
         equal_nan=True,
     ):
         raise AssertionError(
@@ -332,13 +346,10 @@ def derive_daily(
     tasmax, tasmin = hi, lo
     tas = (tasmax.astype("float64") + tasmin.astype("float64")) / 2.0
 
-    jja = np.concatenate(
-        [tas[_month_slice(m)] for m in (6, 7, 8)], axis=0)
-    janfeb = np.concatenate(
-        [tas[_month_slice(m)] for m in (1, 2)], axis=0)
+    jja = np.concatenate([tas[_month_slice(m)] for m in (6, 7, 8)], axis=0)
+    janfeb = np.concatenate([tas[_month_slice(m)] for m in (1, 2)], axis=0)
     if december_prev is not None:
-        djf = np.concatenate([december_prev.astype("float64"), janfeb],
-                             axis=0)
+        djf = np.concatenate([december_prev.astype("float64"), janfeb], axis=0)
     else:
         djf = janfeb
 
@@ -358,5 +369,4 @@ def derive_daily(
 def december(tasmax: np.ndarray, tasmin: np.ndarray) -> np.ndarray:
     """December's daily (tasmax + tasmin) / 2, for the next year's DJF."""
     sl = _month_slice(12)
-    return ((tasmax[sl].astype("float64")
-             + tasmin[sl].astype("float64")) / 2.0)
+    return (tasmax[sl].astype("float64") + tasmin[sl].astype("float64")) / 2.0

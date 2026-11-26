@@ -77,6 +77,7 @@ Outputs are GeoParquet plus targets.manifest.json under the gitignored
 data directory. The source read is the expensive step (2.7 GB); run
 where the file is on local storage.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -127,9 +128,7 @@ def _parent_gid1(gid2: str) -> str:
 
 
 def _repair_gbr_gid1(gdf):
-    mask = (
-        (gdf["GID_0"] == "GBR") & (gdf["GID_1"] == "") & (gdf["GID_2"] != "")
-    )
+    mask = (gdf["GID_0"] == "GBR") & (gdf["GID_1"] == "") & (gdf["GID_2"] != "")
     n = int(mask.sum())
     if n != _EXPECTED_REPAIR_ROWS:
         raise ValueError(
@@ -137,9 +136,7 @@ def _repair_gbr_gid1(gdf):
             f"GID_1 and nonempty GID_2, found {n}; the source has changed "
             f"and the recorded repair no longer describes it"
         )
-    vocabulary = set(
-        gdf.loc[(gdf["GID_0"] == "GBR") & (gdf["GID_1"] != ""), "GID_1"]
-    )
+    vocabulary = set(gdf.loc[(gdf["GID_0"] == "GBR") & (gdf["GID_1"] != ""), "GID_1"])
     derived = gdf.loc[mask, "GID_2"].map(_parent_gid1)
     unknown = sorted(set(derived) - vocabulary)
     if unknown:

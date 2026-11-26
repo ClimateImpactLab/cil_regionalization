@@ -1,11 +1,11 @@
 """Cross-backend characterization: local vs BQ canonical weights frames."""
+
 from __future__ import annotations
 
 import pandas as pd
 import pytest
 
 from cil_regionalization.cross_backend_compare import (
-    CrossBackendReport,
     compare_outputs,
     load_canonical_parquet,
 )
@@ -118,17 +118,13 @@ class TestSummary:
 
 class TestMissingColumns:
     def test_missing_weight_column_named(self):
-        bad = pd.DataFrame(
-            [("A", 0, 0)], columns=["hierid", "cell_ix", "cell_iy"]
-        )
+        bad = pd.DataFrame([("A", 0, 0)], columns=["hierid", "cell_ix", "cell_iy"])
         good = _frame([("A", 0, 0, 1.0)])
         with pytest.raises(ValueError, match="popwt"):
             compare_outputs(bad, good, weight="popwt", tolerance=1e-3)
 
     def test_missing_join_key_named(self):
-        bad = pd.DataFrame(
-            [("A", 0, 1.0)], columns=["hierid", "cell_iy", "popwt"]
-        )
+        bad = pd.DataFrame([("A", 0, 1.0)], columns=["hierid", "cell_iy", "popwt"])
         good = _frame([("A", 0, 0, 1.0)])
         with pytest.raises(ValueError, match="cell_ix"):
             compare_outputs(bad, good, weight="popwt", tolerance=1e-3)

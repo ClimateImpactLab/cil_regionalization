@@ -34,6 +34,7 @@ The direction is part of the schema and is recorded in the manifest.
 Consumers must call `require_normalization` before applying a weights
 frame so that a file cannot be used for the wrong operation silently.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

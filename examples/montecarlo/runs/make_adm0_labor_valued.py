@@ -11,6 +11,7 @@ Run after the adm1 pipeline run for the same rcp:
 
     python make_adm0_labor_valued.py --rcp rcp85
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,12 +39,16 @@ def main() -> int:
 
     smme = pd.read_csv(SMME.format(rcp=args.rcp), sep="\t")[["model", "weight"]]
     smme["key"] = smme["model"].str.replace("*", "", regex=False).str.lower()
-    adm0 = adm0.assign(
-        key=adm0["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-    ).merge(
-        smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
-        on="key",
-    ).drop(columns="key")
+    adm0 = (
+        adm0.assign(
+            key=adm0["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
+        )
+        .merge(
+            smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
+            on="key",
+        )
+        .drop(columns="key")
+    )
 
     stats = pooled_statistics(
         adm0,
@@ -58,12 +63,18 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     stem = f"labor_valued_{args.rcp}"
     stats.to_parquet(out / f"{stem}.parquet", index=False)
-    (out / f"{stem}.manifest.json").write_text(json.dumps(
-        {"derived_from": str(reduced_path),
-         "method": "ISO sum of the adm1 reduced frame before pooling",
-         "units": "2005 PPP USD, fulladapt minus histclim",
-         "quantiles": QUANTILES,
-         "model_weights": SMME.format(rcp=args.rcp)}, indent=2))
+    (out / f"{stem}.manifest.json").write_text(
+        json.dumps(
+            {
+                "derived_from": str(reduced_path),
+                "method": "ISO sum of the adm1 reduced frame before pooling",
+                "units": "2005 PPP USD, fulladapt minus histclim",
+                "quantiles": QUANTILES,
+                "model_weights": SMME.format(rcp=args.rcp),
+            },
+            indent=2,
+        )
+    )
     print(f"wrote {out}/{stem}.parquet rows={len(stats)}")
     return 0
 

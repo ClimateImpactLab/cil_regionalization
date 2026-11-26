@@ -19,12 +19,12 @@ hard invariants:
 Used by `examples/s51/merge.py`; the function below is the unit-testable
 core.
 """
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
@@ -73,7 +73,6 @@ def merge_weights(
         )
     combined_ids = canonical_ids | supplement_ids
     if len(combined_ids) != expected_total:
-        diff = combined_ids ^ set(combined_ids)  # always empty; sanity
         raise ValueError(
             f"merge: combined unique hierids = {len(combined_ids)}, "
             f"expected {expected_total}. canonical={len(canonical_ids)}, "
@@ -89,13 +88,9 @@ def merge_weights(
     for piece, name in ((canon, "canonical"), (supp, "supplement")):
         missing = [c for c in schema.columns if c not in piece.columns]
         if missing:
-            raise ValueError(
-                f"merge: {name} frame missing columns {missing}"
-            )
+            raise ValueError(f"merge: {name} frame missing columns {missing}")
 
-    combined = pd.concat(
-        [canon[expected_cols], supp[expected_cols]], ignore_index=True
-    )
+    combined = pd.concat([canon[expected_cols], supp[expected_cols]], ignore_index=True)
     combined = combined.sort_values(id_fields + ["cell_ix", "cell_iy"]).reset_index(
         drop=True
     )

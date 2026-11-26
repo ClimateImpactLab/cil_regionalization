@@ -27,6 +27,7 @@ split by the caller into two bboxes; querying with such a bbox returns the
 cells inside the global domain only, with no implicit wrap-around. This
 keeps every (ix, iy) globally unique and makes the BigQuery side trivial.
 """
+
 from __future__ import annotations
 
 import re
@@ -139,12 +140,14 @@ class GridSpec:
                 f"{source!r} is not a grid identity of the form "
                 f"'grid-<resolution>deg-<center|edge>-<[-180,180)|[0,360)>'"
             )
-        spec = cls.from_config(GridConfig(
-            mode="generate",
-            resolution=float(m["res"]),
-            offset=m["offset"],
-            lon_convention=m["conv"],
-        ))
+        spec = cls.from_config(
+            GridConfig(
+                mode="generate",
+                resolution=float(m["res"]),
+                offset=m["offset"],
+                lon_convention=m["conv"],
+            )
+        )
         if spec.source_version != source:
             raise ValueError(
                 f"{source!r} names the grid that writes its identity as "
@@ -398,11 +401,9 @@ def infer_grid_version(lat, lon) -> str:
     ambiguous = lo >= 0 and hi <= 180
     conv = "[0,360)" if hi > 180 else "[-180,180)"
 
-    tol = max(coordinate_tolerance(lat, res),
-              coordinate_tolerance(lon, res)) / res
+    tol = max(coordinate_tolerance(lat, res), coordinate_tolerance(lon, res)) / res
     offsets = set()
-    for name, c, origin in (("lat", lat, _LAT_ORIGIN),
-                            ("lon", lon, _lon_origin(conv))):
+    for name, c, origin in (("lat", lat, _LAT_ORIGIN), ("lon", lon, _lon_origin(conv))):
         phase = ((c.astype("float64") - origin) / res) % 1.0
         if np.all(np.abs(phase - 0.5) <= tol):
             offsets.add("center")
@@ -423,10 +424,14 @@ def infer_grid_version(lat, lon) -> str:
     if ambiguous:
         # both origins are a whole number of steps apart, so centre or
         # edge reads the same under either
-        raise AmbiguousLongitudeConvention(lo, hi, [
-            f"grid-{res}deg-{offset}-[-180,180)",
-            f"grid-{res}deg-{offset}-[0,360)",
-        ])
+        raise AmbiguousLongitudeConvention(
+            lo,
+            hi,
+            [
+                f"grid-{res}deg-{offset}-[-180,180)",
+                f"grid-{res}deg-{offset}-[0,360)",
+            ],
+        )
     return f"grid-{res}deg-{offset}-{conv}"
 
 
@@ -456,8 +461,12 @@ def cell_indices(spec: GridSpec, values, axis: str, *, tol: float | None = None)
     if tol is None:
         tol = 1e-6 * spec.resolution
     with np.errstate(invalid="ignore"):
-        bad = (~np.isfinite(given) | (idx < 0) | (idx >= n)
-               | (np.abs(given - centre) > tol))
+        bad = (
+            ~np.isfinite(given)
+            | (idx < 0)
+            | (idx >= n)
+            | (np.abs(given - centre) > tol)
+        )
     if bad.any():
         raise ValueError(
             f"{int(bad.sum())} {axis} values are not cell centres on "

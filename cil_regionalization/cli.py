@@ -27,6 +27,7 @@ Subcommands:
     cilreg cache list | clear [--name NAME]
         Show or remove cached fetched artifacts.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -174,9 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     cl.add_argument("--cache-dir", type=str, default=None)
     cc = csub.add_parser("clear", help="remove cached artifacts")
     cc.add_argument("--cache-dir", type=str, default=None)
-    cc.add_argument(
-        "--name", type=str, default=None, help="remove only this artifact"
-    )
+    cc.add_argument("--name", type=str, default=None, help="remove only this artifact")
 
     args = parser.parse_args(argv)
     if args.cmd == "validate":
@@ -224,8 +223,9 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
             print(f"{name}  record={entry.record}")
         return 0
     if args.name is None:
-        print("fetch: a name is required (or --list to see what exists)",
-              file=sys.stderr)
+        print(
+            "fetch: a name is required (or --list to see what exists)", file=sys.stderr
+        )
         return 2
 
     try:
@@ -243,9 +243,7 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
     from cil_regionalization.fetch import default_cache_dir, list_cached
 
     cache_dir = args.cache_dir or default_cache_dir()
-    entry = next(
-        (i for i in list_cached(cache_dir) if i["name"] == args.name), None
-    )
+    entry = next((i for i in list_cached(cache_dir) if i["name"] == args.name), None)
     print(
         f"fetch: {args.name}  rows={len(artifact.frame)}  "
         f"normalization={artifact.normalization}  "
@@ -328,9 +326,7 @@ def _cmd_run(
                 file=sys.stderr,
             )
     elif test_mode and regions.is_local and regions.gdf is not None:
-        regions.gdf = regions.gdf.head(_TEST_MODE_REGION_CAP).reset_index(
-            drop=True
-        )
+        regions.gdf = regions.gdf.head(_TEST_MODE_REGION_CAP).reset_index(drop=True)
         print(
             f"run: test-mode active; capped regions to {_TEST_MODE_REGION_CAP}",
             file=sys.stderr,
@@ -375,9 +371,7 @@ def _cmd_regions_find(config_path: str, *, pattern: str, limit: int) -> int:
     return _regions_find_local(cfg, primary, pattern, limit)
 
 
-def _regions_find_bq(
-    cfg: Config, primary: str, pattern: str, limit: int
-) -> int:
+def _regions_find_bq(cfg: Config, primary: str, pattern: str, limit: int) -> int:
     from google.cloud import bigquery
 
     client = bigquery.Client(project=cfg.backend.bigquery.project)
@@ -408,9 +402,7 @@ def _regions_find_bq(
     return 0
 
 
-def _regions_find_local(
-    cfg: Config, primary: str, pattern: str, limit: int
-) -> int:
+def _regions_find_local(cfg: Config, primary: str, pattern: str, limit: int) -> int:
     from cil_regionalization.regions import RegionSet
     import re
 

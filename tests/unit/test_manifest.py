@@ -1,14 +1,13 @@
 """Manifest building and writing: stable hashing, version capture, JSON sidecar."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import pytest
 
 from cil_regionalization.config import Config
 from cil_regionalization.manifest import (
-    Manifest,
     build_manifest,
     collect_package_versions,
     hash_config,
@@ -59,7 +58,9 @@ class TestHashing:
 
 class TestVersions:
     def test_known_packages_have_versions(self):
-        versions = collect_package_versions(("cil_regionalization", "pandas", "shapely"))
+        versions = collect_package_versions(
+            ("cil_regionalization", "pandas", "shapely")
+        )
         assert versions["cil_regionalization"] != "unavailable"
         assert versions["pandas"] != "unavailable"
         assert versions["shapely"] != "unavailable"

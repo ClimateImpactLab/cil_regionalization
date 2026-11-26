@@ -5,6 +5,7 @@ re-checking the config rules. The area weight is special-cased: it has no
 external input and is always available, so several places need to short-
 circuit on `is_area`.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

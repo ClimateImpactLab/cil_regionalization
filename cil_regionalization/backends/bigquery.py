@@ -62,6 +62,7 @@ a geo-clustered source. The 10 GB ceiling is sized to admit one full
 GPW scan (~5.84 GB measured 2026-06-10); a tiny-hierid run will still
 report ~6 GB estimated. That is expected, not a bug.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -72,22 +73,9 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import pandas as pd
 
-
-logger = logging.getLogger(__name__)
-
-
-# Maximum number of attempts for transient-load-failure retries. Google's
-# BigQuery 500 internalError text prescribes retry with backoff; this
-# also covers ServiceUnavailable and DeadlineExceeded.
-_LOAD_MAX_ATTEMPTS = 3
-# Base delay in seconds; total wait is approximately base * (2 ** attempt)
-# + jitter. With base 5 and 3 attempts: ~5s, ~10s, then raise.
-_LOAD_BACKOFF_BASE_SECONDS = 5.0
-_LOAD_BACKOFF_JITTER_SECONDS = 5.0
 
 from cil_regionalization.backends.base import WeightsBackend, WeightsResult
 from cil_regionalization.config import Config
@@ -103,6 +91,18 @@ from cil_regionalization.regions import RegionSet
 from cil_regionalization.schema import OutputSchema
 from cil_regionalization.validate import check_grid_invariants, check_sum_to_one
 from cil_regionalization.weights import WeightSpec
+
+logger = logging.getLogger(__name__)
+
+
+# Maximum number of attempts for transient-load-failure retries. Google's
+# BigQuery 500 internalError text prescribes retry with backoff; this
+# also covers ServiceUnavailable and DeadlineExceeded.
+_LOAD_MAX_ATTEMPTS = 3
+# Base delay in seconds; total wait is approximately base * (2 ** attempt)
+# + jitter. With base 5 and 3 attempts: ~5s, ~10s, then raise.
+_LOAD_BACKOFF_BASE_SECONDS = 5.0
+_LOAD_BACKOFF_JITTER_SECONDS = 5.0
 
 
 _LAT_ORIGIN = -90.0
@@ -155,9 +155,7 @@ class BigQueryBackend(WeightsBackend):
             if excluded:
                 hierids = [h for h in hierids if h not in excluded]
         fetch_t = time.perf_counter()
-        geom_df = self._fetch_geometries(
-            client, regions, hierids, ir_location, cfg
-        )
+        geom_df = self._fetch_geometries(client, regions, hierids, ir_location, cfg)
         fetch_seconds = time.perf_counter() - fetch_t
 
         content_hash = self._geometry_content_hash(geom_df, id_fields[0])
@@ -170,15 +168,17 @@ class BigQueryBackend(WeightsBackend):
             if not cache_hit:
                 upload_t = time.perf_counter()
                 self._upload_temp_table(
-                    client, geom_df, temp_table_id, id_fields[0],
-                    cfg, compute_location,
+                    client,
+                    geom_df,
+                    temp_table_id,
+                    id_fields[0],
+                    cfg,
+                    compute_location,
                 )
                 upload_seconds = time.perf_counter() - upload_t
                 cleanup_needed = not cfg.backend.bigquery.cache_temp_tables
 
-            sql = self._build_main_sql(
-                temp_table_id, regions, grid, weights, cfg
-            )
+            sql = self._build_main_sql(temp_table_id, regions, grid, weights, cfg)
 
             dry_bytes = self._dry_run_bytes(client, sql, compute_location)
             ceiling = cfg.backend.bigquery.dry_run_byte_ceiling
@@ -215,9 +215,7 @@ class BigQueryBackend(WeightsBackend):
                     "bq_temp_table": temp_table_id,
                     "bq_temp_cache_hit": bool(cache_hit),
                     "bq_geometry_content_hash": content_hash,
-                    "bq_used_bqstorage": bool(
-                        cfg.backend.bigquery.use_bqstorage
-                    ),
+                    "bq_used_bqstorage": bool(cfg.backend.bigquery.use_bqstorage),
                     "null_geometry_count": len(null_skipped),
                     "null_geometry_regions": list(null_skipped),
                     "unknown_id_count": len(unknown_skipped),
@@ -280,9 +278,7 @@ class BigQueryBackend(WeightsBackend):
             excluded = set(null_skipped) | set(unknown_skipped)
             if excluded:
                 hierids = [h for h in hierids if h not in excluded]
-        geom_df = self._fetch_geometries(
-            client, regions, hierids, ir_location, cfg
-        )
+        geom_df = self._fetch_geometries(client, regions, hierids, ir_location, cfg)
         content_hash = self._geometry_content_hash(geom_df, regions.id_fields[0])
         temp_table_id = self._temp_table_name(cfg, content_hash)
         cache_hit = self._table_exists(client, temp_table_id)
@@ -290,13 +286,15 @@ class BigQueryBackend(WeightsBackend):
         try:
             if not cache_hit:
                 self._upload_temp_table(
-                    client, geom_df, temp_table_id,
-                    regions.id_fields[0], cfg, compute_location,
+                    client,
+                    geom_df,
+                    temp_table_id,
+                    regions.id_fields[0],
+                    cfg,
+                    compute_location,
                 )
                 cleanup_needed = not cfg.backend.bigquery.cache_temp_tables
-            sql = self._build_main_sql(
-                temp_table_id, regions, grid, weights, cfg
-            )
+            sql = self._build_main_sql(temp_table_id, regions, grid, weights, cfg)
             bytes_estimate = self._dry_run_bytes(client, sql, compute_location)
         except Exception:
             if cleanup_needed:
@@ -357,9 +355,7 @@ class BigQueryBackend(WeightsBackend):
             if w.is_area:
                 continue
             if w.table is None:
-                raise ValueError(
-                    f"BigQuery backend requires weights.{w.name}.table"
-                )
+                raise ValueError(f"BigQuery backend requires weights.{w.name}.table")
 
     def _collect_hierid_filter(
         self, cfg: Config, regions: RegionSet
@@ -414,9 +410,7 @@ class BigQueryBackend(WeightsBackend):
             if hierids is not None:
                 # Single query: scan IR once for the requested set, LEFT JOIN
                 # back onto an UNNEST CTE to detect ids NOT in the table.
-                params = [
-                    self._bq.ArrayQueryParameter("hierids", "STRING", hierids)
-                ]
+                params = [self._bq.ArrayQueryParameter("hierids", "STRING", hierids)]
                 sql = f"""
 WITH requested AS (
     SELECT id AS {primary_id} FROM UNNEST(@hierids) AS id
@@ -511,8 +505,8 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
             if w.table is None:
                 continue
             ds_id = self._dataset_id_of_table(w.table)
-            weight_dataset_locations[w.table] = (
-                self._dataset_location_of_id(client, ds_id)
+            weight_dataset_locations[w.table] = self._dataset_location_of_id(
+                client, ds_id
             )
 
         mismatches = [
@@ -550,9 +544,7 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         gdf = regions.gdf
         present_set: set[str] = set(gdf[primary_id].astype(str))
         null_mask = gdf.geometry.isna() | gdf.geometry.is_empty
-        null_in_source: set[str] = set(
-            gdf.loc[null_mask, primary_id].astype(str)
-        )
+        null_in_source: set[str] = set(gdf.loc[null_mask, primary_id].astype(str))
 
         if hierids is not None:
             requested = {str(h) for h in hierids}
@@ -594,9 +586,7 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         conditions: list[str] = ["geometry IS NOT NULL"]
         if hierids is not None:
             conditions.append(f"{primary_id} IN UNNEST(@hierids)")
-            params = [
-                self._bq.ArrayQueryParameter("hierids", "STRING", hierids)
-            ]
+            params = [self._bq.ArrayQueryParameter("hierids", "STRING", hierids)]
         sql = (
             f"SELECT {primary_id}, ST_ASTEXT(geometry) AS geometry "
             f"FROM `{regions.table}` "
@@ -656,10 +646,7 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         # that expects to parse STRING -> GEOGRAPHY itself. The first
         # canonical re-run after this change re-uploads once; subsequent
         # identical-input re-runs cache-hit normally.
-        return (
-            f"{bq_cfg.project}.{bq_cfg.temp_dataset}."
-            f"cilreg_geom_v2_{content_hash}"
-        )
+        return f"{bq_cfg.project}.{bq_cfg.temp_dataset}.cilreg_geom_v2_{content_hash}"
 
     def _table_exists(self, client, table_id: str) -> bool:
         try:
@@ -709,25 +696,21 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         # with the offending hierids rather than the cryptic load-job
         # BadRequest.
         null_rows = geom_df[
-            geom_df["geometry"].isna()
-            | (geom_df["geometry"].astype(str) == "None")
+            geom_df["geometry"].isna() | (geom_df["geometry"].astype(str) == "None")
         ]
         if len(null_rows) > 0:
             offending = sorted(str(h) for h in null_rows[primary_id].tolist())
             raise ValueError(
                 f"_upload_temp_table: {len(offending)} regions have NULL "
                 f"geometry after the fetch; upstream NULL filter is broken. "
-                f"hierids: {offending[:25]}"
-                + ("..." if len(offending) > 25 else "")
+                f"hierids: {offending[:25]}" + ("..." if len(offending) > 25 else "")
             )
 
         ids = [str(v) for v in geom_df[primary_id].tolist()]
         wkts = [str(v) for v in geom_df["geometry"].tolist()]
         arrow_table = pa.table({primary_id: ids, "geometry": wkts})
 
-        max_wkt_bytes = max(
-            (len(w.encode("utf-8")) for w in wkts), default=0
-        )
+        max_wkt_bytes = max((len(w.encode("utf-8")) for w in wkts), default=0)
         buf = io.BytesIO()
         pq.write_table(arrow_table, buf, compression="snappy")
         payload = buf.getvalue()
@@ -833,8 +816,7 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
                 if load_job is not None:
                     last_job_id = getattr(load_job, "job_id", last_job_id)
                 logger.warning(
-                    "_upload_temp_table: load attempt %d/%d failed: %s: %s "
-                    "(job_id=%s)",
+                    "_upload_temp_table: load attempt %d/%d failed: %s: %s (job_id=%s)",
                     attempt + 1,
                     _LOAD_MAX_ATTEMPTS,
                     type(e).__name__,
@@ -842,24 +824,18 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
                     last_job_id,
                 )
                 if attempt < _LOAD_MAX_ATTEMPTS - 1:
-                    delay = (
-                        _LOAD_BACKOFF_BASE_SECONDS * (2 ** attempt)
-                        + random.uniform(0.0, _LOAD_BACKOFF_JITTER_SECONDS)
+                    delay = _LOAD_BACKOFF_BASE_SECONDS * (2**attempt) + random.uniform(
+                        0.0, _LOAD_BACKOFF_JITTER_SECONDS
                     )
-                    logger.warning(
-                        "_upload_temp_table: retrying after %.1fs", delay
-                    )
+                    logger.warning("_upload_temp_table: retrying after %.1fs", delay)
                     time.sleep(delay)
             except Exception as e:
                 # Non-retryable: schema mismatch, permission, etc.
                 job_id = (
-                    getattr(load_job, "job_id", None)
-                    if load_job is not None
-                    else None
+                    getattr(load_job, "job_id", None) if load_job is not None else None
                 )
                 logger.error(
-                    "_upload_temp_table: load failed non-retryable: %s: %s "
-                    "(job_id=%s)",
+                    "_upload_temp_table: load failed non-retryable: %s: %s (job_id=%s)",
                     type(e).__name__,
                     e,
                     job_id,
@@ -1085,9 +1061,7 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
     # ----- BigQuery execution ----------------------------------------------
 
     def _dry_run_bytes(self, client, sql: str, location: str) -> int:
-        job_config = self._bq.QueryJobConfig(
-            dry_run=True, use_query_cache=False
-        )
+        job_config = self._bq.QueryJobConfig(dry_run=True, use_query_cache=False)
         job = client.query(sql, job_config=job_config, location=location)
         return int(job.total_bytes_processed or 0)
 
@@ -1161,15 +1135,13 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
         # df. Synthesize one row at its representative point using the
         # geometry we already fetched for the temp-table upload.
         primary_id = id_fields[0]
-        requested_ids = {
-            (str(h),) for h in geom_df[primary_id].tolist()
-        }
+        requested_ids = {(str(h),) for h in geom_df[primary_id].tolist()}
         missing = find_missing_regions(final, requested_ids, id_fields)
         synth_count = 0
         if missing:
             from shapely import wkt as _wkt
 
-            geom_lookup: dict[tuple, "shapely.Geometry"] = {}
+            geom_lookup: dict[tuple, object] = {}
             for _, row in geom_df.iterrows():
                 key = (str(row[primary_id]),)
                 if key in missing:
@@ -1182,14 +1154,14 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
                 final = pd.concat([final, synth], ignore_index=True)
 
         final = final[list(schema.columns)]
-        final = final.sort_values(id_fields + ["cell_ix", "cell_iy"]).reset_index(drop=True)
+        final = final.sort_values(id_fields + ["cell_ix", "cell_iy"]).reset_index(
+            drop=True
+        )
 
         invariants = check_grid_invariants(final, schema, grid)
         if not invariants.ok:
             raise ValueError(invariants.summary())
-        report = check_sum_to_one(
-            final, schema, tolerance=cfg.validation.sum_tolerance
-        )
+        report = check_sum_to_one(final, schema, tolerance=cfg.validation.sum_tolerance)
 
         manifest = build_manifest(cfg)
         record_schema(manifest, schema)
@@ -1208,12 +1180,8 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
         if regions.source_uri is not None:
             manifest.inputs["regions_path"] = regions.source_uri
             if regions.repaired_ids:
-                manifest.extra["repaired_geometry_count"] = len(
-                    regions.repaired_ids
-                )
-                manifest.extra["repaired_geometry_regions"] = list(
-                    regions.repaired_ids
-                )
+                manifest.extra["repaired_geometry_count"] = len(regions.repaired_ids)
+                manifest.extra["repaired_geometry_regions"] = list(regions.repaired_ids)
         for w in non_area:
             if w.table is not None:
                 manifest.inputs[f"weight:{w.name}"] = w.table

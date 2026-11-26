@@ -81,6 +81,7 @@ workarounds: geometry below physical measurement meaning is boundary
 noise, dropped where found, with every drop accounted for in the
 manifest.
 """
+
 from __future__ import annotations
 
 import time
@@ -215,8 +216,7 @@ class LocalBackend(WeightsBackend):
         # representative point. Guarantees the output covers every
         # requested region.
         requested_ids = {
-            tuple(ids[f] for f in id_fields)
-            for ids, _ in regions.iter_regions()
+            tuple(ids[f] for f in id_fields) for ids, _ in regions.iter_regions()
         }
         missing = find_missing_regions(final, requested_ids, id_fields)
         synth_count = 0
@@ -234,14 +234,14 @@ class LocalBackend(WeightsBackend):
                 final = pd.concat([final, synth], ignore_index=True)
 
         final = final[list(schema.columns)]
-        final = final.sort_values(id_fields + ["cell_ix", "cell_iy"]).reset_index(drop=True)
+        final = final.sort_values(id_fields + ["cell_ix", "cell_iy"]).reset_index(
+            drop=True
+        )
 
         invariants = check_grid_invariants(final, schema, grid)
         if not invariants.ok:
             raise ValueError(invariants.summary())
-        report = check_sum_to_one(
-            final, schema, tolerance=cfg.validation.sum_tolerance
-        )
+        report = check_sum_to_one(final, schema, tolerance=cfg.validation.sum_tolerance)
 
         manifest = build_manifest(cfg)
         record_schema(manifest, schema)
@@ -257,9 +257,7 @@ class LocalBackend(WeightsBackend):
         manifest.extra["min_segment_area"] = drop_stats
         if regions.repaired_ids:
             manifest.extra["repaired_geometry_count"] = len(regions.repaired_ids)
-            manifest.extra["repaired_geometry_regions"] = list(
-                regions.repaired_ids
-            )
+            manifest.extra["repaired_geometry_regions"] = list(regions.repaired_ids)
         manifest.extra.update(_unknown_id_record(regions))
         manifest.timing_seconds["compute_total"] = time.perf_counter() - t0
 
@@ -310,9 +308,7 @@ class LocalBackend(WeightsBackend):
         keys = id_fields + source_id_fields
 
         with dask_client_for(cfg.backend.local) as client:
-            segments = _build_segments_polygons(
-                regions, source_set, client=client
-            )
+            segments = _build_segments_polygons(regions, source_set, client=client)
         segments, drop_stats = _apply_min_segment_area(
             segments, source_id_fields, cfg.backend.local.min_segment_area_m2
         )
@@ -411,9 +407,7 @@ class LocalBackend(WeightsBackend):
         # such an artifact instead of silently misplacing mass.
         partial_units: list[dict] = []
         if len(segments) > 0:
-            covered = segments.groupby(source_id_fields, sort=False)[
-                "area_raw"
-            ].sum()
+            covered = segments.groupby(source_id_fields, sort=False)["area_raw"].sum()
             present_geoms = {
                 tuple(ids[f] for f in source_id_fields): geom
                 for ids, geom in source_set.iter_regions()
@@ -512,12 +506,8 @@ def _split_at_antimeridian(
     touches_east = maxx > 180.0 - _ANTIMERIDIAN_TOUCH_EPS
     if not (touches_west and touches_east):
         return [geom]
-    west = geom.intersection(
-        shapely.geometry.box(-180.0, miny, 0.0, maxy)
-    )
-    east = geom.intersection(
-        shapely.geometry.box(0.0, miny, 180.0, maxy)
-    )
+    west = geom.intersection(shapely.geometry.box(-180.0, miny, 0.0, maxy))
+    east = geom.intersection(shapely.geometry.box(0.0, miny, 180.0, maxy))
     halves: list = []
     if not west.is_empty:
         halves.append(west)
@@ -610,59 +600,56 @@ def _build_segments_for_pairs(
     """
     pieces: list[pd.DataFrame] = []
     for ids, region_geom in pairs:
-      for piece in _split_at_antimeridian(region_geom):
-        bbox = piece.bounds
-        try:
-            ix_range, iy_range = grid.index_range_for_bbox(*bbox)
-        except ValueError:
-            continue
-        if len(ix_range) == 0 or len(iy_range) == 0:
-            continue
+        for piece in _split_at_antimeridian(region_geom):
+            bbox = piece.bounds
+            try:
+                ix_range, iy_range = grid.index_range_for_bbox(*bbox)
+            except ValueError:
+                continue
+            if len(ix_range) == 0 or len(iy_range) == 0:
+                continue
 
-        ix_arr, iy_arr = grid.enumerate_cells(ix_range, iy_range)
-        cells = grid.cell_polygons(ix_arr, iy_arr)
-        lon_c, lat_c = grid.centroid(ix_arr, iy_arr)
+            ix_arr, iy_arr = grid.enumerate_cells(ix_range, iy_range)
+            cells = grid.cell_polygons(ix_arr, iy_arr)
+            lon_c, lat_c = grid.centroid(ix_arr, iy_arr)
 
-        interior = shapely.contains(piece, cells)
-        any_touch = shapely.intersects(piece, cells)
-        boundary = any_touch & ~interior
+            interior = shapely.contains(piece, cells)
+            any_touch = shapely.intersects(piece, cells)
+            boundary = any_touch & ~interior
 
-        segments = np.array(cells, dtype=object)
-        b_idx = np.where(boundary)[0]
-        if b_idx.size > 0:
-            segments[b_idx] = shapely.intersection(piece, cells[b_idx])
+            segments = np.array(cells, dtype=object)
+            b_idx = np.where(boundary)[0]
+            if b_idx.size > 0:
+                segments[b_idx] = shapely.intersection(piece, cells[b_idx])
 
-        keep = interior | boundary
-        if not keep.any():
-            continue
+            keep = interior | boundary
+            if not keep.any():
+                continue
 
-        # Compute geodesic area now and drop point/line-touch artifacts
-        # (shapely.intersects accepts shared-boundary points; those produce
-        # Point/LineString intersections with zero area).
-        kept_idx = np.where(keep)[0]
-        kept_segs = segments[kept_idx]
-        kept_area = _geodesic_area_m2(kept_segs)
-        positive = kept_area > 0
-        if not positive.any():
-            continue
-        sel = kept_idx[positive]
+            # Compute geodesic area now and drop point/line-touch artifacts
+            # (shapely.intersects accepts shared-boundary points; those produce
+            # Point/LineString intersections with zero area).
+            kept_idx = np.where(keep)[0]
+            kept_segs = segments[kept_idx]
+            kept_area = _geodesic_area_m2(kept_segs)
+            positive = kept_area > 0
+            if not positive.any():
+                continue
+            sel = kept_idx[positive]
 
-        sub = pd.DataFrame(
-            {
-                **{
-                    f: np.full(int(positive.sum()), ids[f])
-                    for f in id_fields
-                },
-                "cell_ix": ix_arr[sel].astype(np.int64),
-                "cell_iy": iy_arr[sel].astype(np.int64),
-                "cell_lon": np.asarray(lon_c)[sel],
-                "cell_lat": np.asarray(lat_c)[sel],
-                "is_interior": interior[sel],
-                "geometry": _as_multipolygons(kept_segs[positive]),
-                "area_raw": kept_area[positive],
-            }
-        )
-        pieces.append(sub)
+            sub = pd.DataFrame(
+                {
+                    **{f: np.full(int(positive.sum()), ids[f]) for f in id_fields},
+                    "cell_ix": ix_arr[sel].astype(np.int64),
+                    "cell_iy": iy_arr[sel].astype(np.int64),
+                    "cell_lon": np.asarray(lon_c)[sel],
+                    "cell_lat": np.asarray(lat_c)[sel],
+                    "is_interior": interior[sel],
+                    "geometry": _as_multipolygons(kept_segs[positive]),
+                    "area_raw": kept_area[positive],
+                }
+            )
+            pieces.append(sub)
     return pieces
 
 
@@ -709,7 +696,9 @@ def _apply_min_segment_area(
     kept = segments.loc[keep_mask]
     kept_units = {
         tuple(row)
-        for row in kept[group_fields].drop_duplicates().itertuples(index=False, name=None)
+        for row in kept[group_fields]
+        .drop_duplicates()
+        .itertuples(index=False, name=None)
     }
     fully = [
         k if isinstance(k, tuple) else (k,)
@@ -791,15 +780,19 @@ def _check_lonlat_domain(
     record the admitted noise in the manifest.
     """
     bounds = gdf.geometry.bounds
-    overshoot = pd.concat(
-        [
-            (-180.0 - bounds["minx"]),
-            (bounds["maxx"] - 180.0),
-            (-90.0 - bounds["miny"]),
-            (bounds["maxy"] - 90.0),
-        ],
-        axis=1,
-    ).max(axis=1).clip(lower=0.0)
+    overshoot = (
+        pd.concat(
+            [
+                (-180.0 - bounds["minx"]),
+                (bounds["maxx"] - 180.0),
+                (-90.0 - bounds["miny"]),
+                (bounds["maxy"] - 90.0),
+            ],
+            axis=1,
+        )
+        .max(axis=1)
+        .clip(lower=0.0)
+    )
 
     bad_mask = overshoot > _LONLAT_DOMAIN_EPS
     if bad_mask.any():
@@ -902,14 +895,8 @@ def _build_polygon_segments_for_pairs(
         src_rows = src_gdf.iloc[cand_idx[positive]]
         sub = pd.DataFrame(
             {
-                **{
-                    f: np.full(int(positive.sum()), ids[f])
-                    for f in id_fields
-                },
-                **{
-                    f: src_rows[f].to_numpy()
-                    for f in source_id_fields
-                },
+                **{f: np.full(int(positive.sum()), ids[f]) for f in id_fields},
+                **{f: src_rows[f].to_numpy() for f in source_id_fields},
                 "is_interior": interior[positive],
                 "geometry": _as_multipolygons(segments[positive]),
                 "area_raw": areas[positive],
@@ -979,7 +966,6 @@ def _materialize_area_weighted_raster(fraction_path: str) -> str:
     with rasterio.open(src_path) as src:
         transform = src.transform
         height = src.height
-        width = src.width
         profile = src.profile.copy()
         # Per-row pixel area (m^2): rasters in EPSG:4326 with north-up
         # affine transform have constant |transform.e| latitude step
@@ -1110,9 +1096,9 @@ def _join_pieces(
     final = pieces[0]
     for piece in pieces[1:]:
         final = final.merge(piece, on=join_keys, how="outer")
-    return final.sort_values(
-        id_fields + list(source_key_columns)
-    ).reset_index(drop=True)
+    return final.sort_values(id_fields + list(source_key_columns)).reset_index(
+        drop=True
+    )
 
 
 def _raise_on_unknown_ids(regions: RegionSet) -> None:

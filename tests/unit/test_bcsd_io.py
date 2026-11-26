@@ -1,4 +1,5 @@
 """BCSD daily reader normalization and grid-scale derivations."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -67,8 +68,9 @@ class TestReader:
             ds.createDimension("lon", 2)
             ds.createVariable("lat", "f8", ("lat",))[:] = lat
             ds.createVariable("lon", "f8", ("lon",))[:] = lon
-            v = ds.createVariable("tasmax", "f4", ("time", "lat", "lon"),
-                                  fill_value=9.96921e36)
+            v = ds.createVariable(
+                "tasmax", "f4", ("time", "lat", "lon"), fill_value=9.96921e36
+            )
             arr = np.ma.masked_array(
                 np.ones((1, 2, 2), dtype="f4"),
                 mask=[[[False, True], [False, False]]],
@@ -92,9 +94,17 @@ class TestReader:
             read_bcsd_daily(p, "tasmax")
 
 
-def _write_dated(path, start, n_days, calendar, lon=None, time_dim="time",
-                 units="days since 1950-01-01", write_calendar=True,
-                 coordinate=True):
+def _write_dated(
+    path,
+    start,
+    n_days,
+    calendar,
+    lon=None,
+    time_dim="time",
+    units="days since 1950-01-01",
+    write_calendar=True,
+    coordinate=True,
+):
     """A daily file with a CF time coordinate on ``calendar``.
 
     ``start`` is a (year, month, day) tuple; step ``i`` is ``start``
@@ -112,10 +122,13 @@ def _write_dated(path, start, n_days, calendar, lon=None, time_dim="time",
     lat = np.array([-0.125, 0.125])
     first = cftime.datetime(*start, calendar=calendar)
     dates = [first + datetime.timedelta(days=i) for i in range(n_days)]
-    offsets = np.arange(len(lat) * len(lon), dtype="f4").reshape(
-        1, len(lat), len(lon)) / 100.0
-    values = (np.arange(n_days, dtype="f4").reshape(n_days, 1, 1)
-              + offsets).astype("f4")
+    offsets = (
+        np.arange(len(lat) * len(lon), dtype="f4").reshape(1, len(lat), len(lon))
+        / 100.0
+    )
+    values = (np.arange(n_days, dtype="f4").reshape(n_days, 1, 1) + offsets).astype(
+        "f4"
+    )
     with netCDF4.Dataset(path, "w") as ds:
         ds.createDimension(time_dim, n_days)
         ds.createDimension("lat", len(lat))
@@ -133,11 +146,17 @@ def _write_dated(path, start, n_days, calendar, lon=None, time_dim="time",
 
 
 class TestCalendar:
-    @pytest.mark.parametrize("calendar", [
-        "noleap", "365_day", "gregorian", "standard", "proleptic_gregorian",
-    ])
-    def test_365_day_file_is_byte_identical_to_undated_read(
-            self, tmp_path, calendar):
+    @pytest.mark.parametrize(
+        "calendar",
+        [
+            "noleap",
+            "365_day",
+            "gregorian",
+            "standard",
+            "proleptic_gregorian",
+        ],
+    )
+    def test_365_day_file_is_byte_identical_to_undated_read(self, tmp_path, calendar):
         # 2021 is not a leap year, so every accepted calendar has 365
         # days; the dated read must reproduce the pre-calendar reader
         # exactly, which is what reading the same data with no time
@@ -161,9 +180,14 @@ class TestCalendar:
         # time order untouched; longitudes rolled exactly as before
         assert np.array_equal(grid.values, raw[:, :, [2, 3, 0, 1]])
 
-    @pytest.mark.parametrize("calendar", [
-        "gregorian", "standard", "proleptic_gregorian",
-    ])
+    @pytest.mark.parametrize(
+        "calendar",
+        [
+            "gregorian",
+            "standard",
+            "proleptic_gregorian",
+        ],
+    )
     def test_leap_year_drops_feb_29(self, tmp_path, calendar):
         p = str(tmp_path / "a.nc")
         raw, _ = _write_dated(p, (2020, 1, 1), 366, calendar)
@@ -194,8 +218,7 @@ class TestCalendar:
         assert grid.dates.dtype == np.dtype("datetime64[D]")
         months = grid.dates.astype("datetime64[M]").astype(int) % 12 + 1
         lengths = np.bincount(months)[1:]
-        assert lengths.tolist() == [31, 28, 31, 30, 31, 30,
-                                    31, 31, 30, 31, 30, 31]
+        assert lengths.tolist() == [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
     def test_day_dimension_with_cf_coordinate_decodes(self, tmp_path):
         p = str(tmp_path / "a.nc")
@@ -241,9 +264,10 @@ class TestCalendar:
         p = str(tmp_path / "partial.nc")
         _write_dated(p, (2020, 1, 1), 91, "standard")
         with pytest.raises(
-                ValueError,
-                match=r"partial\.nc: 90 days remain after dropping Feb 29 "
-                      r"\(calendar 'standard', 91 in the file\)"):
+            ValueError,
+            match=r"partial\.nc: 90 days remain after dropping Feb 29 "
+            r"\(calendar 'standard', 91 in the file\)",
+        ):
             read_bcsd_daily(p, "tasmax", require_full_year=True)
 
     def test_full_year_passes_when_required(self, tmp_path):
@@ -293,8 +317,7 @@ class TestCalendar:
 
 def _year(base_max=300.0, base_min=280.0):
     shape = (365, 2, 2)
-    return (np.full(shape, base_max, dtype="f4"),
-            np.full(shape, base_min, dtype="f4"))
+    return (np.full(shape, base_max, dtype="f4"), np.full(shape, base_min, dtype="f4"))
 
 
 class TestDerive:

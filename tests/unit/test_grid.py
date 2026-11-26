@@ -1,4 +1,5 @@
 """Grid index math, conventions, polygons, and prebuilt-grid spacing check."""
+
 from __future__ import annotations
 
 import numpy as np

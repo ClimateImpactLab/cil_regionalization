@@ -1,4 +1,5 @@
 """Dissolve step: key uniqueness, area conservation, and the loud paths."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,11 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import box
 
-from cil_regionalization.dissolve import LevelSpec, dissolve_layer, prepare_target_layers
+from cil_regionalization.dissolve import (
+    LevelSpec,
+    dissolve_layer,
+    prepare_target_layers,
+)
 
 
 def _pieces() -> gpd.GeoDataFrame:
@@ -36,9 +41,7 @@ def _pieces() -> gpd.GeoDataFrame:
 
 class TestDissolveLayer:
     def test_units_and_unique_keys(self):
-        out, report = dissolve_layer(
-            _pieces(), ["iso", "id1"], name_columns=["name1"]
-        )
+        out, report = dissolve_layer(_pieces(), ["iso", "id1"], name_columns=["name1"])
         assert len(out) == 3
         assert not out.duplicated(subset=["iso", "id1"]).any()
         assert report.n_source_features == 6

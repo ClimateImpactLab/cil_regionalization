@@ -29,6 +29,7 @@ fact that made prefix-level rollups safe there. That regularity is a
 property of one version, never a contract; the next version may break
 it silently, which is exactly why the package treats ids as opaque.
 """
+
 from __future__ import annotations
 
 import logging

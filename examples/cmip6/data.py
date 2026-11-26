@@ -1,4 +1,5 @@
 """Where the example's files are, and what they hold."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -44,8 +45,10 @@ SUMMARY = DATA / "ssp370_days_above_95F_2080_2099.csv"
 #   /project/cil/gcp/impact_map_inputs/targets/gadm20/{adm1,adm2}.parquet,
 #   and the world-combo-201710 impact regions,
 #   https://doi.org/10.5281/zenodo.21934131
-OUTLINES = {level: DATA / f"outlines_{level}.parquet"
-            for level in ("impact_region", "adm2", "adm1")}
+OUTLINES = {
+    level: DATA / f"outlines_{level}.parquet"
+    for level in ("impact_region", "adm2", "adm1")
+}
 
 
 def daily_path(model: str, experiment: str) -> Path:

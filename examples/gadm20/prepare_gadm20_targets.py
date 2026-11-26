@@ -70,6 +70,7 @@ Outputs are GeoParquet plus targets.manifest.json under the gitignored
 data directory. Reading the ~1.6 GB source and dissolving takes a while;
 nothing else is touched.
 """
+
 from __future__ import annotations
 
 import argparse

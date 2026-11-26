@@ -1,4 +1,5 @@
 """generate_weights: same files as the CLI, and nothing written on failure."""
+
 import json
 import shutil
 
@@ -76,9 +77,7 @@ class TestSameAsCli:
 
 
 class TestMissingInput:
-    def test_names_the_missing_raster(
-        self, three_region_geoparquet, tmp_path
-    ):
+    def test_names_the_missing_raster(self, three_region_geoparquet, tmp_path):
         cfg = _cfg(three_region_geoparquet, tmp_path / "gone.tif", tmp_path / "out")
         with pytest.raises(FileNotFoundError, match="gone.tif"):
             cilreg.generate_weights(cfg)

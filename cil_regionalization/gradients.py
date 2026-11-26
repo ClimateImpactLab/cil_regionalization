@@ -16,6 +16,7 @@ works on arrays: one year per call, matching how the files are
 chunked. The mean needs no separate file when the response is linear
 in the coefficients: it is the gradient times the coefficient vector.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -95,8 +96,9 @@ def read_gradient_leaf(
             f"gradient has {gradient.shape[0]} coefficients but the "
             f"covariance matrix is {vcv.shape[0]} by {vcv.shape[1]}"
         )
-    return GradientLeaf(regions=regions, gradient=gradient, vcv=vcv,
-                        stored_variance=stored)
+    return GradientLeaf(
+        regions=regions, gradient=gradient, vcv=vcv, stored_variance=stored
+    )
 
 
 def aggregate_gradient(
@@ -149,7 +151,9 @@ def aggregate_gradient(
     n_t, n_c = len(targets), gradient.shape[0]
     out = np.zeros((n_t, n_c))
     norm = np.zeros(n_t)
-    scale_vec = np.ones(len(regions)) if scale is None else np.asarray(scale, dtype="float64")
+    scale_vec = (
+        np.ones(len(regions)) if scale is None else np.asarray(scale, dtype="float64")
+    )
     if scale_vec.shape != (len(regions),):
         raise ValueError(
             f"scale has shape {scale_vec.shape}; expected ({len(regions)},)"

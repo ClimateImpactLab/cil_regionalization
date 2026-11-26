@@ -16,6 +16,7 @@ Consequences:
       (boundary pixels covered vs centred), giving us the documented
       cross-mode difference.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -26,11 +27,9 @@ import pytest
 
 from cil_regionalization.backends.local import LocalBackend
 from cil_regionalization.config import Config
-from cil_regionalization.fallback import count_methods
 from cil_regionalization.grid import GridSpec
 from cil_regionalization.regions import RegionSet
 from cil_regionalization.schema import OutputSchema
-from cil_regionalization.validate import check_sum_to_one
 from cil_regionalization.weights import from_config_list
 
 
@@ -74,17 +73,19 @@ def _run(cfg: Config):
 
 
 class TestExactFractionEnd2End:
-    def test_sum_to_one_per_region(self, three_region_geoparquet, synthetic_raster, tmp_path):
+    def test_sum_to_one_per_region(
+        self, three_region_geoparquet, synthetic_raster, tmp_path
+    ):
         cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path)
         result = _run(cfg)
         assert result.sum_report.ok, result.sum_report.summary()
 
-    def test_schema_matches_canonical(self, three_region_geoparquet, synthetic_raster, tmp_path):
+    def test_schema_matches_canonical(
+        self, three_region_geoparquet, synthetic_raster, tmp_path
+    ):
         cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path)
         result = _run(cfg)
-        expected = OutputSchema(
-            id_fields=("region_id",), weight_names=("pop", "area")
-        )
+        expected = OutputSchema(id_fields=("region_id",), weight_names=("pop", "area"))
         assert list(result.frame.columns) == list(expected.columns)
         expected.validate_frame(result.frame)
 
@@ -372,17 +373,28 @@ class TestDaskLocalParity:
         result_dask = _run(cfg_dask)
 
         cols = [
-            "region_id", "cell_ix", "cell_iy",
-            "cell_lon", "cell_lat",
-            "popwt", "pop_raw", "pop_method",
-            "areawt", "area_raw", "area_method",
+            "region_id",
+            "cell_ix",
+            "cell_iy",
+            "cell_lon",
+            "cell_lat",
+            "popwt",
+            "pop_raw",
+            "pop_method",
+            "areawt",
+            "area_raw",
+            "area_method",
         ]
-        ser = result_serial.frame[cols].sort_values(
-            ["region_id", "cell_ix", "cell_iy"]
-        ).reset_index(drop=True)
-        dsk = result_dask.frame[cols].sort_values(
-            ["region_id", "cell_ix", "cell_iy"]
-        ).reset_index(drop=True)
+        ser = (
+            result_serial.frame[cols]
+            .sort_values(["region_id", "cell_ix", "cell_iy"])
+            .reset_index(drop=True)
+        )
+        dsk = (
+            result_dask.frame[cols]
+            .sort_values(["region_id", "cell_ix", "cell_iy"])
+            .reset_index(drop=True)
+        )
         pd.testing.assert_frame_equal(ser, dsk, check_exact=True)
 
 
@@ -430,9 +442,7 @@ class TestAntimeridianSplitting:
     def test_cells_appear_on_both_dateline_sides(
         self, dateline_crossers_geoparquet, synthetic_raster, tmp_path
     ):
-        cfg = self._cfg(
-            dateline_crossers_geoparquet, synthetic_raster, tmp_path
-        )
+        cfg = self._cfg(dateline_crossers_geoparquet, synthetic_raster, tmp_path)
         result = self._run(cfg)
         fji = result.frame.loc[result.frame["region_id"] == "FJI_like"]
         # FJI_like sits at lon -179.5..-178.5 (west of antimeridian) and
@@ -447,9 +457,7 @@ class TestAntimeridianSplitting:
     def test_no_duplicate_keys(
         self, dateline_crossers_geoparquet, synthetic_raster, tmp_path
     ):
-        cfg = self._cfg(
-            dateline_crossers_geoparquet, synthetic_raster, tmp_path
-        )
+        cfg = self._cfg(dateline_crossers_geoparquet, synthetic_raster, tmp_path)
         result = self._run(cfg)
         keys = ["region_id", "cell_ix", "cell_iy"]
         assert not result.frame.duplicated(subset=keys).any(), (
@@ -460,9 +468,7 @@ class TestAntimeridianSplitting:
     def test_per_region_sum_to_one(
         self, dateline_crossers_geoparquet, synthetic_raster, tmp_path
     ):
-        cfg = self._cfg(
-            dateline_crossers_geoparquet, synthetic_raster, tmp_path
-        )
+        cfg = self._cfg(dateline_crossers_geoparquet, synthetic_raster, tmp_path)
         result = self._run(cfg)
         assert result.sum_report.ok, result.sum_report.summary()
 
@@ -483,9 +489,7 @@ class TestAntimeridianSplitting:
         import geopandas as gpd_
         from pyproj import Geod
 
-        cfg = self._cfg(
-            dateline_crossers_geoparquet, synthetic_raster, tmp_path
-        )
+        cfg = self._cfg(dateline_crossers_geoparquet, synthetic_raster, tmp_path)
         result = self._run(cfg)
         gdf = gpd_.read_parquet(dateline_crossers_geoparquet)
         geod = Geod(ellps="WGS84")
@@ -511,9 +515,7 @@ class TestAntimeridianSplitting:
         bands and total at least ~50 cells. Catches the 'one-half-was-
         dropped' regression without depending on pyproj polygon area
         for the assertion."""
-        cfg = self._cfg(
-            dateline_crossers_geoparquet, synthetic_raster, tmp_path
-        )
+        cfg = self._cfg(dateline_crossers_geoparquet, synthetic_raster, tmp_path)
         result = self._run(cfg)
         wide = result.frame.loc[result.frame["region_id"] == "WIDE_like"]
         assert (wide["cell_ix"] < 90).any()
@@ -607,7 +609,6 @@ class TestNearestCellSynthesis:
 
         # Build a minimal raster so the local backend has a pop weight to
         # process; the synthesis path doesn't read it for nearest_cell rows.
-        import numpy as np
         import rasterio
         from rasterio.transform import from_origin
 
@@ -654,9 +655,7 @@ class TestRepairedGeometryManifest:
     def test_nothing_recorded_without_repairs(
         self, three_region_geoparquet, synthetic_raster, tmp_path
     ):
-        result = _run(
-            _cfg(three_region_geoparquet, synthetic_raster, tmp_path / "out")
-        )
+        result = _run(_cfg(three_region_geoparquet, synthetic_raster, tmp_path / "out"))
         assert "repaired_geometry_count" not in result.manifest.extra
         assert "repaired_geometry_regions" not in result.manifest.extra
 
@@ -676,7 +675,9 @@ class TestUnknownIds:
             tmp_path / "out",
             keep={"region_id": ["A", "NOT_REAL"]},
         )
-        with pytest.raises(ValueError, match=r"regions\.keep column 'region_id'.*NOT_REAL"):
+        with pytest.raises(
+            ValueError, match=r"regions\.keep column 'region_id'.*NOT_REAL"
+        ):
             _run(cfg)
 
     def test_unknown_drop_id_raises_by_default(
@@ -688,7 +689,9 @@ class TestUnknownIds:
             tmp_path / "out",
             drop={"region_id": ["NOT_REAL"]},
         )
-        with pytest.raises(ValueError, match=r"regions\.drop column 'region_id'.*NOT_REAL"):
+        with pytest.raises(
+            ValueError, match=r"regions\.drop column 'region_id'.*NOT_REAL"
+        ):
             _run(cfg)
 
     def test_skip_completes_and_records(
@@ -821,11 +824,15 @@ class TestCliLegacyCsv:
     CLI wiring is otherwise untested outside the run smoke."""
 
     def test_legacy_csv_written_alongside_parquet(
-        self, three_region_gdf, synthetic_fraction_raster, synthetic_raster, tmp_path, capsys
+        self,
+        three_region_gdf,
+        synthetic_fraction_raster,
+        synthetic_raster,
+        tmp_path,
+        capsys,
     ):
         from cil_regionalization.cli import main
         from cil_regionalization.legacy_export import LEGACY_COLUMNS
-        import geopandas as gpd
 
         # Rename the synthetic fixture's id column to hierid for legacy schema.
         gdf = three_region_gdf.rename(columns={"region_id": "hierid"})
@@ -867,7 +874,7 @@ kind = "local"
 coverage = "exact_fraction"
 
 [output]
-dir = "{tmp_path / 'out'}"
+dir = "{tmp_path / "out"}"
 format = "parquet"
 """
         )

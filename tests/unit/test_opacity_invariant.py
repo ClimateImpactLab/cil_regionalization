@@ -24,12 +24,12 @@ parsing patterns. False positives can be calibrated with more specific
 regexes when they appear; the goal is to make "I quietly introduced
 hierid parsing" impossible without explicit intent.
 """
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-import pytest
 
 import cil_regionalization
 

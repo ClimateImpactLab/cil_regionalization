@@ -9,6 +9,7 @@ A run whose weights fail their own sum-to-one check raises
 thing standing between a bad file and someone applying it later, so a
 file that failed it must not exist.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -51,9 +52,7 @@ def check_inputs_exist(cfg: Config) -> list[str]:
             if w.name == "area":
                 continue
             if w.raster is not None and not Path(w.raster).exists():
-                problems.append(
-                    f"weights.{w.name}.raster does not exist: {w.raster}"
-                )
+                problems.append(f"weights.{w.name}.raster does not exist: {w.raster}")
     return problems
 
 

@@ -9,6 +9,7 @@ The same Config drives both the local and the BigQuery backends. Cross-field
 rules (a non-area weight needs a raster on local but a table on bigquery, etc.)
 live on the top-level Config so they can see both `backend.kind` and `weights`.
 """
+
 from __future__ import annotations
 
 import sys
@@ -378,7 +379,10 @@ class Config(_Strict):
 
     @model_validator(mode="after")
     def _bigquery_requires_staging_uri(self) -> "Config":
-        if self.backend.kind == "bigquery" and self.backend.bigquery.staging_uri is None:
+        if (
+            self.backend.kind == "bigquery"
+            and self.backend.bigquery.staging_uri is None
+        ):
             raise ValueError(
                 "backend.bigquery.staging_uri is required: a gs:// prefix the "
                 "run may write geometry staging files to. It is a site fact "
@@ -392,7 +396,9 @@ class Config(_Strict):
         seen: set[str] = set()
         for n in names:
             if n in seen:
-                raise ValueError(f"weights: duplicate weight name '{n}' in weights list")
+                raise ValueError(
+                    f"weights: duplicate weight name '{n}' in weights list"
+                )
             seen.add(n)
 
         for w in self.weights:
@@ -446,11 +452,19 @@ def _resolve_paths(data: dict[str, Any], base: Path) -> None:
         return str((base / value).resolve())
 
     regions = data.get("regions")
-    if isinstance(regions, dict) and "path" in regions and isinstance(regions["path"], str):
+    if (
+        isinstance(regions, dict)
+        and "path" in regions
+        and isinstance(regions["path"], str)
+    ):
         regions["path"] = _resolve(regions["path"])
 
     source = data.get("source")
-    if isinstance(source, dict) and "path" in source and isinstance(source["path"], str):
+    if (
+        isinstance(source, dict)
+        and "path" in source
+        and isinstance(source["path"], str)
+    ):
         source["path"] = _resolve(source["path"])
 
     weights = data.get("weights")

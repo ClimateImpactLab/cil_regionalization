@@ -9,6 +9,7 @@ macOS and editor droppings (.DS_Store, ._ files, __pycache__,
 .ipynb_checkpoints) are skipped. Files that are staged count as
 tracked: git only accepts them past the ignore rules.
 """
+
 from __future__ import annotations
 
 import fnmatch
@@ -31,11 +32,11 @@ def untracked_data_files(root: Path) -> list[str]:
     """Untracked files under examples/<name>/data/, ignored ones included."""
     out = subprocess.run(
         ["git", "-C", str(root), "ls-files", "--others", "-z", "--", "examples"],
-        capture_output=True, check=True,
+        capture_output=True,
+        check=True,
     ).stdout.decode()
     return sorted(
-        p for p in out.split("\0")
-        if p and _DATA_FILE.match(p) and not _JUNK.search(p)
+        p for p in out.split("\0") if p and _DATA_FILE.match(p) and not _JUNK.search(p)
     )
 
 
@@ -53,8 +54,7 @@ def read_allowlist(root: Path) -> tuple[list[str], list[str]]:
         pattern, reason = pattern.strip(), reason.strip()
         if not _DATA_FILE.match(pattern):
             problems.append(
-                f"{ALLOWLIST}:{n}: {pattern!r} is not under "
-                f"examples/<name>/data/"
+                f"{ALLOWLIST}:{n}: {pattern!r} is not under examples/<name>/data/"
             )
         elif not reason:
             problems.append(
@@ -70,13 +70,17 @@ def check(root: Path) -> list[str]:
     """Problems with the data under examples/, empty when there are none."""
     patterns, problems = read_allowlist(root)
     left = [
-        p for p in untracked_data_files(root)
+        p
+        for p in untracked_data_files(root)
         if not any(fnmatch.fnmatchcase(p, pat) for pat in patterns)
     ]
     if left:
         shown = left[:_MAX_LINES]
-        more = (f"\n  ... and {len(left) - len(shown)} more"
-                if len(left) > len(shown) else "")
+        more = (
+            f"\n  ... and {len(left) - len(shown)} more"
+            if len(left) > len(shown)
+            else ""
+        )
         lines = "\n".join(f"  {p}  # why it is left out" for p in shown) + more
         problems.append(
             f"{len(left)} file(s) under examples/<name>/data/ are not tracked "
@@ -106,8 +110,9 @@ class _Repo:
         (root / ".gitignore").write_text("*.parquet\n*.csv\n")
 
     def git(self, *args):
-        subprocess.run(["git", "-C", str(self.root), *args], check=True,
-                       capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(self.root), *args], check=True, capture_output=True
+        )
 
 
 @pytest.fixture
@@ -156,15 +161,18 @@ class TestChecker:
     def test_a_glob_covers_several_files(self, repo):
         for i in range(3):
             _write(repo.root, f"examples/a/data/big/{i}.nc4")
-        _write(repo.root, ALLOWLIST, "# note\n\nexamples/a/data/big/*.nc4  # too large\n")
+        _write(
+            repo.root, ALLOWLIST, "# note\n\nexamples/a/data/big/*.nc4  # too large\n"
+        )
         assert check(repo.root) == []
 
     def test_a_listed_file_without_a_reason_fails(self, repo):
         _write(repo.root, "examples/a/data/t.parquet")
         _write(repo.root, ALLOWLIST, "examples/a/data/t.parquet\n")
         problems = check(repo.root)
-        assert any("has no reason" in p and "# why it is left out" in p
-                   for p in problems)
+        assert any(
+            "has no reason" in p and "# why it is left out" in p for p in problems
+        )
 
     def test_a_listed_path_outside_a_data_directory_fails(self, repo):
         _write(repo.root, ALLOWLIST, "examples/a/other/t.parquet  # nope\n")
@@ -178,9 +186,12 @@ class TestChecker:
         assert "u.parquet" in problem and "t.parquet" not in problem
 
     def test_droppings_are_skipped(self, repo):
-        for rel in ("examples/a/data/.DS_Store", "examples/a/data/._t.parquet",
-                    "examples/a/data/__pycache__/m.pyc",
-                    "examples/a/data/.ipynb_checkpoints/n.ipynb"):
+        for rel in (
+            "examples/a/data/.DS_Store",
+            "examples/a/data/._t.parquet",
+            "examples/a/data/__pycache__/m.pyc",
+            "examples/a/data/.ipynb_checkpoints/n.ipynb",
+        ):
             _write(repo.root, rel)
         assert check(repo.root) == []
 

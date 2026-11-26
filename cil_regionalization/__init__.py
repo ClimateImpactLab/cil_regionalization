@@ -36,6 +36,7 @@ users all get a working geospatial stack without per-process incantations:
    the osgeo binding is present, UseExceptions is called explicitly).
    Notebook and CLI output stay clean of the upstream warning.
 """
+
 from __future__ import annotations
 
 import importlib.metadata as _metadata
@@ -56,6 +57,7 @@ else:
 
 try:  # pragma: no cover - the osgeo binding is optional
     from osgeo import gdal as _gdal
+
     _gdal.UseExceptions()
 except ImportError:
     _warnings.filterwarnings(

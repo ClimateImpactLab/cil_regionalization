@@ -5,6 +5,7 @@ holds nothing about how: no block sizes and no engine options. A second
 backend adds a module, a branch in `get_backend`, a name in the ``kind``
 of `ReduceConfig` and an options field there.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -19,9 +20,7 @@ from cil_regionalization.config import _Strict
 # a statistics method pair, (quantile_method, summation)
 Methods = tuple[str, str]
 ALL_METHODS: frozenset[Methods] = frozenset(
-    (q, s)
-    for q in ("linear", "lower_step", "inverted_cdf")
-    for s in ("fast", "exact")
+    (q, s) for q in ("linear", "lower_step", "inverted_cdf") for s in ("fast", "exact")
 )
 
 
@@ -68,9 +67,12 @@ class ReduceRequest:
     ``rows_per_group`` are those of ``leaves``, summed. The statistics
     come back with the columns of `columns`.
 
-    Under ``pool_years`` no window mean is taken. Every row inside a
-    window is a member of the sample with its own time value, and a row
-    inside two windows is in both.
+    ``time_reduction`` is "window_mean", "pooled" or "per_year". Under
+    "pooled" no window mean is taken. Every row inside a window is a
+    member of the sample with its own time value, and a row inside two
+    windows is in both. Under "per_year" no window mean is taken either,
+    a leaf has one window, and the time value of a row inside it is
+    kept as a column of the statistics.
 
     ``include_n_bin_members`` adds a column 'n_bin_members', the
     distinct ``bin_member`` of the leaves behind a statistic. Under
@@ -96,7 +98,7 @@ class ReduceRequest:
     include_n_members: bool = False
     quantile_method: str = field(kw_only=True)
     summation: str = field(kw_only=True)
-    pool_years: bool = False
+    time_reduction: str = field(kw_only=True)
     include_n_bin_members: bool = False
     whole_spans: bool = False
     n_workers: int = 1
@@ -126,9 +128,14 @@ class ReduceRequest:
             list(self.id_fields)
             + kept_dims
             + kept_levels
-            + ["window", "statistic", self.value_col]
+            + ([self.time_col] if self.time_reduction == "per_year" else ["window"])
+            + ["statistic", self.value_col]
             + (["n_members"] if self.include_n_members else [])
-            + (["n_sample"] if self.include_n_members and self.pool_years else [])
+            + (
+                ["n_sample"]
+                if self.include_n_members and self.time_reduction == "pooled"
+                else []
+            )
             + (["n_bin_members"] if self.include_n_bin_members else [])
         )
 

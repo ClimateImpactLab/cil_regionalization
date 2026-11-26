@@ -5,6 +5,7 @@ The pool runs the same leaves twice, once with about 1.4 tasks a worker
 and once with every task halved, at whatever worker count the machine
 has.
 """
+
 from __future__ import annotations
 
 import logging
@@ -65,10 +66,14 @@ def test_label_placement_gives_the_same_leaf():
     # were left with nothing, so those are counted here.
     n_targets = len(art.frame[ID_FIELDS].drop_duplicates())
     n_absent = n_targets - len(applied) // len(YEARS)
-    report(f"leaf: {len(leaf):,} rows read, {len(applied):,} after "
-           f"apply_weights, {len(before):,} reduced")
-    report(f"  skipped: {len(result.coverage.zero_weight):,} regions with no crop "
-           f"area, so {n_absent:,} of {n_targets:,} targets are not in the output")
+    report(
+        f"leaf: {len(leaf):,} rows read, {len(applied):,} after "
+        f"apply_weights, {len(before):,} reduced"
+    )
+    report(
+        f"  skipped: {len(result.coverage.zero_weight):,} regions with no crop "
+        f"area, so {n_absent:,} of {n_targets:,} targets are not in the output"
+    )
     report(f"  apply_weights, bare leaf:               {apply_s:.3f} s")
     report(f"  apply_weights, labels on the leaf:      {first_s:.3f} s")
     report(f"  window_means, labels before reducing:   {before_s:.3f} s")
@@ -109,7 +114,11 @@ def test_finer_tasks_give_the_same_leaves():
     fine_s, fine = _pool_run(2 * n_coarse, half)
     assert fine == coarse
 
-    report(f"pool of {POOL_WORKERS} workers, {len(coarse)} leaves at 1/{POOL_SCALE} size")
+    report(
+        f"pool of {POOL_WORKERS} workers, {len(coarse)} leaves at 1/{POOL_SCALE} size"
+    )
     report(f"  {n_coarse} tasks of {2 * half} leaves:  {coarse_s:.1f} s")
-    report(f"  {2 * n_coarse} tasks of {half} leaves:  {fine_s:.1f} s "
-           f"({fine_s / coarse_s:.0%} of the coarse run)")
+    report(
+        f"  {2 * n_coarse} tasks of {half} leaves:  {fine_s:.1f} s "
+        f"({fine_s / coarse_s:.0%} of the coarse run)"
+    )

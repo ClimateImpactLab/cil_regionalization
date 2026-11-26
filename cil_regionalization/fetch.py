@@ -28,6 +28,7 @@ against the cached manifest on every use; a corrupt cache entry raises
 instead of loading. ``list_cached`` and ``clear_cache`` (or
 ``cilreg cache list|clear``) show and remove cache contents.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -43,6 +44,14 @@ from pathlib import Path
 from typing import Any
 
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised only on 3.10
+    import tomli as tomllib
+
+from cil_regionalization.apply import WeightsArtifact
+
+
 def _ssl_context() -> ssl.SSLContext:
     """An SSL context that finds a CA bundle on hosts whose OpenSSL has
     none configured (some cluster environments). certifi's bundle is
@@ -54,12 +63,6 @@ def _ssl_context() -> ssl.SSLContext:
     except ImportError:
         return ssl.create_default_context()
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - exercised only on 3.10
-    import tomli as tomllib
-
-from cil_regionalization.apply import WeightsArtifact
 
 DEFAULT_BASE_URL = "https://zenodo.org"
 _CHUNK = 1 << 20
@@ -194,7 +197,10 @@ def _record_files(entry: RegistryEntry) -> dict[str, dict[str, Any]]:
 def _download(url: str, dest: Path, *, expected_size: int | None) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with urllib.request.urlopen(url, context=_ssl_context()) as resp, dest.open("wb") as out:
+        with (
+            urllib.request.urlopen(url, context=_ssl_context()) as resp,
+            dest.open("wb") as out,
+        ):
             shutil.copyfileobj(resp, out, _CHUNK)
     except urllib.error.HTTPError as e:
         dest.unlink(missing_ok=True)
@@ -327,18 +333,14 @@ def fetch_weights(
     parquet_tmp = target / ".partial.parquet"
     try:
         meta = files[entry.manifest]
-        _download(
-            meta["links"]["self"], manifest_tmp, expected_size=meta.get("size")
-        )
+        _download(meta["links"]["self"], manifest_tmp, expected_size=meta.get("size"))
         _verify_transport(manifest_tmp, meta)
         manifest_doc = json.loads(manifest_tmp.read_text())
         # Fail before the large download if the manifest cannot verify it.
         _manifest_sha256(manifest_doc, entry.parquet)
 
         meta = files[entry.parquet]
-        _download(
-            meta["links"]["self"], parquet_tmp, expected_size=meta.get("size")
-        )
+        _download(meta["links"]["self"], parquet_tmp, expected_size=meta.get("size"))
         _verify_transport(parquet_tmp, meta)
         _verify_content(parquet_tmp, manifest_doc, entry.parquet)
 
@@ -375,9 +377,7 @@ def list_cached(cache_dir: str | Path | None = None) -> list[dict[str, Any]]:
     return out
 
 
-def clear_cache(
-    cache_dir: str | Path | None = None, *, name: str | None = None
-) -> int:
+def clear_cache(cache_dir: str | Path | None = None, *, name: str | None = None) -> int:
     """Remove cached artifacts; all of them, or just ``name``. Returns count."""
     cache = Path(cache_dir) if cache_dir is not None else default_cache_dir()
     removed = 0

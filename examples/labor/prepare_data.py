@@ -23,6 +23,7 @@ shares still sum to one per region. The display layer dissolves the
 impact region shapes by the state each region mostly falls in; it is
 for the figures, not a boundary dataset.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -36,9 +37,15 @@ import xarray as xr
 
 import cil_regionalization as cilreg
 
-TREE = Path("/project/cil/gcp/outputs/labor/impacts-woodwork/montecarlo/uninteracted_main_model_27_37_39")
-POPULATION = Path("/project/cil/gcp/social/baselines/population/merged/population-merged.SSP3.csv")
-IR_SHAPES = Path("/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp")
+TREE = Path(
+    "/project/cil/gcp/outputs/labor/impacts-woodwork/montecarlo/uninteracted_main_model_27_37_39"
+)
+POPULATION = Path(
+    "/project/cil/gcp/social/baselines/population/merged/population-merged.SSP3.csv"
+)
+IR_SHAPES = Path(
+    "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
+)
 SMME = Path("/project/cil/gcp/climate/BCSD/SMME/SMME-weights/rcp85_SMME_weights.tsv")
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
@@ -164,9 +171,7 @@ def build_population(keep: list[str]) -> None:
     assert not missing, f"regions absent from the SSP series: {sorted(missing)}"
     grid = pop.pivot(index="region", columns="year", values="value")
     years = list(range(YEARS.start, YEARS.stop + 1))
-    out = pd.DataFrame(
-        {y: grid[5 * (y // 5)] for y in years}
-    ).reindex(keep)
+    out = pd.DataFrame({y: grid[5 * (y // 5)] for y in years}).reindex(keep)
     assert out.notna().all().all() and (out >= 0).all().all()
     long = out.reset_index(names="hierid").melt(
         id_vars="hierid", var_name="year", value_name="population"
@@ -197,7 +202,7 @@ def build_display_layer(keep: list[str]) -> None:
 
 
 def write_smme() -> None:
-    table = pd.read_csv(_mounted(SMME), sep="\t", usecols=["model", "weight"])
+    table = pd.read_csv(SMME, sep="\t", usecols=["model", "weight"])
     table.to_csv(DATA / "smme_weights_rcp85.csv", index=False)
     print(f"smme weights: {len(table)} models")
 

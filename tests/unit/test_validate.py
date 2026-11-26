@@ -1,4 +1,5 @@
 """Sum-to-1 validator: clean and corrupted output frames."""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -28,9 +29,7 @@ def _clean_frame() -> pd.DataFrame:
 
 class TestCleanFrame:
     def test_clean_frame_passes(self):
-        schema = OutputSchema(
-            id_fields=("region_id",), weight_names=("pop", "area")
-        )
+        schema = OutputSchema(id_fields=("region_id",), weight_names=("pop", "area"))
         report = check_sum_to_one(_clean_frame(), schema, tolerance=1e-9)
         assert report.ok
         assert report.n_regions == 2
@@ -245,9 +244,7 @@ class TestPolygonInvariants:
     def test_duplicate_pair_flagged(self):
         from cil_regionalization.validate import check_polygon_invariants
 
-        frame = pd.concat(
-            [self._clean_allocation_frame()] * 2, ignore_index=True
-        )
+        frame = pd.concat([self._clean_allocation_frame()] * 2, ignore_index=True)
         report = check_polygon_invariants(frame, self._schema())
         assert not report.ok
         assert (report.failures["_invariant"] == "duplicate_key").all()

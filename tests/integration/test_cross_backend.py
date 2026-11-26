@@ -22,13 +22,12 @@ uses a spheroidal model. Per-cell areas differ by O(1e-5) relative; the
 default ``cross_backend_tolerance = 1e-3`` (1e-3 of unity-summing
 weights) accommodates this comfortably without masking real bugs.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import geopandas as gpd
-import pandas as pd
 import pytest
 
 from cil_regionalization.backends.local import LocalBackend
@@ -211,9 +210,7 @@ from tests.conftest import S51_TEST_HIERIDS as _S51_TEST_HIERIDS
 _CROSS_HIERIDS = list(_S51_TEST_HIERIDS[:3])
 
 
-def _area_only_local_cfg(
-    regions_path: Path, out_dir: Path
-) -> Config:
+def _area_only_local_cfg(regions_path: Path, out_dir: Path) -> Config:
     return Config.model_validate(
         {
             "project": {"name": "stage4_cross_local"},
@@ -280,20 +277,15 @@ def _real_geometries(bq_client, tmp_path_factory):
     from google.cloud import bigquery
     from shapely import wkt as _wkt
 
-    params = [
-        bigquery.ArrayQueryParameter(
-            "hierids", "STRING", _CROSS_HIERIDS
-        )
-    ]
+    params = [bigquery.ArrayQueryParameter("hierids", "STRING", _CROSS_HIERIDS)]
     sql = (
         f"SELECT hierid, ST_ASTEXT(geometry) AS geometry "
         f"FROM `{_IR_TABLE}` "
         f"WHERE hierid IN UNNEST(@hierids)"
     )
     job_config = bigquery.QueryJobConfig(query_parameters=params)
-    df = (
-        bq_client.query(sql, job_config=job_config, location="us-west1")
-        .to_dataframe(create_bqstorage_client=False)
+    df = bq_client.query(sql, job_config=job_config, location="us-west1").to_dataframe(
+        create_bqstorage_client=False
     )
     df["geometry"] = df["geometry"].apply(_wkt.loads)
     gdf = gpd.GeoDataFrame(df, geometry="geometry", crs="EPSG:4326")
@@ -334,9 +326,7 @@ class TestCrossBackendArea:
     weights, orders of magnitude past this tolerance.
     """
 
-    def test_schemas_match(
-        self, bq_client, _real_geometries: Path, tmp_path: Path
-    ):
+    def test_schemas_match(self, bq_client, _real_geometries: Path, tmp_path: Path):
         from cil_regionalization.backends.bigquery import BigQueryBackend
 
         result_local = _run_local(
@@ -399,9 +389,7 @@ class TestCrossBackendArea:
     ):
         from cil_regionalization.backends.bigquery import BigQueryBackend
 
-        cfg_local = _area_only_local_cfg(
-            _real_geometries, tmp_path / "local"
-        )
+        cfg_local = _area_only_local_cfg(_real_geometries, tmp_path / "local")
         result_local = _run_local(cfg_local)
         cfg_bq = _area_only_bq_cfg(tmp_path / "bq")
         result_bq = BigQueryBackend().compute(
@@ -425,23 +413,25 @@ class TestCrossBackendArea:
             suffixes=("_local", "_bq"),
             how="inner",
         )
-        joined["deviation"] = (
-            joined["areawt_local"] - joined["areawt_bq"]
-        ).abs()
+        joined["deviation"] = (joined["areawt_local"] - joined["areawt_bq"]).abs()
         max_dev = float(joined["deviation"].max())
         tol = cfg_local.validation.cross_backend_tolerance
         if max_dev > tol:
-            forensic = joined.loc[
-                :,
-                [
-                    "hierid",
-                    "cell_ix",
-                    "cell_iy",
-                    "areawt_local",
-                    "areawt_bq",
-                    "deviation",
-                ],
-            ].sort_values("deviation", ascending=False).head(30)
+            forensic = (
+                joined.loc[
+                    :,
+                    [
+                        "hierid",
+                        "cell_ix",
+                        "cell_iy",
+                        "areawt_local",
+                        "areawt_bq",
+                        "deviation",
+                    ],
+                ]
+                .sort_values("deviation", ascending=False)
+                .head(30)
+            )
             forensic_path = tmp_path / "areawt_deviation_top30.csv"
             forensic.to_csv(forensic_path, index=False)
             pytest.fail(
@@ -468,9 +458,7 @@ class TestCrossBackendArea:
         """
         from cil_regionalization.backends.bigquery import BigQueryBackend
 
-        cfg_local = _area_only_local_cfg(
-            _real_geometries, tmp_path / "local"
-        )
+        cfg_local = _area_only_local_cfg(_real_geometries, tmp_path / "local")
         result_local = _run_local(cfg_local)
         cfg_bq = _area_only_bq_cfg(tmp_path / "bq")
         result_bq = BigQueryBackend().compute(
@@ -479,20 +467,15 @@ class TestCrossBackendArea:
             from_config_list(cfg_bq.weights),
             cfg_bq,
         )
-        joined = (
-            result_local.frame.merge(
-                result_bq.frame,
-                on=["hierid", "cell_ix", "cell_iy"],
-                suffixes=("_local", "_bq"),
-                how="inner",
-            )
-            .loc[lambda d: d["hierid"] == "BHR.5"]
-        )
+        joined = result_local.frame.merge(
+            result_bq.frame,
+            on=["hierid", "cell_ix", "cell_iy"],
+            suffixes=("_local", "_bq"),
+            how="inner",
+        ).loc[lambda d: d["hierid"] == "BHR.5"]
         if joined.empty:
             pytest.skip("BHR.5 not present in both frames; check fixture")
-        joined["deviation"] = (
-            joined["areawt_local"] - joined["areawt_bq"]
-        ).abs()
+        joined["deviation"] = (joined["areawt_local"] - joined["areawt_bq"]).abs()
         max_dev = float(joined["deviation"].max())
         if max_dev > 1e-4:
             forensic = joined[

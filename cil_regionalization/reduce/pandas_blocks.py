@@ -7,6 +7,7 @@ and no process ever holds more than its share of the memory budget.
 The numbers are those of `stats`, which this module calls and does not
 repeat.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,6 +28,7 @@ from cil_regionalization.reduce.base import (
     ReduceRequest,
 )
 from cil_regionalization.stats import (
+    GroupError,
     UnweightedModelWeightsWarning,
     _window_label,
     pooled_statistics,
@@ -58,12 +60,12 @@ def kept_share(request: ReduceRequest) -> float:
     """The rows a block keeps of a row group, as a share of the group's
     rows in the leaf files. A leaf's rows shrink to one a window where
     they were one a time value, and each leaf counts by its own windows
-    and its own time values, since two leaves may differ in both. Under
-    ``pool_years`` a leaf keeps its rows inside its windows, and a row
-    inside two windows counts twice."""
+    and its own time values, since two leaves may differ in both. When
+    no window mean is taken a leaf keeps its rows inside its windows,
+    and a row inside two windows counts twice."""
     kept = total = 0.0
     for leaf in request.leaves:
-        if request.pool_years:
+        if request.time_reduction != "window_mean":
             values = np.asarray(leaf.profile["values"], dtype=np.float64)
             rows = np.asarray(leaf.profile["rows"], dtype=np.float64)
             kept += sum(
@@ -130,9 +132,7 @@ class PandasBlocks(ReduceBackend):
         share = kept_share(request)
         row_bytes = bytes_per_row(request)
         try:
-            blocks = choose_blocks(
-                request.rows_per_group, share, per_worker, row_bytes
-            )
+            blocks = choose_blocks(request.rows_per_group, share, per_worker, row_bytes)
         except _TooSmall as error:
             needed = error.largest_group * n_workers / 1e9
             raise ValueError(
@@ -192,7 +192,7 @@ class PandasBlocks(ReduceBackend):
                 )
                 + f"with "
                 f"{plan['share']:.4g} of a group's rows kept"
-                f"{', each with its year' if request.pool_years else ''}. "
+                f"{', each with its year' if request.time_reduction != 'window_mean' else ''}. "
                 f"The rows of a "
                 f"group are known summed over the leaves, so this takes "
                 f"every leaf to spread its rows over the groups alike.",
@@ -293,9 +293,7 @@ def _leaf_rows(
     spans: dict[tuple[float, float], list[str]] = {}
     for label, start, end in leaf.windows:
         spans.setdefault((start, end), []).append(label)
-    present = [
-        span for span in spans if times.between(span[0], span[1]).any()
-    ]
+    present = [span for span in spans if times.between(span[0], span[1]).any()]
     if not present:
         return None
     reduced = window_means(
@@ -354,33 +352,60 @@ def _leaf_years(
 _BIN = "bin_member_code"
 
 
+def _by_id(request: ReduceRequest, group: dict) -> dict:
+    """``group`` with the target's ordinal replaced by its id fields,
+    from the target table."""
+    if leaf_format.ORDINAL_COLUMN not in group:
+        return group
+    rest = {k: v for k, v in group.items() if k != leaf_format.ORDINAL_COLUMN}
+    ids = _STATE["targets"].ids[int(group[leaf_format.ORDINAL_COLUMN])]
+    return {**dict(zip(request.id_fields, ids)), **rest}
+
+
+def _leaf_span(
+    request: ReduceRequest, leaf, frame: pd.DataFrame
+) -> pd.DataFrame | None:
+    """One leaf's rows of a block inside its one window, with their time
+    value, which stays a column of the statistics. None if the window
+    has no row here."""
+    ((_, start, end),) = leaf.windows
+    inside = frame[request.time_col].between(start, end).to_numpy()
+    if not inside.any():
+        return None
+    group = [c for c in frame.columns if c not in (request.time_col, request.value_col)]
+    return frame.loc[inside, group + [request.time_col, request.value_col]]
+
+
 def _with_counts(
     stats: pd.DataFrame, members: list[pd.DataFrame], request: ReduceRequest
 ) -> pd.DataFrame:
     """The statistics with the counts that come from ``members``, which
     holds one row for each member with a value in a window. Under
-    ``pool_years`` the count `pooled_statistics` gave is the rows
+    "pooled" the count `pooled_statistics` gave is the rows
     behind a statistic and becomes 'n_sample', and 'n_members' is the
     rows of ``members`` behind it. 'n_bin_members' is the distinct bin
     members among those rows."""
-    if request.pool_years:
+    if request.time_reduction == "pooled":
         stats = stats.rename(columns={"n_members": "n_sample"})
     identity = [
-        c for c in stats.columns
+        c
+        for c in stats.columns
         if c not in ("statistic", request.value_col, "n_members", "n_sample")
     ]
     grouped = _plain_labels(pd.concat(members, ignore_index=True)).groupby(
         identity, sort=False, observed=True
     )
     counts = []
-    if request.pool_years:
+    if request.time_reduction == "pooled":
         counts.append(grouped.size().rename("n_members"))
     if request.include_n_bin_members:
         counts.append(grouped[_BIN].nunique().rename("n_bin_members"))
     names = [count.name for count in counts]
     stats = stats.merge(
         pd.concat(counts, axis=1).reset_index(),
-        on=identity, how="left", validate="many_to_one",
+        on=identity,
+        how="left",
+        validate="many_to_one",
     )
     for name in names:
         stats[name] = stats[name].fillna(0).astype(np.int64)
@@ -393,9 +418,7 @@ def _check_whole_spans(request: ReduceRequest, leaf, frame: pd.DataFrame) -> Non
     would be over fewer years than the window says."""
     times = frame[request.time_col]
     has_value = frame[request.value_col].notna().to_numpy()
-    group = [
-        c for c in frame.columns if c not in (request.time_col, request.value_col)
-    ]
+    group = [c for c in frame.columns if c not in (request.time_col, request.value_col)]
     for _, start, end in leaf.windows:
         valid = times.between(start, end).to_numpy() & has_value
         n_years = int(end) - int(start) + 1
@@ -441,7 +464,8 @@ def _reduce_block(block: tuple[int, int]) -> dict:
         for i in range(len(request.level_names))
     ]
     weighted = request.weighted
-    pooled = request.pool_years
+    pooled = request.time_reduction == "pooled"
+    per_year = request.time_reduction == "per_year"
     count_bins = request.include_n_bin_members
     count_members = (pooled and request.include_n_members) or count_bins
     bins = list(dict.fromkeys(leaf.bin_member for leaf in request.leaves))
@@ -461,7 +485,10 @@ def _reduce_block(block: tuple[int, int]) -> dict:
         frame = table.to_pandas()
         if request.whole_spans:
             _check_whole_spans(request, leaf, frame)
-        reduced = (_leaf_years if pooled else _leaf_rows)(request, leaf, frame)
+        if per_year:
+            reduced = _leaf_span(request, leaf, frame)
+        else:
+            reduced = (_leaf_years if pooled else _leaf_rows)(request, leaf, frame)
         if reduced is None:
             continue
         pieces = [reduced]
@@ -472,15 +499,16 @@ def _reduce_block(block: tuple[int, int]) -> dict:
             has_value = reduced[request.value_col].notna().to_numpy()
             with_value = reduced.loc[
                 has_value,
-                [c for c in reduced.columns
-                 if c not in (request.time_col, request.value_col)],
+                [
+                    c
+                    for c in reduced.columns
+                    if c not in (request.time_col, request.value_col)
+                ],
             ]
             # a window mean is one row a member already
-            pieces.append(
-                with_value.drop_duplicates() if pooled else with_value.copy()
-            )
+            pieces.append(with_value.drop_duplicates() if pooled else with_value.copy())
         for piece in pieces:
-            at = list(piece.columns).index("window")
+            at = list(piece.columns).index(request.time_col if per_year else "window")
             for i, name in enumerate(request.level_names):
                 # one code a row and the leaf's value once, not a string
                 # a row
@@ -502,7 +530,7 @@ def _reduce_block(block: tuple[int, int]) -> dict:
                     len(pieces[1].columns), _BIN, bins.index(leaf.bin_member)
                 )
             members.append(pieces[1])
-        if not pooled:
+        if request.time_reduction == "window_mean":
             reduced["window"] = pd.Categorical(
                 reduced["window"], categories=list(request.window_labels)
             )
@@ -514,33 +542,40 @@ def _reduce_block(block: tuple[int, int]) -> dict:
     if not frames:
         # `pooled_statistics` is not asked about nothing
         return {
-            "block": block, "stats": pd.DataFrame(), "rows": 0,
-            "failed_opens": failed_opens, "peak_gb": round(_peak_gb(), 2),
+            "block": block,
+            "stats": pd.DataFrame(),
+            "rows": 0,
+            "failed_opens": failed_opens,
+            "peak_gb": round(_peak_gb(), 2),
         }
     combined = pd.concat(frames, ignore_index=True)
     del frames
     with warnings.catch_warnings():
         # the parent says it once
         warnings.simplefilter("ignore", UnweightedModelWeightsWarning)
-        stats = pooled_statistics(
-            combined,
-            sample_dims=list(request.sample_dims)
-            + ([request.time_col] if pooled else []),
-            value_col=request.value_col,
-            quantiles=list(request.quantiles),
-            include_mean=request.include_mean,
-            weight_col="model_weight" if weighted else None,
-            include_n_members=request.include_n_members,
-            quantile_method=request.quantile_method,
-            summation=request.summation,
-        )
+        try:
+            stats = pooled_statistics(
+                combined,
+                sample_dims=list(request.sample_dims)
+                + ([request.time_col] if pooled else []),
+                value_col=request.value_col,
+                quantiles=list(request.quantiles),
+                include_mean=request.include_mean,
+                weight_col="model_weight" if weighted else None,
+                include_n_members=request.include_n_members,
+                quantile_method=request.quantile_method,
+                summation=request.summation,
+            )
+        except GroupError as error:
+            # the frame names a target by its ordinal, the reader by its id
+            raise error.naming(_by_id(request, error.group)) from None
     del combined
     stats = _plain_labels(stats)
     if count_members:
         stats = _with_counts(stats, members, request)
     # the ids go on last, one lookup a statistics row
     per_group = request.footer["targets_per_group"]
-    block_ids = _STATE["targets"].ids[first * per_group:stop * per_group]
+    block_ids = _STATE["targets"].ids[first * per_group : stop * per_group]
     ordinals = stats.pop(leaf_format.ORDINAL_COLUMN).to_numpy() - first * per_group
     for i, field in enumerate(request.id_fields):
         ids = np.array([row[i] for row in block_ids], dtype=object)

@@ -4,6 +4,7 @@
 - `rates/` aggregates mortality rates for Mexico to municipalities using both GADM 2.0 and GADM 4.1. It shows how to aggregate rates, what changed between the two boundary versions, and which units can be compared. An interactive map shows the results for both versions.
 - `climate/` is the CMIP5 climate example. It uses daily BCSD temperatures for the Philippines and Germany to calculate degree days and days above 35°C, then aggregates them to provinces and impact regions. It includes a short quickstart and a longer notebook explaining each step. The README also has a snippet that counts days above 35°C over the full grid and aggregates them to all impact regions with the segment weights.
 - `cmip6/` is the CMIP6 climate example. It counts days above 95F for four Peruvian provinces from GDPCIR daily tasmax, daily tavg and monthly tavg, and shows that only the first is the count, even where another lands close. It aggregates with the production weight tables at impact region, ADM2 and ADM1, and compares three models with the spread of all twenty from the climate tables.
+- `france/` is the whole chain in one marimo notebook, for mortality in metropolitan France. It builds weights on IGN's ADMIN EXPRESS boundaries with `cilreg run`, compares them with the published GADM weights, applies them as a total, a rate and a share of GDP, takes the statistics with and without the climate model weights, and runs `cilreg pipeline` over a Monte Carlo tree for the window mean, pooled and per year products and for warming levels. The test suite runs it on synthetic data of the same layout.
 - `energy_percentiles/` takes the delta-method gradients of the electricity projections for Qatar and Iceland, values them in dollars, aggregates them to provinces and countries, and mixes 33 climate projections into percentiles. It shows why the variance of a total has to be taken at the target, and maps the change per person in Chile and Austria at four levels.
 - `gadm20/` prepares the GADM 2.0 target layers and contains the configurations used to generate the published GADM 2.0 weights.
 - `gadm41/` does the same for GADM 4.1.
@@ -23,3 +24,6 @@ directory. Six finished and left the cache empty; the aggregation
 notebook stopped at its first `fetch_weights` call. The `cmip6/`
 notebook, added later, reads only its `data/` directory too. It was
 run the same way the same day, finished, and left the cache empty.
+The `france/` notebook needs the network for section 3, which fetches
+the published weights, unless `FRANCE_OFFLINE=1`, and its section 8
+needs the temperature table, which is not committed.

@@ -6,6 +6,7 @@ against a `RegionSet` and a `GridSpec`. Both return a `WeightsResult` whose
 local backends disagree on (boundary fractions, geodesic vs spherical
 predicates) is documented at the call site, not hidden in a switch.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

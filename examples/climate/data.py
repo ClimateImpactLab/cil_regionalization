@@ -1,4 +1,5 @@
 """Where the example's committed files are, and how to read them."""
+
 from __future__ import annotations
 
 from pathlib import Path

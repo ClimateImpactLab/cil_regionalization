@@ -4,6 +4,7 @@ The plain path checks duplicates with `DataFrame.duplicated` and runs a
 groupby over the key columns for each window. The library works both
 out from one set of integer group codes.
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -38,7 +39,11 @@ def test_group_codes_match_the_plain_path():
     plain_s, plain = best(lambda: plain_window_means(leaf))
     codes_s, codes = best(
         lambda: window_means(
-            leaf, time_col="year", windows=WINDOWS, value_col="pct", summation="fast",
+            leaf,
+            time_col="year",
+            windows=WINDOWS,
+            value_col="pct",
+            summation="fast",
         )
     )
     pd.testing.assert_frame_equal(codes, plain, check_exact=True)

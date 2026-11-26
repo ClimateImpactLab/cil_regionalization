@@ -8,10 +8,73 @@
 Climate impact results come at impact region level, but most analyses
 need them at country, state, or district level. This package does that
 aggregation step. Published weight files describe how impact regions
-overlap administrative units; the library downloads them, applies them
-to your data, and computes statistics. It can also generate new weight
-files between any two sets of geometries when the published ones do
-not cover your case.
+overlap administrative units, and the library applies them to your
+data and takes the statistics over the Monte Carlo draws. It does four
+things.
+
+- **Apply published weights.** `fetch_weights` downloads a weight file
+  and `apply_weights` aggregates impact region values to its units, as
+  a total, an average or a ratio. See the [quick
+  example](#quick-example), [choosing the right type of
+  weights](#choosing-the-right-type-of-weights) and [your own
+  NetCDF](#your-own-netcdf).
+- **Take statistics over the members.** `summarize_samples` averages
+  the years of a window and takes means and quantiles over the draws
+  and the climate models, with or without the climate model weights.
+  See [climate model weights](#climate-model-weights) and [what
+  happens to the years](#what-happens-to-the-years).
+- **Run a whole projection tree.** `cilreg pipeline <config.toml>`
+  aggregates every leaf of a Monte Carlo tree, takes the statistics
+  over calendar windows or warming levels, and writes a manifest of
+  what made them. See [reading the Monte Carlo
+  trees](#reading-the-monte-carlo-trees), [warming
+  levels](#warming-levels) and [keeping the aggregated
+  leaves](#keeping-the-aggregated-leaves).
+- **Generate new weights** between any two sets of geometries, when the
+  published ones do not cover your case. See [generating new
+  weights](#generating-new-weights).
+
+Every public function, class and config key is in
+[the reference](docs/reference.md), with its signature, its default
+and its docstring. The [worked examples](#worked-example) are whole
+runs on real projections, with their outputs committed.
+
+## Installation
+
+Straight from GitHub:
+
+```
+pip install "git+https://github.com/ClimateImpactLab/cil_regionalization.git"
+pip install "cil_regionalization[netcdf] @ git+https://github.com/ClimateImpactLab/cil_regionalization.git"
+```
+
+or from a clone:
+
+```
+pip install .                # library and CLI
+pip install '.[netcdf]'      # also read NetCDF Monte Carlo trees
+```
+
+`uv pip install .` works too. The geospatial stack (geopandas,
+shapely, rasterio, exactextract) installs with it and ships wheels on
+Linux and macOS. `[netcdf]` reads the NetCDF Monte Carlo trees,
+`[examples]` adds what the example notebooks need (the NetCDF readers,
+jupyter and matplotlib), `[bigquery]` adds the BigQuery generation
+backend, `[dev]` adds pytest. Python 3.10 or newer.
+
+To run the examples from a clone at the versions in `uv.lock` (on
+Python 3.11 and newer, the versions in
+`envs/requirements-cluster.freeze.txt`, which the test suite passed
+against):
+
+```
+uv sync --extra examples
+```
+
+The `envs/` directory and `examples/montecarlo/runs/` exist to
+reproduce the runs behind the published results on the University of
+Chicago RCC cluster; they are not part of installing or using the
+package.
 
 ## Quick example
 
@@ -145,9 +208,7 @@ w = pd.read_csv(
     sep="\t",
 )[["model", "weight"]]
 w["key"] = w["model"].str.replace("*", "", regex=False).str.lower()
-draws["key"] = (
-    draws["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-)
+draws["key"] = draws["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
 draws = draws.merge(w[["key", "weight"]], on="key").drop(columns="key")
 stats = cilreg.summarize_samples(
     draws,
@@ -195,8 +256,12 @@ dimension named `gcm` without weights warns once; filter
 `quantile_method` says how a quantile is computed, by the name of
 the computation:
 
-- `"linear"` interpolates between members, as pandas does. It has no
-  weighted form and is refused with weights.
+- `"linear"` interpolates between members. It is computed by numpy,
+  so it is `numpy.quantile(method="linear")` and xarray's `.quantile`
+  to the last bit. It has no weighted form and is refused with
+  weights. Where numpy's interpolation meets an infinite member it
+  gives NaN, even for a median of 1, 2 and an infinity, and such a
+  quantile is refused rather than written as a group with no value.
 - `"lower_step"` is the step of the historical extraction tool: the
   member one below the one whose cumulative weight share reaches q.
   Without weights every member counts the same, which is what that
@@ -219,7 +284,12 @@ fourth, and the fourth.
   depend on the order the rows arrive in, which in a pipeline run with
   several workers is the order the workers finish in.
 - `"exact"` takes the window means and the pooled mean from exactly
-  rounded sums, so the order cannot change them.
+  rounded sums, so the order cannot change them. With weights it also
+  takes the cumulative weight shares of `"lower_step"` and
+  `"inverted_cdf"` from exact sums, and takes equal values in order of
+  weight. A share that equals q in exact arithmetic is then decided by
+  the rule and not by the order the weights were added in, and the row
+  order cannot move a quantile.
 
 Neither option has a default. `summarize_samples` and
 `pooled_statistics` take both, `window_means` takes `summation`, and a
@@ -229,7 +299,9 @@ infinite raises instead of being returned; NaN does not.
 
 Files made before v0.6.0 had no such options. They are reproduced by
 `"lower_step"` if the run had weights and `"linear"` if it had none,
-with `"fast"`.
+with `"fast"`. Those without weights took their quantiles from pandas,
+whose arithmetic for the same interpolation differs from numpy's in
+the last bit of about one quantile in a hundred.
 
 ## Warming levels
 
@@ -289,7 +361,10 @@ member of its own and needs its own rows. A member that lacks a year
 of the reference period or of a `gmst_span` is refused by name.
 
 In a pipeline config the same settings go under
-`[stats.warming_levels]`, in place of `stats.windows`:
+`[stats.warming_levels]`, in place of `stats.windows`. The example is
+a physical product as the Inequality Paper makes one: each member's
+window is collapsed to its mean first, over nineteen impact years, and
+the quantile is the extraction tool's step.
 
 ```toml
 [stats]
@@ -298,6 +373,7 @@ time_col = "year"
 quantiles = [0.05, 0.5, 0.95]
 quantile_method = "lower_step"
 summation = "fast"
+time_reduction = "window_mean"
 
 [stats.warming_levels]
 gmst = "gmst.csv"
@@ -335,19 +411,27 @@ distinct members of the temperature table behind it, which is the
 number to read a 95th percentile over four models by. A level nobody
 is at in a period has no row, and the manifest records it with a zero.
 
-The statistics come from the leaf files under every stage, as with
-`stats.pool_years`, so stage `all` writes the leaves and then reduces
-them, and `--stage reduce` gives other levels, other periods or the
-other reduction from the same leaves. Collapsing each member's window
-first is the default, and `stats.pool_years = true` pools the years
-instead. The span is what is written: `[2040, 2058]` is nineteen
-years.
+The statistics come from the leaf files under every stage, as when
+the years are pooled, so stage `all` writes the leaves and then
+reduces them, and `--stage reduce` gives other levels, other periods
+or the other reduction from the same leaves. `time_reduction =
+"window_mean"` collapses each member's window first and `"pooled"`
+pools its years. `"per_year"` is refused with warming levels, since a
+level is reached over a period. The span is what is written:
+`[2040, 2058]` is nineteen years.
 
 A config that leaves out `reference_period`, `offset`, `levels`,
 `half_width`, `smoothing` or `periods` is refused. So is one that sets
 `stats.windows` or `stats.model_weights` as well: the members at a
-warming level count equally. `quantile_method = "lower_step"` is the
-extraction tool's quantile for that case. A member the tree declares
+warming level count equally.
+
+The paper's two families differ in both settings. Its physical
+products collapse each member's window first and take the extraction
+tool's step, so `quantile_method = "lower_step"`, as in the example.
+Its valued products pool the years with the models and the draws over
+twenty years and take xarray's quantile, so `time_reduction =
+"pooled"` with `quantile_method = "linear"` and periods whose impact
+span is twenty years. A member the tree declares
 that has no row in the table is refused before any leaf is read. A
 leaf that lacks a year of an impact span its member is pooled over, as
 a row or as a value, is refused by name, since its mean would be over
@@ -449,18 +533,27 @@ plain string when leaves are written. A categorical, datetime or
 nullable column is refused, because pandas 2 and pandas 3 write those
 differently.
 
-## Pooling the years of a window
+## What happens to the years
 
-By default the years of a member inside a window are averaged first,
-and the statistics are over those means, one value a model and draw.
-`stats.pool_years = true` (experimental) takes no window mean. Every
-year of a member inside a window is a member of the sample, so a
-quantile is over models, draws and years together and carries the
-spread from year to year. A year inside two windows is pooled in both.
+`stats.time_reduction` says what is done with the years of a member,
+and has no default:
+
+- `"window_mean"` averages each member's years inside a window first,
+  and the statistics are over those means, one value a model and draw.
+- `"pooled"` takes no window mean. Every year of a member inside a
+  window is a member of the sample, so a quantile is over models,
+  draws and years together and carries the spread from year to year.
+  A year inside two windows is pooled in both.
+- `"per_year"` takes no window mean either and keeps the year. The
+  statistics are over the members within each year from the first to
+  the last of `stats.years`, which takes the place of `stats.windows`,
+  and the file has a `year` column where the others have `window`. It
+  is a time series, one row a target, year and statistic.
 
 ```toml
 [stats]
-pool_years = true
+time_reduction = "per_year"
+years = [2020, 2099]
 
 [output]
 write_leaves = true
@@ -469,17 +562,21 @@ write_leaves = true
 memory_gb = 128
 ```
 
-The pooled rows are the leaves' own rows, far more than one process
-can hold, so the statistics always come from the leaf files, one block
-of targets at a time. Stage `all` writes the leaves and then reduces
-them. It asks for `output.write_leaves = true` and for the memory
-budget before it reads a leaf. The blocks are sized after the leaves
-are written, so a budget too small for one row group is found then.
-The leaves stay, and `--stage reduce` takes the statistics from them
-with a larger budget. `output.write_reduced` is refused, and so is a
-run without `[weights]`.
+The rows of `"pooled"` and `"per_year"` are the leaves' own rows, far
+more than one process can hold, so their statistics always come from
+the leaf files, one block of targets at a time. Stage `all` writes the
+leaves and then reduces them. It asks for `output.write_leaves = true`
+and for the memory budget before it reads a leaf. The blocks are sized
+after the leaves are written, so a budget too small for one row group
+is found then. The leaves stay, and `--stage reduce` takes the
+statistics from them with a larger budget. `output.write_reduced` is
+refused, and so is a run without `[weights]`. A config that still has
+`stats.pool_years` is refused and told which value to write.
 
-What it changes:
+Per year, a year a member lacks is left out of that year's statistics,
+and `n_members` shows the smaller sample. Nothing is refused for it.
+
+What pooling changes:
 
 - The mean is over member-years. When every member has every year of
   the window it is the mean of the window means, up to rounding. A
@@ -492,8 +589,8 @@ What it changes:
   what it is without pooling, the members behind a statistic: those
   with a value in the window and, with model weights, a weight above
   zero. `n_sample` is the member-years behind it.
-- The manifest records `pool_years`, next to `quantile_method` and
-  `summation`.
+- The manifest records `time_reduction`, next to `quantile_method`
+  and `summation`, and `years` for a product per year.
 
 ## Your own NetCDF
 
@@ -502,9 +599,9 @@ coordinates, becomes a cell table in one call:
 
 ```python
 cells, grid = cilreg.read_netcdf_grid("tas.nc", ["tas"])
-out = cilreg.apply_weights(weights, cells, kind="intensive",
-                           weight="pop", value_col="tas",
-                           data_version=grid)
+out = cilreg.apply_weights(
+    weights, cells, kind="intensive", weight="pop", value_col="tas", data_version=grid
+)
 ```
 
 The grid identity comes from the coordinates (resolution, cell centres
@@ -523,6 +620,14 @@ no data; a cell masked in only some slices raises.
 
 ## Worked example
 
+`examples/france/` is the whole chain in one notebook, for mortality in
+metropolitan France. It builds weights on boundaries of its own with
+`cilreg run`, fetches the published ones, applies them three ways,
+takes the statistics with and without the climate model weights, runs
+`cilreg pipeline` over a Monte Carlo tree for the three time
+reductions and the warming levels, and checks the manifests against
+the files. Each of the other examples covers one piece.
+
 `examples/aggregation/` aggregates one batch of Monte Carlo mortality
 projections, all 33 climate models, for Colombia. Its notebook maps a
 single draw next to a pooled quantile, shows percent of GDP with the
@@ -540,43 +645,6 @@ temperature for the Philippines and Germany and aggregates heating and
 cooling degree days to impact regions, through segment weights read
 with `from_table`, and to provinces with the grid weights. Notebook
 outputs are committed, so they read without running.
-
-## Installation
-
-Straight from GitHub:
-
-```
-pip install "git+https://github.com/ClimateImpactLab/cil_regionalization.git"
-pip install "cil_regionalization[netcdf] @ git+https://github.com/ClimateImpactLab/cil_regionalization.git"
-```
-
-or from a clone:
-
-```
-pip install .                # library and CLI
-pip install '.[netcdf]'      # also read NetCDF Monte Carlo trees
-```
-
-`uv pip install .` works too. The geospatial stack (geopandas,
-shapely, rasterio, exactextract) installs with it and ships wheels on
-Linux and macOS. `[netcdf]` reads the NetCDF Monte Carlo trees,
-`[examples]` adds what the example notebooks need (the NetCDF readers,
-jupyter and matplotlib), `[bigquery]` adds the BigQuery generation
-backend, `[dev]` adds pytest. Python 3.10 or newer.
-
-To run the examples from a clone at the versions in `uv.lock` (on
-Python 3.11 and newer, the versions in
-`envs/requirements-cluster.freeze.txt`, which the test suite passed
-against):
-
-```
-uv sync --extra examples
-```
-
-The `envs/` directory and `examples/montecarlo/runs/` exist to
-reproduce the runs behind the published results on the University of
-Chicago RCC cluster; they are not part of installing or using the
-package.
 
 ## Generating new weights
 
@@ -629,13 +697,12 @@ the dissolve scripts under `examples/gadm20/` and `examples/gadm41/`.
 The targets manifest records the source file's checksum, so you can
 confirm a regenerated set started from the same input.
 
-## More detail
+## Reference
 
-`fetch_weights`, `generate_weights`, `apply_weights`, `read_netcdf_grid`, `summarize_samples`,
-`window_means`, `pooled_statistics`, `read_gmst`,
-`assign_warming_levels`, `read_gradient_leaf`,
-`aggregate_gradient`, `delta_method`, `WeightsArtifact`, and
-`load_config` are the supported API, re-exported at the package root.
-`window_means` and `pooled_statistics` are the two halves of
-`summarize_samples`, for pipelines that reduce time per leaf before
-pooling. Everything else is internal and may change.
+[docs/reference.md](docs/reference.md) lists every name that
+`import cil_regionalization as cilreg` gives, with its signature and
+its docstring, and every key of the weights config and of the pipeline
+config, with its type and its default. `docs/make_reference.py` writes
+it from the package, and the test suite fails when it is out of date.
+A name that is not in it is internal and may change. `cilreg --help`
+and `cilreg <command> --help` describe the command line.

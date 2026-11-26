@@ -3,6 +3,7 @@
 The pipeline asks for statistics with a `ReduceRequest`. A backend
 decides how to compute them. `pandas_blocks` is the one backend.
 """
+
 from cil_regionalization.reduce.base import (
     LeafRequest,
     PandasReduceOptions,

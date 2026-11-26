@@ -5,6 +5,7 @@ tests of a band's ends use a period of one year, so a mean is the one
 subtraction and the one addition that make it and nothing is rounded
 on the way.
 """
+
 from __future__ import annotations
 
 import json
@@ -79,6 +80,15 @@ class TestRebasing:
         assert got.means[("b", "rcp45")] == (2.0, 3.5)
         assert got.levels[("b", "rcp45")] == (2.0, None)
 
+    def test_the_reference_is_the_mean_of_every_year_of_the_period(self):
+        """The reference years go -0.75, -0.25, 0.25 and 0.75 five times
+        over, so their mean is 0 and their first year is -0.75."""
+        series = _series(0.0, 1.0, 2.5)
+        series.update({1986 + i: (-0.75, -0.25, 0.25, 0.75)[i % 4] for i in range(20)})
+        got = _assign(_table({("a", "rcp45"): series}))
+        assert got.means[("a", "rcp45")] == (1.5, 3.0)
+        assert got.levels[("a", "rcp45")] == (1.5, 3.0)
+
     def test_another_reference_period_and_offset_give_other_levels(self):
         """The same table against 2040 to 2059 with no offset. Both are
         values, and neither has a default."""
@@ -95,8 +105,12 @@ class TestRebasing:
     def test_nothing_that_decides_a_level_has_a_default(self, left_out):
         table = _table({("a", "rcp45"): _series(0.25, 1.25, 2.75)})
         settings = dict(
-            reference_period=REFERENCE, offset=0.5, levels=[1.5], half_width=0.25,
-            periods=[MID], smoothing="unknown",
+            reference_period=REFERENCE,
+            offset=0.5,
+            levels=[1.5],
+            half_width=0.25,
+            periods=[MID],
+            smoothing="unknown",
         )
         del settings[left_out]
         with pytest.raises(TypeError, match=left_out):
@@ -108,7 +122,9 @@ class TestRebasing:
         series = _series(0.0, 1.0, 1.0)
         series[2059] = 6.0
         got = _assign(
-            _table({("a", "rcp45"): series}), offset=0.0, levels=[1.25],
+            _table({("a", "rcp45"): series}),
+            offset=0.0,
+            levels=[1.25],
             periods=[MID],
         )
         assert got.means[("a", "rcp45")] == (1.25,)
@@ -116,9 +132,7 @@ class TestRebasing:
     def test_the_order_of_the_rows_changes_nothing(self):
         rng = np.random.default_rng(3)
         members = {
-            (f"m{i}", rcp): {
-                year: float(rng.normal()) for year in range(1981, 2101)
-            }
+            (f"m{i}", rcp): {year: float(rng.normal()) for year in range(1981, 2101)}
             for i in range(4)
             for rcp in ("rcp45", "rcp85")
         }
@@ -142,7 +156,9 @@ class TestBands:
         series = _series(0.0, 0.0, 0.0)
         series[2050] = mean
         got = _assign(
-            _table({("a", "rcp45"): series}), offset=0.0, periods=[ONE_YEAR],
+            _table({("a", "rcp45"): series}),
+            offset=0.0,
+            periods=[ONE_YEAR],
             **changes,
         )
         assert got.means[("a", "rcp45")] == (mean,)
@@ -169,7 +185,8 @@ class TestBands:
     def test_bands_that_overlap_are_refused(self):
         table = _table({("a", "rcp45"): _series(0.25, 1.25, 2.75)})
         with pytest.raises(
-            ValueError, match="the bands of levels 1.5 and 2 overlap with half_width 0.3"
+            ValueError,
+            match="the bands of levels 1.5 and 2 overlap with half_width 0.3",
         ):
             _assign(table, half_width=0.3)
         # the order they are declared in does not hide it
@@ -211,7 +228,11 @@ class TestPeriods:
         assert got.windows_of(("b", "rcp85")) == ()
         frame = got.assignments
         assert list(frame.columns) == [
-            "gcm", "rcp", "window", "gmst_mean", "warming_level",
+            "gcm",
+            "rcp",
+            "window",
+            "gmst_mean",
+            "warming_level",
         ]
         assert len(frame) == 6
         assert frame["warming_level"].dtype == np.float64
@@ -309,8 +330,11 @@ class TestMembers:
         assert got.levels[("GFDL-ESM2G", "rcp85")] == (1.5, 3.0)
         assert got.levels[("surrogate_GFDL-ESM2G_06", "rcp85")] == (2.0, None)
         assert got.missing(
-            [("gfdl-esm2g", "rcp85"), ("surrogate_GFDL-ESM2G_11", "rcp85"),
-             ("GFDL-ESM2G", "rcp85")]
+            [
+                ("gfdl-esm2g", "rcp85"),
+                ("surrogate_GFDL-ESM2G_11", "rcp85"),
+                ("GFDL-ESM2G", "rcp85"),
+            ]
         ) == [("gfdl-esm2g", "rcp85"), ("surrogate_GFDL-ESM2G_11", "rcp85")]
         with pytest.raises(
             ValueError,
@@ -321,8 +345,12 @@ class TestMembers:
 
     def test_a_table_with_a_member_and_a_year_twice_is_refused(self):
         frame = pd.DataFrame(
-            {"gcm": ["a", "a"], "rcp": ["rcp45", "rcp45"], "year": [2000, 2000],
-             "temp": [0.1, 0.2]}
+            {
+                "gcm": ["a", "a"],
+                "rcp": ["rcp45", "rcp45"],
+                "year": [2000, 2000],
+                "temp": [0.1, 0.2],
+            }
         )
         with pytest.raises(ValueError, match=r"repeat a member and a year"):
             GMSTTable.from_frame(frame, member_cols=("gcm", "rcp"))
@@ -351,7 +379,8 @@ class TestRecord:
             }
         )
         return _assign(
-            table, levels=[1.5, 2.0, 3.0, 4.0],
+            table,
+            levels=[1.5, 2.0, 3.0, 4.0],
             smoothing="as delivered, window not recorded",
         )
 
@@ -367,10 +396,16 @@ class TestRecord:
         assert record["levels"] == [1.5, 2.0, 3.0, 4.0]
         assert record["tie"] == "the first level declared whose band holds the mean"
         assert record["periods"] == [
-            {"window": "2040-2058", "gmst_span": [2040, 2059],
-             "impact_span": [2040, 2058]},
-            {"window": "2080-2099", "gmst_span": [2080, 2099],
-             "impact_span": [2080, 2099]},
+            {
+                "window": "2040-2058",
+                "gmst_span": [2040, 2059],
+                "impact_span": [2040, 2058],
+            },
+            {
+                "window": "2080-2099",
+                "gmst_span": [2080, 2099],
+                "impact_span": [2080, 2099],
+            },
         ]
         assert record["members"][1] == {
             "member": {"gcm": "a", "rcp": "rcp85"},
@@ -389,7 +424,8 @@ class TestRecord:
         assert record["unassigned"] == {
             "2040-2058": [{"gcm": "b", "rcp": "rcp85"}],
             "2080-2099": [
-                {"gcm": "a", "rcp": "rcp85"}, {"gcm": "b", "rcp": "rcp85"},
+                {"gcm": "a", "rcp": "rcp85"},
+                {"gcm": "b", "rcp": "rcp85"},
             ],
         }
         assert record["in_no_bin"] == [{"gcm": "b", "rcp": "rcp85"}]
@@ -397,14 +433,16 @@ class TestRecord:
 
     def test_a_run_records_its_own_members_and_lists_the_rest_of_the_table(self):
         levels = self._levels()
-        record = levels.record(
-            [("a", "rcp85"), ("a", "rcp45"), ("a", "rcp85")]
-        )
+        record = levels.record([("a", "rcp85"), ("a", "rcp45"), ("a", "rcp85")])
         assert [entry["member"]["rcp"] for entry in record["members"]] == [
-            "rcp85", "rcp45",
+            "rcp85",
+            "rcp45",
         ]
         assert record["n_members"]["2040-2058"] == {
-            "1.5": 1, "2": 1, "3": 0, "4": 0,
+            "1.5": 1,
+            "2": 1,
+            "3": 0,
+            "4": 0,
         }
         assert record["unassigned"]["2040-2058"] == []
         assert record["in_no_bin"] == []
@@ -444,7 +482,10 @@ class TestRead:
             )
         )
         table = read_gmst(
-            path, member_cols=["model", "ssp"], time_col="time", value_col="tas",
+            path,
+            member_cols=["model", "ssp"],
+            time_col="time",
+            value_col="tas",
             sep="\t",
         )
         assert _assign(table).levels[("a", "ssp245")] == (1.5, 3.0)

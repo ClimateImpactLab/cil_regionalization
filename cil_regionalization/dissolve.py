@@ -33,6 +33,7 @@ Display-name columns are carried as attributes for orientation only.
 Whatever encoding state they are in comes along verbatim; they are never
 keys, and nothing downstream may join on them.
 """
+
 from __future__ import annotations
 
 import json
@@ -156,7 +157,9 @@ def dissolve_layer(
     # difference of sums equals the sum of per-unit differences, so the
     # global check's failures are always attributable here.
     piece_sums = (
-        work.assign(_a=_planar_area(work.geometry)).groupby(keys, sort=False)["_a"].sum()
+        work.assign(_a=_planar_area(work.geometry))
+        .groupby(keys, sort=False)["_a"]
+        .sum()
     )
     unit_areas = _planar_area(dissolved.set_index(keys).geometry)
     unit_diff = (piece_sums - unit_areas).sort_values(ascending=False)

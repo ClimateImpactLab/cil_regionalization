@@ -11,6 +11,7 @@ remainder (AND, BMU), and a dotted subdivision (BHR.5). The list is a
 measured fact about that version, inlined here so the test suite is
 self contained.
 """
+
 from __future__ import annotations
 
 import os
@@ -38,7 +39,7 @@ import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_origin
-from shapely.geometry import Polygon, box
+from shapely.geometry import box
 
 
 @pytest.fixture
@@ -65,9 +66,7 @@ def three_region_gdf() -> gpd.GeoDataFrame:
 
 
 @pytest.fixture
-def three_region_geoparquet(
-    tmp_path: Path, three_region_gdf: gpd.GeoDataFrame
-) -> Path:
+def three_region_geoparquet(tmp_path: Path, three_region_gdf: gpd.GeoDataFrame) -> Path:
     p = tmp_path / "regions.parquet"
     three_region_gdf.to_parquet(p)
     return p
@@ -204,9 +203,10 @@ def synthetic_fraction_raster(tmp_path: Path) -> Path:
 def _git_repo_missing() -> bool:
     """True when git is not installed or this is not a git checkout (an
     sdist, a zip), so the examples data check cannot run."""
-    return shutil.which("git") is None or not (
-        Path(__file__).resolve().parents[1] / ".git"
-    ).exists()
+    return (
+        shutil.which("git") is None
+        or not (Path(__file__).resolve().parents[1] / ".git").exists()
+    )
 
 
 def _extra_missing(module_name: str) -> bool:
@@ -238,6 +238,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         gaps.append(
             "the [netcdf] extra is not installed: the NetCDF leaf and "
             "pipeline tests were skipped"
+        )
+    if _extra_missing("marimo") or _extra_missing("matplotlib"):
+        gaps.append(
+            "the [examples] extra is not installed: the France example's "
+            "run from end to end was skipped"
         )
     if _git_repo_missing():
         gaps.append(

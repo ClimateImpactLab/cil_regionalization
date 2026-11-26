@@ -1,4 +1,5 @@
 """DailyGrid.to_cells: per-cell arrays to the table apply_weights takes."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -46,8 +47,7 @@ class TestIndices:
 
     def test_zero_360_grid_wraps_longitudes(self):
         g = _grid([0.125], [-179.875, 0.125])
-        out = g.to_cells({"x": np.ones((1, 2))},
-                         grid="grid-0.25deg-center-[0,360)")
+        out = g.to_cells({"x": np.ones((1, 2))}, grid="grid-0.25deg-center-[0,360)")
         # -179.875 is 180.125 on a grid that starts at 0
         assert out["cell_ix"].tolist() == [720, 0]
 
@@ -67,14 +67,12 @@ class TestRejects:
         # 0.125 is a centre at 0.25 degrees but an edge at 0.5
         g = _grid([0.125], [0.125])
         with pytest.raises(ValueError, match="not cell centres"):
-            g.to_cells({"x": np.ones((1, 1))},
-                       grid="grid-0.5deg-center-[-180,180)")
+            g.to_cells({"x": np.ones((1, 1))}, grid="grid-0.5deg-center-[-180,180)")
 
     def test_edge_offset_grid(self):
         g = _grid([0.125], [0.125])
         with pytest.raises(ValueError, match="not cell centres"):
-            g.to_cells({"x": np.ones((1, 1))},
-                       grid="grid-0.25deg-edge-[-180,180)")
+            g.to_cells({"x": np.ones((1, 1))}, grid="grid-0.25deg-edge-[-180,180)")
 
     def test_field_with_a_time_axis(self):
         g = _grid([0.125, 0.375], [0.125])
@@ -89,8 +87,7 @@ class TestRejects:
     def test_non_canonical_spelling(self):
         g = _grid([0.125], [0.125])
         with pytest.raises(ValueError, match="use that spelling"):
-            g.to_cells({"x": np.ones((1, 1))},
-                       grid="grid-.25deg-center-[-180,180)")
+            g.to_cells({"x": np.ones((1, 1))}, grid="grid-.25deg-center-[-180,180)")
 
 
 class TestMissing:
@@ -108,16 +105,22 @@ def test_feeds_apply_weights_on_the_right_regions():
     lon = np.array([10.125, 10.375])
     g = _grid(lat, lon)
     field = np.array([[1.0, 2.0], [3.0, 4.0]])
-    table = pd.DataFrame({
-        "region": ["south", "south", "north", "north"],
-        "lon": [10.125, 10.375, 10.125, 10.375],
-        "lat": [0.125, 0.125, 0.375, 0.375],
-        "share": [0.5, 0.5, 0.25, 0.75],
-    })
+    table = pd.DataFrame(
+        {
+            "region": ["south", "south", "north", "north"],
+            "lon": [10.125, 10.375, 10.125, 10.375],
+            "lat": [0.125, 0.125, 0.375, 0.375],
+            "share": [0.5, 0.5, 0.25, 0.75],
+        }
+    )
     weights = cilreg.WeightsArtifact.from_table(
-        table, id_fields=["region"], weights={"w": "share"}, source=BCSD_GRID)
+        table, id_fields=["region"], weights={"w": "share"}, source=BCSD_GRID
+    )
     out = cilreg.apply_weights(
-        weights, g.to_cells({"value": field}), kind="intensive", weight="w",
+        weights,
+        g.to_cells({"value": field}),
+        kind="intensive",
+        weight="w",
         data_version=BCSD_GRID,
     ).frame.set_index("region")["value"]
     assert out["south"] == pytest.approx(1.5)

@@ -6,6 +6,7 @@ year then region. The target side has the shape of the corn ADM2 crop
 area weights, built from the counts in `weights_counts`. The values
 and the weights are random.
 """
+
 from __future__ import annotations
 
 import os
@@ -165,21 +166,23 @@ def weights_frame(scale: int = SCALE) -> pd.DataFrame:
     n_mixed = sum(counts.SOURCES_MIXED.values())
     spread = counts.MIXED_EMPTY_ROWS - n_mixed
     room = total(counts.SOURCES_MIXED) - 2 * n_mixed
-    mixed_empty = 1 + np.diff(
-        np.cumsum(split_mixed - 2) * spread // room, prepend=0
-    )
+    mixed_empty = 1 + np.diff(np.cumsum(split_mixed - 2) * spread // room, prepend=0)
     # the regions left over pair with one target each
     n_pairs = n_source - (
-        len(shared) + len(shared_empty)
-        + split.sum() + split_empty.sum() + split_mixed.sum()
+        len(shared)
+        + len(shared_empty)
+        + split.sum()
+        + split_empty.sum()
+        + split_mixed.sum()
     )
     n_pairs_empty = min(
         n_pairs,
-        (counts.EMPTY_SINGLE_TARGETS - total(counts.TARGETS_PER_EMPTY_REGION))
-        // scale,
+        (counts.EMPTY_SINGLE_TARGETS - total(counts.TARGETS_PER_EMPTY_REGION)) // scale,
     )
 
-    ones = lambda n: np.ones(n, dtype=np.int64)
+    def ones(n):
+        return np.ones(n, dtype=np.int64)
+
     groups = [  # targets, regions, regions with no crop area
         (ones(n_pairs - n_pairs_empty), 1, 0),
         (ones(n_pairs_empty), 1, 1),

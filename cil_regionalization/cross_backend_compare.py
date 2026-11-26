@@ -30,12 +30,12 @@ Run instructions for the RCC use the three-line env::
     module load python
     source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 
@@ -106,51 +106,44 @@ def compare_outputs(
         missing -= set(f.columns)
         if missing:
             raise ValueError(
-                f"compare_outputs: {label} frame missing columns "
-                f"{sorted(missing)}"
+                f"compare_outputs: {label} frame missing columns {sorted(missing)}"
             )
 
     cols = list(_JOIN_KEYS) + [weight]
-    l = local[cols].rename(columns={weight: "wt_local"})
-    b = bq[cols].rename(columns={weight: "wt_bq"})
-    joined = l.merge(b, on=list(_JOIN_KEYS), how="outer")
+    on_local = local[cols].rename(columns={weight: "wt_local"})
+    on_bq = bq[cols].rename(columns={weight: "wt_bq"})
+    joined = on_local.merge(on_bq, on=list(_JOIN_KEYS), how="outer")
 
-    def _region_class(group: pd.DataFrame) -> pd.Series:
-        return pd.Series(
-            {
-                "local_native": group["wt_local"].notna().any(),
-                "bq_native": group["wt_bq"].notna().any(),
-            }
-        )
-
-    region_class = joined.groupby("hierid", sort=False).apply(
-        _region_class, include_groups=False
+    # a region is native on a side if any of its cells has a weight there
+    by_region = joined["hierid"]
+    region_class = pd.DataFrame(
+        {
+            "local_native": joined["wt_local"]
+            .notna()
+            .groupby(by_region, sort=False)
+            .any(),
+            "bq_native": joined["wt_bq"].notna().groupby(by_region, sort=False).any(),
+        }
     )
 
     n_total = len(region_class)
     n_both_native = int(
         (region_class["local_native"] & region_class["bq_native"]).sum()
     )
-    n_both_nan = int(
-        (~region_class["local_native"] & ~region_class["bq_native"]).sum()
-    )
+    n_both_nan = int((~region_class["local_native"] & ~region_class["bq_native"]).sum())
     # "local_only" = present in local, absent (NaN-everywhere) in BQ.
     # The frames may not even cover the same hierid set, hence the
     # outer-join semantics.
     n_local_only = int(
         (region_class["local_native"] & ~region_class["bq_native"]).sum()
     )
-    n_bq_only = int(
-        (~region_class["local_native"] & region_class["bq_native"]).sum()
-    )
+    n_bq_only = int((~region_class["local_native"] & region_class["bq_native"]).sum())
 
     both_native_ids = region_class.index[
         region_class["local_native"] & region_class["bq_native"]
     ]
     sub = joined.loc[joined["hierid"].isin(both_native_ids)].copy()
-    sub["delta"] = (
-        sub["wt_local"].fillna(0.0) - sub["wt_bq"].fillna(0.0)
-    ).abs()
+    sub["delta"] = (sub["wt_local"].fillna(0.0) - sub["wt_bq"].fillna(0.0)).abs()
     per_region_delta = sub.groupby("hierid", sort=False)["delta"].max()
     if len(per_region_delta) > 0:
         delta_median = float(per_region_delta.median())

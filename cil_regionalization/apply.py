@@ -57,6 +57,7 @@ coverage policies.
 This is a library API. There is no CLI verb for application yet; see the
 increment notes for the reasoning.
 """
+
 from __future__ import annotations
 
 import json
@@ -155,9 +156,7 @@ class WeightsArtifact:
                 manifest = json.load(f)
         else:
             frame = pd.read_parquet(Path(base) / f"{stem}.parquet")
-            manifest = json.loads(
-                (Path(base) / f"{stem}.manifest.json").read_text()
-            )
+            manifest = json.loads((Path(base) / f"{stem}.manifest.json").read_text())
 
         missing = [
             k
@@ -173,9 +172,7 @@ class WeightsArtifact:
         if manifest.get("source_mode") == "grid":
             source_units = GRID_CELLS
         else:
-            source_units = SourceUnits.from_string_ids(
-                manifest["source_key_columns"]
-            )
+            source_units = SourceUnits.from_string_ids(manifest["source_key_columns"])
         schema = OutputSchema(
             id_fields=tuple(manifest["id_fields"]),
             weight_names=tuple(manifest["weight_names"]),
@@ -255,7 +252,9 @@ class WeightsArtifact:
         if not id_fields:
             raise ValueError("from_table: id_fields must name at least one column")
         if not weights:
-            raise ValueError("from_table: weights must map at least one name to a column")
+            raise ValueError(
+                "from_table: weights must map at least one name to a column"
+            )
 
         grid_match = _GRID_SOURCE.match(source)
         if grid_match is None and source.startswith("grid-"):
@@ -288,12 +287,14 @@ class WeightsArtifact:
             )
 
         if grid_match is not None:
-            spec = GridSpec.from_config(GridConfig(
-                mode="generate",
-                resolution=float(grid_match["res"]),
-                offset=grid_match["offset"],
-                lon_convention=grid_match["conv"],
-            ))
+            spec = GridSpec.from_config(
+                GridConfig(
+                    mode="generate",
+                    resolution=float(grid_match["res"]),
+                    offset=grid_match["offset"],
+                    lon_convention=grid_match["conv"],
+                )
+            )
             if spec.source_version != source:
                 raise ValueError(
                     f"source {source!r} names the grid that writes its identity "
@@ -314,8 +315,7 @@ class WeightsArtifact:
         overlap = sorted(set(id_fields) & set(source_cols))
         if overlap:
             raise ValueError(
-                f"from_table: {overlap} cannot be both an id field and a "
-                f"source key"
+                f"from_table: {overlap} cannot be both an id field and a source key"
             )
 
         renames: dict[str, str] = {}
@@ -422,7 +422,9 @@ def _attach_grid_cells(frame: pd.DataFrame, spec: GridSpec) -> pd.DataFrame:
     if has_ix:
         for c in ("cell_ix", "cell_iy"):
             if not pd.api.types.is_integer_dtype(frame[c]):
-                raise ValueError(f"from_table: {c} must be integer, got {frame[c].dtype}")
+                raise ValueError(
+                    f"from_table: {c} must be integer, got {frame[c].dtype}"
+                )
         ix = frame["cell_ix"].to_numpy(dtype="int64")
         iy = frame["cell_iy"].to_numpy(dtype="int64")
         bad = (ix < 0) | (ix >= spec.n_ix) | (iy < 0) | (iy >= spec.n_iy)
@@ -444,7 +446,8 @@ def _attach_grid_cells(frame: pd.DataFrame, spec: GridSpec) -> pd.DataFrame:
                 if lon_col is not None:
                     lon = frame[lon_col].to_numpy(dtype="float64")
                     bad |= ~np.isfinite(lon) | (
-                        np.abs(c_lon - _wrap_lon(lon, spec)) > tol)
+                        np.abs(c_lon - _wrap_lon(lon, spec)) > tol
+                    )
                 if lat_col is not None:
                     lat = frame[lat_col].to_numpy(dtype="float64")
                     bad |= ~np.isfinite(lat) | (np.abs(c_lat - lat) > tol)
@@ -469,9 +472,14 @@ def _attach_grid_cells(frame: pd.DataFrame, spec: GridSpec) -> pd.DataFrame:
     tol = 1e-6 * spec.resolution
     with np.errstate(invalid="ignore"):
         bad = (
-            ~np.isfinite(lon) | ~np.isfinite(lat)
-            | (ix < 0) | (ix >= spec.n_ix) | (iy < 0) | (iy >= spec.n_iy)
-            | (np.abs(c_lon - wrapped) > tol) | (np.abs(c_lat - lat) > tol)
+            ~np.isfinite(lon)
+            | ~np.isfinite(lat)
+            | (ix < 0)
+            | (ix >= spec.n_ix)
+            | (iy < 0)
+            | (iy >= spec.n_iy)
+            | (np.abs(c_lon - wrapped) > tol)
+            | (np.abs(c_lat - lat) > tol)
         )
     if bad.any():
         shown = frame.loc[bad, [lon_col, lat_col]].head(5)
@@ -597,9 +605,7 @@ def apply_weights(
     del source_codes
     data_source_ids = {
         tuple(row)
-        for row in data[source_keys]
-        .take(first_rows)
-        .itertuples(index=False, name=None)
+        for row in data[source_keys].take(first_rows).itertuples(index=False, name=None)
     }
     coverage = check_source_coverage(
         weights_frame, artifact.schema, weight, data_source_ids
@@ -680,10 +686,7 @@ def _check_coverage_marking(
     pc = artifact.partial_coverage
     if pc is None or pc.get("count", 0) == 0 or allow_partial_coverage:
         return
-    shown = [
-        {k: v for k, v in unit.items()}
-        for unit in pc.get("units", [])[:5]
-    ]
+    shown = [{k: v for k, v in unit.items()} for unit in pc.get("units", [])[:5]]
     raise ValueError(
         f"weights artifact records {pc['count']} partially covered source "
         f"units (coverage below {pc['threshold']}; first {len(shown)}: "
@@ -785,9 +788,7 @@ def _first_rows(codes: np.ndarray, card: int) -> np.ndarray:
     return np.sort(first[first < n])
 
 
-def _rows_in(
-    frame: pd.DataFrame, keys: list[str], ids: set[tuple]
-) -> np.ndarray:
+def _rows_in(frame: pd.DataFrame, keys: list[str], ids: set[tuple]) -> np.ndarray:
     """Boolean mask of the rows whose ``keys`` tuple is in ``ids``.
 
     Same result as ``frame[keys].apply(tuple, axis=1).isin(ids)`` without

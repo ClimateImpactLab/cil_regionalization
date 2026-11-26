@@ -1,4 +1,5 @@
 """Fallback policy application: per-region native, area, zero, error paths."""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -202,7 +203,11 @@ class TestImplicitDefaultWarning:
 
         with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
             apply_fallback(
-                raw, area, "pop", "area", ["region_id"],
+                raw,
+                area,
+                "pop",
+                "area",
+                ["region_id"],
                 policy_explicit=False,
             )
         msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
@@ -215,12 +220,16 @@ class TestImplicitDefaultWarning:
         """If the user wrote `fallback = "area"` in TOML, no warning
         even with the same fallback-fire pattern."""
         area = pd.DataFrame(
-            [
-                (f"R{i}", i, 0, float(i), 0.0, 1.0, 1e9)
-                for i in range(20)
+            [(f"R{i}", i, 0, float(i), 0.0, 1.0, 1e9) for i in range(20)],
+            columns=[
+                "region_id",
+                "cell_ix",
+                "cell_iy",
+                "cell_lon",
+                "cell_lat",
+                "areawt",
+                "area_raw",
             ],
-            columns=["region_id", "cell_ix", "cell_iy", "cell_lon",
-                     "cell_lat", "areawt", "area_raw"],
         )
         raw = pd.DataFrame(
             [(f"R{i}", i, 0, 100.0) for i in range(10, 20)],
@@ -228,7 +237,11 @@ class TestImplicitDefaultWarning:
         )
         with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
             apply_fallback(
-                raw, area, "pop", "area", ["region_id"],
+                raw,
+                area,
+                "pop",
+                "area",
+                ["region_id"],
                 policy_explicit=True,
             )
         warn_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
@@ -237,12 +250,16 @@ class TestImplicitDefaultWarning:
     def test_implicit_default_below_threshold_does_not_warn(self, caplog):
         """1 fallback region out of 20 is below the max(5, 5%) threshold."""
         area = pd.DataFrame(
-            [
-                (f"R{i}", i, 0, float(i), 0.0, 1.0, 1e9)
-                for i in range(20)
+            [(f"R{i}", i, 0, float(i), 0.0, 1.0, 1e9) for i in range(20)],
+            columns=[
+                "region_id",
+                "cell_ix",
+                "cell_iy",
+                "cell_lon",
+                "cell_lat",
+                "areawt",
+                "area_raw",
             ],
-            columns=["region_id", "cell_ix", "cell_iy", "cell_lon",
-                     "cell_lat", "areawt", "area_raw"],
         )
         # 19 regions with raw, only R0 falls back
         raw = pd.DataFrame(
@@ -251,7 +268,11 @@ class TestImplicitDefaultWarning:
         )
         with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
             apply_fallback(
-                raw, area, "pop", "area", ["region_id"],
+                raw,
+                area,
+                "pop",
+                "area",
+                ["region_id"],
                 policy_explicit=False,
             )
         warn_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]

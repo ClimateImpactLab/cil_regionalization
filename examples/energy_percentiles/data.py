@@ -1,4 +1,5 @@
 """Where the example's files are, and the scenario they hold."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,8 +34,10 @@ PRICE = DATA / "price.parquet"
 # impact regions to GADM 2.0 provinces (adm1) and municipalities (adm2),
 # per-source population weights, the rows for the regions of all four countries
 # Source: https://doi.org/10.5281/zenodo.21934155
-WEIGHTS = {"adm1": DATA / "weights" / "gadm20_adm1_per_source",
-           "adm2": DATA / "weights" / "gadm20_adm2_per_source"}
+WEIGHTS = {
+    "adm1": DATA / "weights" / "gadm20_adm1_per_source",
+    "adm2": DATA / "weights" / "gadm20_adm2_per_source",
+}
 # SMME weights of the climate projections for RCP8.5
 # Source: /project/cil/gcp/climate/BCSD/SMME/SMME-weights/rcp85_SMME_weights.tsv
 SMME = DATA / "smme_weights_rcp85.csv"
@@ -44,8 +47,10 @@ SMME = DATA / "smme_weights_rcp85.csv"
 #   /project/cil/gcp/impact_map_inputs/targets/gadm20/{adm0,adm1,adm2}.parquet
 #   made by examples/gadm20/prepare_gadm20_targets.py, and the
 #   world-combo-201710 impact regions, https://doi.org/10.5281/zenodo.21934131
-OUTLINES = {level: DATA / f"outlines_{level}.parquet"
-            for level in ("adm0", "impact_region", "adm1", "adm2")}
+OUTLINES = {
+    level: DATA / f"outlines_{level}.parquet"
+    for level in ("adm0", "impact_region", "adm1", "adm2")
+}
 
 
 def gcms() -> list[str]:

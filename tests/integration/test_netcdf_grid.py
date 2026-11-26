@@ -1,4 +1,5 @@
 """read_netcdf_grid: a lat-lon NetCDF in, a verified cell table out."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -127,7 +128,9 @@ class TestNamingTheGrid:
             cilreg.read_netcdf_grid(path, ["tas"])
         for line in str(err.value).splitlines():
             if line.strip().startswith("read_netcdf_grid("):
-                cells, grid = eval(line.strip(), {"read_netcdf_grid": cilreg.read_netcdf_grid})
+                cells, grid = eval(
+                    line.strip(), {"read_netcdf_grid": cilreg.read_netcdf_grid}
+                )
                 assert grid in line
                 assert len(cells) == 6
 
@@ -183,8 +186,10 @@ class TestRefusals:
     def test_two_dimensional_coordinates(self, tmp_path):
         ds = xr.Dataset(
             {"tas": (("y", "x"), np.zeros((2, 2)))},
-            coords={"lat": (("y", "x"), np.zeros((2, 2))),
-                    "lon": (("y", "x"), np.zeros((2, 2)))},
+            coords={
+                "lat": (("y", "x"), np.zeros((2, 2))),
+                "lon": (("y", "x"), np.zeros((2, 2))),
+            },
         )
         path = tmp_path / "curv.nc"
         ds.to_netcdf(path)
@@ -213,15 +218,22 @@ class TestMaskedCells:
 class TestWithApplyWeights:
     def _weights(self, grid):
         spec = GridSpec.from_source_version(grid)
-        ix, iy = np.meshgrid(spec.index_of(LON, LAT[0])[0],
-                             spec.index_of(LON[0], LAT)[1])
-        table = pd.DataFrame({
-            "region": "R",
-            "cell_ix": ix.ravel(), "cell_iy": iy.ravel(),
-            "popwt": [0.25, 0.125, 0.125] * 2,
-        })
+        ix, iy = np.meshgrid(
+            spec.index_of(LON, LAT[0])[0], spec.index_of(LON[0], LAT)[1]
+        )
+        table = pd.DataFrame(
+            {
+                "region": "R",
+                "cell_ix": ix.ravel(),
+                "cell_iy": iy.ravel(),
+                "popwt": [0.25, 0.125, 0.125] * 2,
+            }
+        )
         return cilreg.WeightsArtifact.from_table(
-            table, id_fields=["region"], weights={"pop": "popwt"}, source=grid,
+            table,
+            id_fields=["region"],
+            weights={"pop": "popwt"},
+            source=grid,
         )
 
     def test_weighted_mean_of_the_file(self, tmp_path):
@@ -229,8 +241,12 @@ class TestWithApplyWeights:
         path = _write(tmp_path / "w.nc", LAT, LON, values=values)
         cells, grid = cilreg.read_netcdf_grid(path, ["tas"], grid=GRID)
         out = cilreg.apply_weights(
-            self._weights(GRID), cells, kind="intensive", weight="pop",
-            value_col="tas", data_version=grid,
+            self._weights(GRID),
+            cells,
+            kind="intensive",
+            weight="pop",
+            value_col="tas",
+            data_version=grid,
         )
         assert out.frame["tas"].tolist() == [0.25 * 10 + 0.125 * 20 + 0.125 * 30]
 
@@ -240,6 +256,10 @@ class TestWithApplyWeights:
         assert grid.endswith("[0,360)")
         with pytest.raises(ValueError):
             cilreg.apply_weights(
-                self._weights(GRID), cells, kind="intensive", weight="pop",
-                value_col="tas", data_version=grid,
+                self._weights(GRID),
+                cells,
+                kind="intensive",
+                weight="pop",
+                value_col="tas",
+                data_version=grid,
             )
