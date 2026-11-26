@@ -231,6 +231,70 @@ Files made before v0.6.0 had no such options. They are reproduced by
 `"lower_step"` if the run had weights and `"linear"` if it had none,
 with `"fast"`.
 
+## Warming levels
+
+`assign_warming_levels` gives each member of a temperature table the
+warming level it is at in a calendar period. A member is one series of
+global mean temperature, named by the columns of the table that are
+not the year or the value: a model and an rcp, a model and an ssp, or
+whatever the table has.
+
+```python
+table = cilreg.read_gmst("gmst.csv", member_cols=["gcm", "rcp"])
+levels = cilreg.assign_warming_levels(
+    table,
+    reference_period=(1986, 2005),
+    offset=0.61,
+    levels=[1.5, 2, 3, 4, 5],
+    half_width=0.25,
+    periods=[
+        cilreg.Period(gmst_span=(2040, 2059), impact_span=(2040, 2058)),
+        cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2099)),
+    ],
+    smoothing="unknown",
+)
+levels.windows_of(("MIROC5", "rcp85"))
+levels.record()
+```
+
+For each member the series is rebased by taking off its own mean over
+`reference_period` and adding `offset`. The mean of the rebased series
+over a period's `gmst_span` picks the level. A level holds a mean from
+`half_width` below it to `half_width` above it, both ends included. A
+mean in no band gives the member no level in that period, so with a
+half-width of 0.25 a member at 2.5 belongs to neither 2 nor 3. Two
+bands may share an end, as 1.5 and 2 share 1.75, and a mean exactly
+there goes to the level declared first. Bands that overlap are
+refused.
+
+None of `reference_period`, `offset`, `levels`, `half_width`,
+`periods` and `smoothing` has a default. The offset is the warming
+from a pre-industrial baseline to the reference period, and it is only
+right for that pair: 0.61 goes with 1986 to 2005 in AR5 (WG1 TS.2.2.1),
+and AR6 gives another figure against another period. A call that
+leaves one out fails.
+
+A period has two spans, both including their first and last year. The
+`gmst_span` is the years the temperature is averaged over, and the
+`impact_span` the years of the impacts that go under the level, which
+is also what the period is labelled by. They are separate because a
+product may average its impacts over other years than its temperature.
+
+Nothing is smoothed. The series is taken as it is in the table, and
+`smoothing` says in words how it was smoothed before, `"unknown"` if
+nobody knows. It goes into the record as written.
+
+A member's name is matched as it is written. A surrogate model is a
+member of its own and needs its own rows. A member that lacks a year
+of the reference period or of a `gmst_span` is refused by name.
+
+`windows_of` gives, for one member, the periods in which it has a
+level, each with the level, the period's label and its impact years.
+`record` returns what a manifest should keep: the table's path and
+SHA256, every setting above, the rule for a shared end, each member's
+mean and level in each period, the number of members at each declared
+level with a zero where nobody is, and the members with no level.
+
 ## Keeping the aggregated leaves
 
 A pipeline run keeps nothing between the weights and the statistics
@@ -498,7 +562,8 @@ confirm a regenerated set started from the same input.
 ## More detail
 
 `fetch_weights`, `generate_weights`, `apply_weights`, `read_netcdf_grid`, `summarize_samples`,
-`window_means`, `pooled_statistics`, `read_gradient_leaf`,
+`window_means`, `pooled_statistics`, `read_gmst`,
+`assign_warming_levels`, `read_gradient_leaf`,
 `aggregate_gradient`, `delta_method`, `WeightsArtifact`, and
 `load_config` are the supported API, re-exported at the package root.
 `window_means` and `pooled_statistics` are the two halves of

@@ -23,6 +23,8 @@ layout are left where they are and are not read.
 A new stage, `reduce`, takes the statistics from leaves written before.
 A new experimental option, `stats.pool_years`, pools the years of a
 window with the models and the draws.
+New: `assign_warming_levels` gives each member of a temperature table
+its warming level in a calendar period.
 
 - Changed: the pipeline sorts the statistics rows before writing them:
   by statistic in the order requested (the mean, then the quantiles as
@@ -342,6 +344,23 @@ window with the models and the draws.
   that. The new figures cover each by half again or more. The dry run
   prints the figure it used, and the manifest has it as
   `reduce.bytes_per_row` next to `reduce.max_worker_peak_gb`.
+- New: `read_gmst`, `assign_warming_levels`, `GMSTTable`, `Period`,
+  `WarmingLevels` and `LevelWindow`, in `cil_regionalization.warming_levels`
+  and at the package root. A member is one series of global mean
+  temperature, named by any columns of the table. Its series is
+  rebased to a reference period, an offset is added, and its mean over
+  a period's years picks the level whose band holds it, both ends of a
+  band included. A mean in no band gives no level. Two bands may share
+  an end, where the level declared first wins, and may not overlap.
+  The reference period, the offset, the levels, the half-width, the
+  periods and a statement of how the series was smoothed have no
+  default, and a call without one of them fails. A period carries the
+  years the temperature is averaged over and the years of the impacts
+  separately. Nothing is smoothed. Names are matched as written, so a
+  surrogate needs its own rows. `WarmingLevels.record` is the manifest
+  entry: the table's hash, every setting, each member's mean and level,
+  the count at each declared level and the members with none. The
+  pipeline does not use any of this yet.
 
 ## v0.5.0
 
