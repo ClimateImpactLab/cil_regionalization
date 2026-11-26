@@ -32,7 +32,7 @@ from cil_regionalization.stats import window_means
 
 pytestmark = pytest.mark.benchmark
 
-_KW = dict(time_col="year", windows=WINDOWS, value_col="pct")
+_KW = dict(time_col="year", windows=WINDOWS, value_col="pct", summation="fast")
 _COLUMNS = ID_FIELDS + list(LABELS) + ["window", "pct"]
 
 # Eight full-size workers need about 16 GiB, so the pool runs on leaves
@@ -53,7 +53,7 @@ def test_label_placement_gives_the_same_leaf():
     after_s, after = best(
         lambda: window_means(applied, **_KW).assign(**LABELS)[_COLUMNS]
     )
-    # the pipeline's order: labels on the leaf before the weights
+    # labels on the leaf before the weights, which the pipeline avoids
     labelled_leaf = leaf.assign(**LABELS)
     first_s, applied_first = best(lambda: apply(art, labelled_leaf))
     first = window_means(applied_first, **_KW)[_COLUMNS]

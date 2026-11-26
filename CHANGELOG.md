@@ -1,5 +1,401 @@
 # Changelog
 
+## Unreleased
+
+**The rows of a pipeline statistics file, and of the reduced file,
+come in a new order. No value changed.** **`quantile_method` and
+`summation` are new, have no default, and have to be given: in every
+call of `summarize_samples` and `pooled_statistics`, in every call of
+`window_means` for `summation`, and under `[stats]` in every pipeline
+config.** Files made before v0.6.0 are reproduced by
+`quantile_method = "lower_step"` if the run had model weights and
+`"linear"` if it had none, with `summation = "fast"`.
+`window_means` and `summarize_samples` compute in float64 and return
+float64 whatever the dtype of the value column. That changes their
+result for a float32 or a nullable column under every setting.
+A model weights table with two rows for one model is now refused, and
+the pipeline manifest records the weights each run used.
+A tree level named like a column the pipeline writes itself is refused
+before any leaf is read.
+**`output.write_leaves` now defaults to false, and an aggregated leaf
+is written in a new layout under a new name.** Leaf files of the old
+layout are left where they are and are not read.
+A new stage, `reduce`, takes the statistics from leaves written before.
+A new experimental option, `stats.pool_years`, pools the years of a
+window with the models and the draws.
+New: `assign_warming_levels` gives each member of a temperature table
+its warming level in a calendar period.
+
+- Changed: the pipeline sorts the statistics rows before writing them:
+  by statistic in the order requested (the mean, then the quantiles as
+  listed), then by each tree level that is not pooled, in the order
+  `tree.expect` declares its values, then by window in the order of
+  `stats.windows`, then by the remaining id columns ascending. The
+  reduced file of `output.write_reduced` is sorted the same way, over
+  all its tree levels. Before, the rows of both followed the order the
+  leaves were pooled in, which with several workers is the order the
+  workers finish in, so two runs of one config could list the same
+  rows differently. A run with one worker usually listed them this way
+  already. The frame `run_pipeline` returns is sorted the same.
+- New: `quantile_method` on `summarize_samples` and
+  `pooled_statistics`, and `stats.quantile_method` in a pipeline
+  config. It names a computation. `"linear"` interpolates between
+  members, as pandas does, and is refused with weights.
+  `"lower_step"` returns the member just before the one whose
+  cumulative weight share reaches q, one member below the standard
+  inverse, as the historical extraction tool did. Without weights
+  every member counts the same, which is what that tool did when told
+  to use no model weights. `"inverted_cdf"` is the standard inverse of
+  the empirical distribution (Hyndman and Fan type 1): the smallest
+  member value whose cumulative weight share reaches q. It is one
+  definition with or without weights, and every quantile is the value
+  of a member with positive weight.
+  It has no default. Earlier releases had no such option and used
+  `"lower_step"` with weights and `"linear"` without. A pipeline
+  manifest records the value.
+  Three things follow from `"lower_step"`. A quantile is `-inf` when
+  the first member already reaches q. The value of a member with
+  weight zero can come back as a quantile, although the mean leaves
+  that member out: with one such model among 33, about 3% of the cells
+  of each quantile on synthetic samples. And at 0.5 with equal weights
+  it switches to the midpoint of the two middle members.
+- New: `summation` on the same two functions and on `window_means`,
+  and `stats.summation` in a pipeline config. It has no default.
+  `"fast"` is the vectorised sum of pandas and numpy, which is what
+  earlier releases used. `"exact"` takes the window means and the
+  pooled mean from exactly rounded sums (`math.fsum`), so the order of
+  the rows cannot change them. Under `"fast"` the order can change the
+  means, and in a pipeline run with several
+  workers it does, because the leaves are pooled in the order the
+  workers finish. Two runs of one config over a synthetic tree (240
+  leaves, 8 workers, model weights) disagreed in the last bits of
+  about a third of the means, 119 to 133 of 388, by at most 8.9e-16 on
+  values of order 1. Without model weights 2 of 388 differed. No
+  quantile differed.
+- Under `"inverted_cdf"` or `"exact"` a statistic that comes out infinite raises
+  instead of being returned or written: in impact data an infinity
+  means something upstream broke. It is the statistic that is checked,
+  so an infinity in a year no window covers does not fail a run, and
+  one that a quantile selects does. NaN is left alone; a group with no
+  value has no statistic. Under `"exact"` a sum over infinities of
+  both signs, or one that overflows, raises too. `"linear"` and `"lower_step"`
+  with the fast sum return whatever comes out, `-inf` included, as before.
+- Changed: `window_means` and `summarize_samples` take the window mean
+  in float64 and return the value column as float64, under every
+  setting and whatever the column's dtype. A float64 column gives what
+  it gave, to the last bit. Two things change for other columns, under
+  every setting:
+  - A nullable `Float64` column used to come back nullable. It now
+    comes back as float64 with NaN where it had no value: the mask is
+    gone. A caller that tested the result for `pd.NA` has to test for
+    NaN.
+  - A float32 column is widened before the mean, so its results differ
+    from the old ones from the seventh or eighth digit (by up to 9e-7
+    of the value on synthetic samples). The pair that reproduces
+    earlier releases therefore no longer does so bit for bit for a
+    float32 column. The
+    other choice was to keep seven digits, and under `"exact"` to round
+    an exactly rounded sum back to float32.
+
+  Before, the dtype and the precision followed the column, the pandas
+  version and, on the newest pandas, the data. `window_means` returned
+  a float32 column as float32 through pandas 3.0 (seen on 2.3.3 and
+  3.0.3). On pandas 3.1.1 with the fast sum it returned float64 for a
+  column with no missing value and float32 for one with a missing
+  value, in the cases tried, and float32 under `"exact"`.
+  `summarize_samples` took its window means in float32 where
+  `window_means` returned float32, and under `"exact"` on every
+  version.
+
+  This reaches callers of the library, not the pipeline's published
+  files. A pipeline run that applies weights or subtracts a second
+  file (`tree.subtract_filename`) already hands `window_means`
+  float64. Only a passthrough run with no subtraction hands over the
+  leaf's own dtype, and no production config is one: of the 110
+  pipeline configs in the impactmap-data-gen repository 42 are
+  passthrough runs (the impact-region products of agriculture, labor
+  and mortality), and all 110 subtract a histclim file.
+
+  One published product changes on a rerun: energy as a share of GDP
+  at ADM0, `energy/adm0/energy_valued_pctgdp_rcp45.parquet` and
+  `energy_valued_pctgdp_rcp85.parquet`. The script that makes it,
+  `energy/run_energy_regionalization.py` in impactmap-data-gen, calls
+  `window_means` itself on its denominator: GDP stored as float32,
+  summed by country and year, still float32. In the pinned cluster
+  environment (pandas 3.0.3) the window mean of those sums came back
+  float32; it is now taken in float64. Of the 1,012 denominators (253
+  countries, four windows) 703 move, by 1.5e-8 of their value at the
+  median and 9.1e-8 at most, and the shares move by as much. The
+  one-year window does not move. This is float32 rounding in a mean
+  of twenty numbers, not the repair of a large error: the sums by
+  country are compensated, were within 9.4e-8 of the exact sums, and
+  are float32 before and after.
+- The pipeline manifest records `quantile_method` and `summation`.
+- New: `read_model_weights` reads a climate model weights table and
+  returns a `ModelWeights`. The file is read once, and the SHA256 it
+  carries is of the bytes the rows were parsed from. `attach` returns
+  the weight of each row's model and raises if a model has no row.
+  `record` returns the entry a manifest should keep, described below.
+  Names match as they did before: a `*` is dropped from the table
+  name, `surrogate_` is dropped from the member, and both are
+  lowercased.
+- Changed: a weights table in which two rows match the same model is
+  refused, with both rows named. Before, the last of the two rows was
+  applied and nothing was said. Neither published SMME table has such
+  rows (32 names in the rcp45 table, 33 in the rcp85 one, all
+  distinct after matching), so no run that worked is refused.
+- Changed: the pipeline reads the model weights file once, in the
+  parent, and hands those rows to the workers. Before, every worker
+  read the file again when it started, and workers are replaced every
+  16 leaves, so the file was read all through a run. A file edited
+  during a run can no longer give different leaves different weights.
+- The pipeline manifest gains `model_weights_record`, next to the
+  `model_weights` path it already had. It holds the path, the SHA256 of
+  the file, `members`, and `unmatched_rows`. `members` has each model
+  that a leaf was actually given the weight of, with the table row it
+  matched, the weight and the number of leaves. That is what ran, not
+  what the config declares, so a model whose leaves were all excluded
+  is not in it. `unmatched_rows` has the rows no leaf matched, with
+  their weights. The two together are the whole table, so a run can be
+  repeated from its manifest when the file is gone. A run without
+  model weights records `null`. No statistic changes.
+- Changed: the pipeline puts the tree level labels on a leaf's rows
+  after the window means are taken. Before, it put them on the leaf
+  first, where `apply_weights` and `window_means` grouped every row by
+  them. On the benchmark leaf (4.26 million rows after the weights)
+  `apply_weights` took 2.7 s with the labels and 1.1 s without, and
+  `window_means` 0.46 s against 0.24 s. No file changes for it. The
+  statistics, the reduced file and the leaf files keep their columns,
+  column order and values.
+- Changed: a tree level named `window`, `statistic`, `n_members` or
+  `model_weight`, or like an id field of the weights artifact, is
+  refused before any leaf is read. A level becomes a column of the
+  output, and those names are columns the pipeline writes itself.
+  Before, `window` and `statistic` were refused leaf by leaf, after
+  every leaf had been read, and the name of an id field failed every
+  leaf with an error that gave only the name. A level named `n_members`
+  or `model_weight` ran when `stats.include_n_members` and the model
+  weights were off, and its values sat in a column of that name.
+- Changed: `output.write_leaves` defaults to false. It defaulted to
+  true, so a config that did not set it wrote every aggregated leaf,
+  about 35 MB for the benchmark ADM2 leaf. A config that wants the
+  leaves has to say so. The four `mortality_adm{1,2}_rcp{45,85}` configs under
+  `examples/montecarlo/runs` set it to true and now write the new
+  layout.
+- Changed: an aggregated leaf is written as
+  `leaves/<level values>/<name>.aggregated.parquet`, where `<name>` is
+  `tree.filename` without its extension. Before, it was
+  `aggregated_<tree.filename>`, parquet whatever the extension said.
+  The new file is plain parquet with a fixed Arrow schema and no
+  pandas metadata:
+  - Its columns are an int32 `target_ordinal`, the id fields, the
+    leaf's own dimensions and the value. The tree level labels are no
+    longer columns. They are in the path and in the footer.
+  - Its rows are sorted by target and cut into row groups of 128
+    targets. A group holds the same targets in every leaf and is empty
+    where a leaf has none of them. `leaves/targets.<digest>.parquet`
+    gives the target of each ordinal, which is its rank among the
+    artifact's id tuples sorted ascending.
+  - Its footer holds, under the key `cil_regionalization.leaf`, the
+    layout and what made the leaf: weight, kind, data version, value
+    column, policies, file names, level names, the versions and the
+    SHA256 of the two files of the weights artifact, the leaf's level
+    values and its source files.
+  Files of the old layout are not deleted, rewritten or read. A
+  passthrough run keeps writing the file it wrote, labels included,
+  because without weights there are no targets to lay a leaf out by.
+- New: `leaves/<output.stem>.leaves.manifest.json`, written when
+  leaves are. It lists every leaf in the order the config declares
+  them, with its source files, rows, coverage, mass balance, size and
+  SHA256, the rows in each row group summed over the leaves, and the
+  rows at each value of each numeric dimension. It holds what made the
+  leaves and nothing from `[stats]`. It is written before the first
+  leaf with `"complete": false` and again when every leaf has
+  succeeded. A run that would write a leaf listed in the manifest of
+  another stem in the same directory is refused, whether that other
+  run finished or not. Before, two such runs wrote over each other's
+  leaves without a word.
+- New: `--stage aggregate` on `cilreg pipeline` and on
+  `python -m cil_regionalization.pipelines.montecarlo`, and `stage=` on
+  `run_pipeline`. It writes the leaves and their manifest and stops.
+  It needs `output.write_leaves = true` and `[weights]`, reads nothing
+  from `[stats]`, and returns a result whose `stats` is `None`. The
+  default, `all`, runs everything as before.
+- Changed: when leaves are written, a leaf's own dimension has to be
+  an integer, a float, a boolean or a plain string, and the id fields
+  have to be strings. A categorical, datetime or nullable dimension is
+  refused by name, because pandas 2 and pandas 3 write those
+  differently. A tree level named `target_ordinal` is refused like the
+  other names the pipeline uses.
+- New: the pipeline hashes the two files of the weights artifact when
+  it loads them, in the parent and in every worker. A worker that
+  loaded other bytes than the run started with fails its leaves. The
+  statistics manifest gains `artifact_sha256`, `stage` and
+  `leaves_manifest`.
+- New: `--stage reduce`, and `stage="reduce"` on `run_pipeline`. It
+  takes the statistics from the leaf files a run of `aggregate` or
+  `all` wrote, and opens neither the source tree nor the weights.
+  Everything under `[stats]` can differ from the run that wrote the
+  leaves, so other windows cost one pass over the leaf files.
+  - It pools one block of targets at a time. `[reduce.pandas]
+    memory_gb` is what all its workers may hold together and has no
+    default. `[reduce.pandas] n_workers` defaults to `run.n_workers`.
+    The dry run prints the blocks and the file opens the budget gives.
+    A budget that does not fit one row group a worker is refused, with
+    the smallest that would run.
+  - It gives the same bits whatever the number of workers, under
+    the `"fast"` sum too, because a block pools its leaves in the
+    order the config declares them. `all` with several workers still
+    pools them in the order the workers finish.
+  - Under `summation = "exact"` it gives what `all` gives on one
+    worker, to the last bit, whatever the size of the blocks, with
+    any `quantile_method` and with or without model weights.
+  - Under the `"fast"` sum it gives the same, to the last bit, on
+    leaves without missing values. On leaves with them it can differ
+    from `all`, and between two block sizes, in the last bit of a
+    window mean. The cause is pandas' own mean, which `"fast"` is:
+    on pandas 3.1.1 a missing value in one group of a frame changes
+    the mean of other groups (92 of 400 groups in a test, by 4e-17),
+    and a block holds part of a leaf where `all` holds all of it.
+    pandas 2.3.3 and 3.0.3 do not do this. `"exact"` does not depend
+    on what else is in the frame.
+  - `output.leaves_stem` names the leaves to reduce. It is
+    `output.stem` unless set, and it also names the leaves manifest
+    the other stages write.
+  - Before any work the leaves are checked against their manifest.
+    What aggregated them has to be what the config says, field by
+    field, and a difference is refused by name. The weights artifact
+    is hashed if it is where the config says, and refused if it is not
+    the one the leaves were made with. A path that differs is not a
+    reason to refuse: the run warns and records it. Each leaf file is
+    checked by its size before work and by its footer, its row groups
+    and its ordinals at every open.
+  - `--verify-leaves` hashes every leaf file against the manifest
+    first. It is off by default because it reads every byte of every
+    leaf. Without it a file changed in place, with the same size and
+    footer, is not noticed.
+  - Fewer leaves than were aggregated can be reduced, with a narrower
+    `tree.expect` or a longer `tree.exclude`. The manifest lists the
+    leaves left out, and `n_members` is then written whether
+    `stats.include_n_members` asks for it or not.
+  - `output.write_reduced` is refused under `reduce`, and so is a
+    config without `[weights]`.
+  - The statistics manifest records the stage, the backend with its
+    options and the versions of pandas, numpy and pyarrow, the blocks,
+    the SHA256 of the leaves manifest, and whether the leaves were
+    verified.
+- New: the `reduce` package. The pipeline asks a backend for the
+  statistics of a set of leaves with a `ReduceRequest`, and
+  `[reduce] kind` picks the backend. `"pandas"` is the only one. A
+  request gives each leaf its own windows, a label with a first and a
+  last time value, so two leaves can give one label different spans.
+  Every config gives every leaf the same list today. If the windows of
+  a request do differ between leaves, `n_members` is written.
+  `tests/integration/test_reduce_parity.py` holds the comparison a
+  second backend has to pass.
+- Changed: a leaf whose columns differ from the first leaf's stops the
+  run when it arrives. Before, the run wrote every leaf and found out
+  at the end.
+- New: a run that writes leaves prints how many files under `leaves/`
+  are in no leaves manifest there, with their total size, and `reduce`
+  prints it too. Nothing is deleted.
+- Fixed: the row sort of the statistics picked rows by the label of
+  their index, so a frame whose index repeated came out with rows
+  repeated. No run of the pipeline built such a frame.
+- The pipeline writes a statistics file and its manifest under a
+  temporary name and renames them, the manifest last.
+- New, experimental: `stats.pool_years` in a pipeline config, off by
+  default. With it no window mean is taken. Every year of a member
+  inside a window is a member of the sample, so the statistics are
+  over models, draws and years together, and a year inside two windows
+  is pooled in both. A model weight applies to each member-year. A
+  member that lacks years has fewer rows and counts for less. On a
+  tree where every member has every year, the mean is the mean of the
+  window means up to rounding, and the quantiles differ.
+  The pooled rows are the leaves' own rows, so the statistics come
+  from the leaf files by blocks under every stage. Stage `all` then
+  writes the leaves and reduces them. It needs
+  `output.write_leaves = true` and `[reduce.pandas] memory_gb`, and
+  refuses to start without them. If its second pass fails, the leaves
+  stay and `--stage reduce` runs from them. `output.write_reduced` and
+  a run without `[weights]` are refused, and so is `stats.time_col`
+  among `stats.sample_dims`.
+- New: with `stats.pool_years` and `stats.include_n_members` the
+  statistics file has an `n_sample` column after `n_members`.
+  `n_sample` is the member-years behind a statistic. `n_members` keeps
+  its meaning, the members behind it: those with a value in the window
+  and, with model weights, a weight above zero. Without
+  `stats.pool_years` no file gains a column.
+- Changed: a tree level named `n_sample` is refused before any leaf is
+  read, as `n_members` is.
+- The pipeline manifest records `pool_years`. A run of stage `all`
+  with pooled years writes the manifest the reduce stage writes, with
+  `"stage": "all"`.
+- New: `ReduceRequest.pool_years`, and `ReduceBackend.check_options`,
+  which the pipeline calls before it aggregates anything.
+- Changed: the pandas reduce backend plans a block at 240 bytes for a
+  row it keeps and 40 more for each dimension the leaf has of its own,
+  where it planned 130 for any leaf. For one memory budget the blocks
+  hold about half the rows they held, or fewer for a leaf with
+  dimensions, so a reduce opens each leaf about twice as often. The
+  resident memory of a worker grew by up to 155 bytes a kept row on
+  leaves with no dimension and by 168, 194 and 218 with one, two and
+  three, on synthetic leaves on macOS, and 130 left nothing over
+  that. The new figures cover each by half again or more. The dry run
+  prints the figure it used, and the manifest has it as
+  `reduce.bytes_per_row` next to `reduce.max_worker_peak_gb`.
+- New: `read_gmst`, `assign_warming_levels`, `GMSTTable`, `Period`,
+  `WarmingLevels` and `LevelWindow`, in `cil_regionalization.warming_levels`
+  and at the package root. A member is one series of global mean
+  temperature, named by any columns of the table. Its series is
+  rebased to a reference period, an offset is added, and its mean over
+  a period's years picks the level whose band holds it, both ends of a
+  band included. A mean in no band gives no level. Two bands may share
+  an end, where the level declared first wins, and may not overlap.
+  The reference period, the offset, the levels, the half-width, the
+  periods and a statement of how the series was smoothed have no
+  default, and a call without one of them fails. A period carries the
+  years the temperature is averaged over and the years of the impacts
+  separately. Nothing is smoothed. Names are matched as written, so a
+  surrogate needs its own rows. `WarmingLevels.record` is the manifest
+  entry: the table's hash, every setting, each member's mean and level,
+  the count at each declared level and the members with none. The
+  pipeline does not use any of this yet.
+- New: a cell of `tree.exclude` takes `"*"` for every value of a
+  level, so a model that one scenario lacks is one line and not one
+  line for each batch, socioeconomic model and scenario. A cell of
+  stars alone is refused. The manifest records the cells as written.
+- New: `[stats.warming_levels]` in a pipeline config, in place of
+  `stats.windows`. The statistics are over the members at a warming
+  level in a period, with the levels from `assign_warming_levels`. A
+  leaf's member is read off the tree levels named in `member`, so no
+  level name is built in. Each period gives the years the temperature
+  is averaged over and the years of the impacts separately. The
+  statistics file gains a `warming_level` column next to `window`, and
+  two counts on every row: `n_members`, the draws behind a statistic,
+  and `n_bin_members`, the distinct members of the temperature table
+  behind it. A level nobody is at has no row and is in the manifest
+  with a zero. The statistics come from the leaf files under every
+  stage, so stage `all` writes the leaves and then reduces, and the
+  reduce stage gives other levels, periods or the other reduction
+  from the same leaves. `stats.pool_years` chooses between collapsing
+  each member's window first and pooling its years.
+  Refused: a config without `reference_period`, `offset`, `levels`,
+  `half_width`, `smoothing` or `periods`; `stats.windows` or
+  `stats.model_weights` next to it; a member column that is not a tree
+  level or is not pooled; a run without `[weights]`;
+  `output.write_reduced`; a declared member with no row in the table,
+  before any leaf is read; and a leaf that lacks a year of an impact
+  span its member is pooled over, as a row or as a value. The manifest
+  has the whole record under `warming_levels`. A run without warming
+  levels writes `"warming_levels": null` and is otherwise unchanged.
+- New: `LeafRequest.bin_member`, `ReduceRequest.include_n_bin_members`
+  and `ReduceRequest.whole_spans` in the `reduce` package.
+- Changed: a tree level named `warming_level` or `n_bin_members` is
+  refused before any leaf is read.
+- Changed: `stats.windows` may be left out when `[stats.warming_levels]`
+  is set. A config with neither is refused, as it was.
+
 ## v0.5.0
 
 **Behaviour change in `cilreg run`.** Results unchanged.

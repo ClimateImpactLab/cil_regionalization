@@ -45,13 +45,50 @@ version = "world-combo-201710"
 # that assumes about GCM weighting). They are usually tree levels.
 sample_dims = ["batch", "gcm"]
 time_col = "year"
+# How a quantile is computed: "linear" (no weighted form), "lower_step"
+# or "inverted_cdf", the standard inverse of the empirical
+# distribution. How a mean is summed: "fast", whose last bits depend on
+# the order the leaves come back in, or "exact". Neither has a default,
+# and the manifest records both.
+quantile_method = "linear"
+summation = "fast"
 windows = [[2040, 2059], [2080, 2099]]
 quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
 include_mean = true
+# Experimental, off by default. Pools the years inside a window with
+# the models and the draws, and takes no window mean. The statistics
+# then come from the leaf files under every stage, so it needs
+# write_leaves and the memory budget below.
+# pool_years = true
+
+# Warming levels in place of the windows above. Remove `windows` and
+# give every setting below, none of which has a default. See "Warming
+# levels" in the README.
+# [stats.warming_levels]
+# gmst = "gmst.csv"
+# member = ["gcm", "rcp"]
+# reference_period = [1986, 2005]
+# offset = 0.61
+# levels = [1.5, 2, 3, 4, 5]
+# half_width = 0.25
+# smoothing = "unknown"
+# [[stats.warming_levels.periods]]
+# gmst_span = [2040, 2059]
+# impact_span = [2040, 2058]
 
 [output]
 dir = "pipeline_out"
+# Keeps every aggregated leaf, with its years, under pipeline_out/leaves.
+# Off unless set, because the leaves take far more disk than the
+# statistics. `--stage aggregate` writes them and stops.
 write_leaves = true
 
 [run]
 n_workers = 1
+
+# `--stage reduce` reads this, and so does a run with pool_years. It
+# takes the statistics from the leaves under pipeline_out/leaves, one
+# block of targets at a time, and memory_gb is what all its workers may
+# hold together.
+[reduce.pandas]
+memory_gb = 4

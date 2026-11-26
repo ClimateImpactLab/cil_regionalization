@@ -104,7 +104,8 @@ def batch_frames(task) -> list[pd.DataFrame]:
             applied["iam"] = iam
             applied["ssp"] = ssp
             out.append(window_means(
-                applied, time_col="year", windows=WINDOWS, value_col="value"
+                applied, time_col="year", windows=WINDOWS, value_col="value",
+                summation="fast"
             ))
         print(batch, rcp, ssp, iam, flush=True)
     return out
@@ -127,6 +128,8 @@ def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
         value_col="value",
         quantiles=QUANTILES,
         weight_col="model_weight",
+        quantile_method="lower_step",
+        summation="fast",
     )
 
 

@@ -223,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
         value_col="total_damages",
         quantiles=[0.05, 0.5, 0.95],
         weight_col="weight",
+        quantile_method="lower_step",
+        summation="fast",
     )
     print("Statistics over the 33 climate models (window mean 2080-2099,")
     print("then pooled with the SMME weights):")

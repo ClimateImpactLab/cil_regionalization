@@ -76,6 +76,8 @@ version = "world-combo-201710"
 [stats]
 sample_dims = ["batch", "gcm"]
 time_col = "year"
+quantile_method = "lower_step"
+summation = "fast"
 windows = [[2020, 2039], [2040, 2059], [2080, 2099]]
 quantiles = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
 include_mean = true

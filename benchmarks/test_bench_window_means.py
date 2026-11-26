@@ -37,7 +37,9 @@ def test_group_codes_match_the_plain_path():
     leaf = applied_leaf().assign(**LABELS)
     plain_s, plain = best(lambda: plain_window_means(leaf))
     codes_s, codes = best(
-        lambda: window_means(leaf, time_col="year", windows=WINDOWS, value_col="pct")
+        lambda: window_means(
+            leaf, time_col="year", windows=WINDOWS, value_col="pct", summation="fast",
+        )
     )
     pd.testing.assert_frame_equal(codes, plain, check_exact=True)
     report(f"window_means, {len(leaf):,} rows to {len(codes):,}")

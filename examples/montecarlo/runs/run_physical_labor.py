@@ -174,9 +174,11 @@ def batch_frames(task) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
             adm0 = adm0[["ISO", "year", "rate"]].assign(**member)
             out.append((
                 window_means(target, time_col="year", windows=WINDOWS,
-                             value_col="rate"),
+                             value_col="rate",
+                             summation="fast"),
                 window_means(adm0, time_col="year", windows=WINDOWS,
-                             value_col="rate"),
+                             value_col="rate",
+                             summation="fast"),
             ))
         print(batch, rcp, ssp, iam, flush=True)
     return out
@@ -199,6 +201,8 @@ def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
         value_col="rate",
         quantiles=QUANTILES,
         weight_col="model_weight",
+        quantile_method="lower_step",
+        summation="fast",
     )
 
 

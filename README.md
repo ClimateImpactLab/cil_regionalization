@@ -34,6 +34,8 @@ stats = cilreg.summarize_samples(
     time_col="year",
     window=(2080, 2099),
     quantiles=[0.05, 0.5, 0.95],
+    quantile_method="linear",
+    summation="fast",
 )
 ```
 
@@ -154,6 +156,8 @@ stats = cilreg.summarize_samples(
     window=(2080, 2099),
     quantiles=[0.05, 0.5, 0.95],
     weight_col="weight",
+    quantile_method="lower_step",
+    summation="fast",
 )
 ```
 
@@ -163,6 +167,23 @@ marks a surrogate, which the projection trees spell with a prefix
 (`surrogate_GFDL-CM3_94`). Strip the prefix and lowercase, and every
 model in the trees matches exactly one weight row.
 
+`read_model_weights` applies that rule to a file on disk. It reads the
+file once and refuses a table in which two rows match the same model.
+
+```python
+weights = cilreg.read_model_weights("rcp85_SMME_weights.tsv")
+draws["weight"] = weights.attach(draws["gcm"])
+entry = weights.record(leaf_models)  # one model name per leaf pooled
+```
+
+`attach` raises if a model has no row. `record` returns what a manifest
+should keep about the run: the file's path and SHA256, each model that
+was given a weight with that weight and its number of leaves, and the
+rows no model matched with their weights. The two lists together are
+the whole table, so the statistics can be rerun from the manifest if
+the file is lost. A pipeline run writes this entry to its manifest as
+`model_weights_record`.
+
 Weighted quantiles follow the historical extraction tool: the left
 step inverse of the weighted empirical distribution, not the
 interpolated quantiles of the unweighted path. Pooling a sample
@@ -170,6 +191,309 @@ dimension named `gcm` without weights warns once; filter
 `UnweightedModelWeightsWarning` to silence it. On the Mexico sample
 (`examples/rates`) the weights barely move the median and pull the
 95th percentile down by about a fifth.
+
+`quantile_method` says how a quantile is computed, by the name of
+the computation:
+
+- `"linear"` interpolates between members, as pandas does. It has no
+  weighted form and is refused with weights.
+- `"lower_step"` is the step of the historical extraction tool: the
+  member one below the one whose cumulative weight share reaches q.
+  Without weights every member counts the same, which is what that
+  tool did when it was told to use no model weights. A quantile below
+  the first step is `-inf`, and the value of a member with weight zero
+  can come back.
+- `"inverted_cdf"` is the standard inverse of the empirical
+  distribution (Hyndman and Fan type 1), the smallest member value
+  whose cumulative weight share reaches q. It is the same with or
+  without weights, never returns `-inf`, and never returns the value
+  of a member whose weight is zero.
+
+With four members that count equally the three give three different
+95th percentiles: the third member, a value between the third and the
+fourth, and the fourth.
+
+`summation` says how a mean is summed:
+
+- `"fast"` is the vectorised sum of pandas and numpy. Its last bits
+  depend on the order the rows arrive in, which in a pipeline run with
+  several workers is the order the workers finish in.
+- `"exact"` takes the window means and the pooled mean from exactly
+  rounded sums, so the order cannot change them.
+
+Neither option has a default. `summarize_samples` and
+`pooled_statistics` take both, `window_means` takes `summation`, and a
+pipeline config sets them under `[stats]`. The manifest records both.
+Under `"inverted_cdf"` or `"exact"` a statistic that comes out
+infinite raises instead of being returned; NaN does not.
+
+Files made before v0.6.0 had no such options. They are reproduced by
+`"lower_step"` if the run had weights and `"linear"` if it had none,
+with `"fast"`.
+
+## Warming levels
+
+`assign_warming_levels` gives each member of a temperature table the
+warming level it is at in a calendar period. A member is one series of
+global mean temperature, named by the columns of the table that are
+not the year or the value: a model and an rcp, a model and an ssp, or
+whatever the table has.
+
+```python
+table = cilreg.read_gmst("gmst.csv", member_cols=["gcm", "rcp"])
+levels = cilreg.assign_warming_levels(
+    table,
+    reference_period=(1986, 2005),
+    offset=0.61,
+    levels=[1.5, 2, 3, 4, 5],
+    half_width=0.25,
+    periods=[
+        cilreg.Period(gmst_span=(2040, 2059), impact_span=(2040, 2058)),
+        cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2099)),
+    ],
+    smoothing="unknown",
+)
+levels.windows_of(("MIROC5", "rcp85"))
+levels.record()
+```
+
+For each member the series is rebased by taking off its own mean over
+`reference_period` and adding `offset`. The mean of the rebased series
+over a period's `gmst_span` picks the level. A level holds a mean from
+`half_width` below it to `half_width` above it, both ends included. A
+mean in no band gives the member no level in that period, so with a
+half-width of 0.25 a member at 2.5 belongs to neither 2 nor 3. Two
+bands may share an end, as 1.5 and 2 share 1.75, and a mean exactly
+there goes to the level declared first. Bands that overlap are
+refused.
+
+None of `reference_period`, `offset`, `levels`, `half_width`,
+`periods` and `smoothing` has a default. The offset is the warming
+from a pre-industrial baseline to the reference period, and it is only
+right for that pair: 0.61 goes with 1986 to 2005 in AR5 (WG1 TS.2.2.1),
+and AR6 gives another figure against another period. A call that
+leaves one out fails.
+
+A period has two spans, both including their first and last year. The
+`gmst_span` is the years the temperature is averaged over, and the
+`impact_span` the years of the impacts that go under the level, which
+is also what the period is labelled by. They are separate because a
+product may average its impacts over other years than its temperature.
+
+Nothing is smoothed. The series is taken as it is in the table, and
+`smoothing` says in words how it was smoothed before, `"unknown"` if
+nobody knows. It goes into the record as written.
+
+A member's name is matched as it is written. A surrogate model is a
+member of its own and needs its own rows. A member that lacks a year
+of the reference period or of a `gmst_span` is refused by name.
+
+In a pipeline config the same settings go under
+`[stats.warming_levels]`, in place of `stats.windows`:
+
+```toml
+[stats]
+sample_dims = ["batch", "rcp", "gcm"]
+time_col = "year"
+quantiles = [0.05, 0.5, 0.95]
+quantile_method = "lower_step"
+summation = "fast"
+
+[stats.warming_levels]
+gmst = "gmst.csv"
+member = ["gcm", "rcp"]      # columns of the table, each a tree level
+reference_period = [1986, 2005]
+offset = 0.61
+levels = [1.5, 2, 3, 4, 5]
+half_width = 0.25
+smoothing = "unknown"
+
+[[stats.warming_levels.periods]]
+gmst_span = [2040, 2059]
+impact_span = [2040, 2058]
+
+[[stats.warming_levels.periods]]
+gmst_span = [2080, 2099]
+impact_span = [2080, 2098]
+
+[output]
+dir = "out"
+write_leaves = true
+
+[reduce.pandas]
+memory_gb = 128
+```
+
+A leaf's member is read off its level values, here its `gcm` and its
+`rcp`, so the tree declares both scenarios and the statistics pool
+them. A leaf is pooled under the level its member has in a period and
+left out of the periods in which it has none. The statistics file has
+a `warming_level` column next to `window`, which stays the period, and
+two counts on every row. `n_members` is the draws behind the
+statistic, a batch of a model counting as one. `n_bin_members` is the
+distinct members of the temperature table behind it, which is the
+number to read a 95th percentile over four models by. A level nobody
+is at in a period has no row, and the manifest records it with a zero.
+
+The statistics come from the leaf files under every stage, as with
+`stats.pool_years`, so stage `all` writes the leaves and then reduces
+them, and `--stage reduce` gives other levels, other periods or the
+other reduction from the same leaves. Collapsing each member's window
+first is the default, and `stats.pool_years = true` pools the years
+instead. The span is what is written: `[2040, 2058]` is nineteen
+years.
+
+A config that leaves out `reference_period`, `offset`, `levels`,
+`half_width`, `smoothing` or `periods` is refused. So is one that sets
+`stats.windows` or `stats.model_weights` as well: the members at a
+warming level count equally. `quantile_method = "lower_step"` is the
+extraction tool's quantile for that case. A member the tree declares
+that has no row in the table is refused before any leaf is read. A
+leaf that lacks a year of an impact span its member is pooled over, as
+a row or as a value, is refused by name, since its mean would be over
+fewer years than the span says. The manifest carries the whole record
+under `warming_levels`.
+
+`windows_of` gives, for one member, the periods in which it has a
+level, each with the level, the period's label and its impact years.
+`record` returns what a manifest should keep: the table's path and
+SHA256, every setting above, the rule for a shared end, each member's
+mean and level in each period, the number of members at each declared
+level with a zero where nobody is, and the members with no level.
+
+## Keeping the aggregated leaves
+
+A pipeline run keeps nothing between the weights and the statistics
+unless `output.write_leaves = true`. With it, every leaf is written
+after the weights are applied, with its years, to
+`leaves/<level values>/<name>.aggregated.parquet` under the output
+directory. It is off by default because the leaves of a product take
+far more disk than its statistics.
+
+A leaf file is plain parquet. Its columns are `target_ordinal`, the id
+fields, the leaf's own dimensions and the value. Its rows are sorted
+by target and cut into row groups of 128 targets, the same targets in
+the same group of every leaf, with an empty group where a leaf has
+none of them. So the rows of a range of targets can be read from
+every leaf without reading the rest. `leaves/targets.<digest>.parquet`
+gives the target of each ordinal.
+
+The footer of a leaf file says what made it, as JSON under the key
+`cil_regionalization.leaf`: the weight, the kind, the versions, the
+SHA256 of the two files of the weights artifact, the leaf's level
+values and its source file. No path is part of that identity. Paths
+are recorded and never compared.
+
+`leaves/<output.stem>.leaves.manifest.json` lists the leaves of a run
+with their accounting, sizes and hashes. It is written before the
+first leaf with `"complete": false` and again when every leaf has
+succeeded, so a run that was killed leaves a manifest that says so.
+Runs under different stems can share an output directory when their
+leaves differ, as one stem a scenario does. A run that would write a
+leaf another stem's manifest lists is refused.
+
+```
+cilreg pipeline config.toml --stage aggregate
+```
+
+writes the leaves and their manifest and stops before the statistics.
+
+```
+cilreg pipeline config.toml --stage reduce
+```
+
+takes the statistics from leaves written before, without opening the
+source tree or the weights. Everything under `[stats]` can differ from
+the run that wrote the leaves, so other windows or quantiles cost one
+pass over the leaf files and no aggregation. A product with other
+windows takes its own `output.stem` and names the leaves it reduces
+with `output.leaves_stem`. It gives the same bits whatever the number
+of workers. Under `summation = "exact"` those are the bits `all` gives
+on one worker, whatever the size of the blocks. Under `"fast"` they
+are too when the leaves have no missing values. With missing values
+the last bit of a window mean can depend on the block, because on
+some pandas versions the mean of one group changes with what else is
+in the frame.
+
+Reducing pools one block of targets at a time, so it needs to be told
+how much memory it may use:
+
+```toml
+[reduce.pandas]
+memory_gb = 128   # for all the workers together
+n_workers = 16    # run.n_workers unless set
+```
+
+`--dry-run` prints the blocks and the number of file opens that
+budget gives. Before any work the leaves are checked against their
+manifest: what aggregated them has to be what the config says, field
+by field, and every file has to be there with its size. A path is not
+part of that. If the weights or the tree have moved, the run says so
+and goes on, because the hashes in the manifest say what they were.
+`--verify-leaves` also hashes every leaf file against the manifest,
+which reads all of them and is the way to rule out a file changed in
+place.
+
+A cell of `tree.exclude` has one value for each level, and `"*"`
+stands for every value of its level, so `["*", "rcp85", "ACCESS1-0"]`
+leaves that model out of that scenario in every batch.
+
+Reducing fewer leaves than were aggregated is allowed, with a narrower
+`tree.expect` or a longer `tree.exclude`. The statistics file then has
+an `n_members` column whether the config asks for it or not, so that
+the smaller sample shows in the file. `output.write_reduced` is not
+available under `reduce`.
+
+A leaf's own dimension has to be an integer, a float, a boolean or a
+plain string when leaves are written. A categorical, datetime or
+nullable column is refused, because pandas 2 and pandas 3 write those
+differently.
+
+## Pooling the years of a window
+
+By default the years of a member inside a window are averaged first,
+and the statistics are over those means, one value a model and draw.
+`stats.pool_years = true` (experimental) takes no window mean. Every
+year of a member inside a window is a member of the sample, so a
+quantile is over models, draws and years together and carries the
+spread from year to year. A year inside two windows is pooled in both.
+
+```toml
+[stats]
+pool_years = true
+
+[output]
+write_leaves = true
+
+[reduce.pandas]
+memory_gb = 128
+```
+
+The pooled rows are the leaves' own rows, far more than one process
+can hold, so the statistics always come from the leaf files, one block
+of targets at a time. Stage `all` writes the leaves and then reduces
+them. It asks for `output.write_leaves = true` and for the memory
+budget before it reads a leaf. The blocks are sized after the leaves
+are written, so a budget too small for one row group is found then.
+The leaves stay, and `--stage reduce` takes the statistics from them
+with a larger budget. `output.write_reduced` is refused, and so is a
+run without `[weights]`.
+
+What it changes:
+
+- The mean is over member-years. When every member has every year of
+  the window it is the mean of the window means, up to rounding. A
+  member that lacks years has fewer rows in the sample and so counts
+  for less than a member with all of them.
+- A model weight applies to each member-year.
+- `quantile_method` and `summation` work as before. No window mean is
+  taken, so `summation` acts on the pooled mean alone.
+- With `include_n_members` the file has two counts. `n_members` is
+  what it is without pooling, the members behind a statistic: those
+  with a value in the window and, with model weights, a weight above
+  zero. `n_sample` is the member-years behind it.
+- The manifest records `pool_years`, next to `quantile_method` and
+  `summation`.
 
 ## Your own NetCDF
 
@@ -308,7 +632,8 @@ confirm a regenerated set started from the same input.
 ## More detail
 
 `fetch_weights`, `generate_weights`, `apply_weights`, `read_netcdf_grid`, `summarize_samples`,
-`window_means`, `pooled_statistics`, `read_gradient_leaf`,
+`window_means`, `pooled_statistics`, `read_gmst`,
+`assign_warming_levels`, `read_gradient_leaf`,
 `aggregate_gradient`, `delta_method`, `WeightsArtifact`, and
 `load_config` are the supported API, re-exported at the package root.
 `window_means` and `pooled_statistics` are the two halves of
