@@ -7,6 +7,8 @@ What a consumer of published weights touches, in call order:
     apply_weights       aggregate source-level data to the artifact's targets
     summarize_samples   window means and pooled statistics over MC draws
     read_model_weights  the climate model weights those statistics take
+    read_gmst           a table of global mean temperature by member
+    assign_warming_levels   the warming level of each member in a period
 
 `window_means` and `pooled_statistics` are the two halves of
 `summarize_samples`, for pipelines that reduce time per leaf before
@@ -83,20 +85,33 @@ from cil_regionalization.stats import (
     summarize_samples,
     window_means,
 )
+from cil_regionalization.warming_levels import (
+    GMSTTable,
+    LevelWindow,
+    Period,
+    WarmingLevels,
+    assign_warming_levels,
+    read_gmst,
+)
 
 __all__ = [
     "Config",
+    "GMSTTable",
     "GRID_CELLS",
+    "LevelWindow",
     "ModelWeights",
     "OutputSchema",
+    "Period",
     "SourceUnitPolicies",
     "SourceUnits",
     "SumToOneError",
     "UnweightedModelWeightsWarning",
+    "WarmingLevels",
     "WeightsArtifact",
     "WeightsResult",
     "aggregate_gradient",
     "apply_weights",
+    "assign_warming_levels",
     "clear_cache",
     "delta_method",
     "fetch_weights",
@@ -105,6 +120,7 @@ __all__ = [
     "load_config",
     "mixture_quantile",
     "pooled_statistics",
+    "read_gmst",
     "read_gradient_leaf",
     "read_model_weights",
     "read_netcdf_grid",

@@ -668,8 +668,8 @@ class TestLabelPlacement:
     @pytest.mark.parametrize(
         "name",
         [
-            "window", "statistic", "n_members", "model_weight", "target_id",
-            "target_ordinal",
+            "window", "statistic", "n_members", "n_sample", "model_weight",
+            "target_id", "target_ordinal",
         ],
     )
     def test_a_level_named_like_an_output_column_is_refused_before_any_leaf(
@@ -2376,9 +2376,9 @@ _METHODS_AND_WEIGHTS = pytest.mark.parametrize(
         else "weighted" if value else "unweighted"
     ),
 )
-# One row group of the tree below, at 130 bytes a row with half its
-# rows kept, is 3,120 bytes. This fits one group a worker and not two.
-_ONE_GROUP_GB = 3200e-9
+# One row group of the tree below, at 280 bytes a row with half its
+# rows kept, is 6,720 bytes. This fits one group a worker and not two.
+_ONE_GROUP_GB = 7000e-9
 
 
 def _same_frames(one: pd.DataFrame, two: pd.DataFrame) -> None:
@@ -2515,7 +2515,8 @@ class TestReduce:
         assert (reduce["blocks"], reduce["opens_per_leaf"], reduce["opens"]) == (2, 2, 12)
         assert reduce["failed_opens"] == 0
         assert reduce["rows_pooled"] == 48
-        assert reduce["bytes_per_row"] == 130
+        # 240, and 40 for the band
+        assert reduce["bytes_per_row"] == 280
         assert reduce["kept_share"] == 0.5
         assert manifest["artifact_sha256"] == _leaves_manifest(out)["aggregation"][
             "artifact"
@@ -2749,8 +2750,8 @@ class TestReduce:
             self._reduce(raw, memory_gb=None)
         with pytest.raises(
             ValueError,
-            match="one row group of 1 targets needs 3.12e-06 GB. The smallest "
-            "budget that runs with 3 workers is 9.36e-06 GB",
+            match="one row group of 1 targets needs 6.72e-06 GB. The smallest "
+            "budget that runs with 3 workers is 2.02e-05 GB",
         ):
             self._reduce(raw, memory_gb=_ONE_GROUP_GB, n_workers=3)
         with pytest.raises(ValueError, match="smallest budget"):
@@ -2812,10 +2813,11 @@ class TestReduce:
             f"  statistics -> {out / 'again.parquet'}",
             f"  manifest   -> {out / 'again.manifest.json'}",
             f"  leaves     -> {out / 'leaves' / 'statistics.leaves.manifest.json'}",
-            "  reduce: pandas, 3.2e-06 GB over 1 workers, 3.2e-06 GB a worker",
+            "  reduce: pandas, 7e-06 GB over 1 workers, 7e-06 GB a worker",
             "  2 blocks of up to 1 targets and 24 rows",
             "  2 opens a leaf, 12 in all",
-            "  sized at 130 bytes a row, with 0.5 of a group's rows kept. The "
+            "  sized at 280 bytes a row, 240 and 40 for each dimension of a "
+            "leaf, with 0.5 of a group's rows kept. The "
             "rows of a group are known summed over the leaves, so this takes "
             "every leaf to spread its rows over the groups alike.",
             f"  leaves: every file under {out / 'leaves'} is in a leaves manifest",
@@ -2837,7 +2839,7 @@ class TestReduce:
             warnings_.simplefilter("ignore")
             run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
         with pytest.warns(UnweightedModelWeightsWarning) as caught:
-            self._reduce(raw, memory_gb=1560e-9)
+            self._reduce(raw, memory_gb=2900e-9)
         assert len([w for w in caught if w.category is UnweightedModelWeightsWarning]) == 1
         manifest = json.loads((out / "again.manifest.json").read_text())
         assert manifest["reduce"]["blocks"] == 2
@@ -2904,6 +2906,512 @@ memory_gb = 1
         assert "leaves: 6 files hash to what the manifest has" in printed
         assert "6 leaves reduced; statistics rows=2" in printed
         assert (out / "statistics.parquet").exists()
+
+
+# One row group of that tree with every row kept, as pooled years keep
+# them, is 13,440 bytes.
+_ONE_POOLED_GROUP_GB = 14000e-9
+
+
+@pytest.mark.usefixtures("one_target_a_group")
+class TestPooledYears:
+    """``stats.pool_years`` pools the years inside a window with the
+    models and the draws, from the leaf files, under every stage."""
+
+    _MODEL_WEIGHTS = {"z0": 0.6, "z1": 0.3, "z2": 0.0}
+
+    @staticmethod
+    def _raw(weights_dir, tmp_path, *, memory_gb=1.0, n_workers=1, **kwargs):
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        if not tree.exists():
+            TestLabelPlacement._build_tree(tree)
+        raw = TestReduce._raw(weights_dir, tree, out, **kwargs)
+        raw["stats"]["pool_years"] = True
+        raw["run"]["n_workers"] = n_workers
+        raw["reduce"] = {"pandas": {"memory_gb": memory_gb}}
+        return raw, out
+
+    def _by_hand(self, cfg: MonteCarloPipelineConfig, out: Path) -> pd.DataFrame:
+        """The statistics from the leaf files in one call. A row is in
+        the window that covers its year, and the year is a sample
+        dimension. The members are counted apart."""
+        from cil_regionalization.leaves import ORDINAL_COLUMN
+        from cil_regionalization.pipelines.montecarlo import _ordered
+        from cil_regionalization.stats import pooled_statistics
+
+        pieces = []
+        for kumquat, zeppelin in itertools.product(*_LEVELS.values()):
+            leaf = pd.read_parquet(
+                out / "leaves" / kumquat / zeppelin / "damages.aggregated.parquet"
+            ).drop(columns=[ORDINAL_COLUMN])
+            for lo, hi in cfg.stats.windows:
+                pieces.append(
+                    leaf[leaf["year"].between(lo, hi)].assign(
+                        kumquat=kumquat, zeppelin=zeppelin,
+                        window=f"{int(lo)}-{int(hi)}",
+                    )
+                )
+        tagged = pd.concat(pieces, ignore_index=True)[
+            ["target_id", "band", "kumquat", "window", "zeppelin", "year", "value"]
+        ]
+        weighted = cfg.stats.model_weights is not None
+        if weighted:
+            tagged["model_weight"] = tagged["zeppelin"].map(self._MODEL_WEIGHTS)
+        stats = pooled_statistics(
+            tagged,
+            sample_dims=["zeppelin", "year"],
+            value_col="value",
+            quantiles=cfg.stats.quantiles,
+            weight_col="model_weight" if weighted else None,
+            include_n_members=True,
+            quantile_method=cfg.stats.quantile_method,
+            summation=cfg.stats.summation,
+        ).rename(columns={"n_members": "n_sample"})
+        counted = tagged[tagged["model_weight"] > 0] if weighted else tagged
+        members = counted.groupby(["target_id", "band", "kumquat", "window"])[
+            "zeppelin"
+        ].nunique()
+        stats["n_members"] = [
+            members[key]
+            for key in zip(
+                stats["target_id"], stats["band"], stats["kumquat"], stats["window"]
+            )
+        ]
+        columns = [c for c in stats.columns if c != "n_sample"] + ["n_sample"]
+        return _ordered(stats[columns], cfg)
+
+    @_METHODS_AND_WEIGHTS
+    def test_stage_all_writes_the_leaves_and_pools_their_years(
+        self, weights_dir, tmp_path, methods, weighted
+    ):
+        raw, out = self._raw(
+            weights_dir, tmp_path, weighted=weighted, methods=methods,
+            include_n_members=True,
+        )
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        result = run_pipeline(cfg)
+        assert list(result.stats.columns) == [
+            "target_id", "band", "kumquat", "window", "statistic", "value",
+            "n_members", "n_sample",
+        ]
+        assert _leaves_manifest(out)["complete"] is True
+        _same_frames(result.stats, self._by_hand(cfg, out))
+        _same_frames(pd.read_parquet(out / "statistics.parquet"), result.stats)
+        # three models and two years a window, and z2 weighs nothing
+        assert set(result.stats["n_members"]) == {2 if weighted else 3}
+        assert set(result.stats["n_sample"]) == {4 if weighted else 6}
+        assert len(result.leaf_reports) == 6
+
+    def test_the_counts_are_written_only_if_asked_for(self, weights_dir, tmp_path):
+        raw, _ = self._raw(weights_dir, tmp_path)
+        stats = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+        assert list(stats.columns) == [
+            "target_id", "band", "kumquat", "window", "statistic", "value",
+        ]
+
+    def test_the_mean_stays_and_the_quantiles_move(self, weights_dir, tmp_path):
+        """Every member of this tree has both years of a window, so the
+        mean over member-years is the mean of the window means, here to
+        the rounding of the two sums. The members are the same, and
+        there are two rows of each."""
+        raw, out = self._raw(weights_dir, tmp_path, include_n_members=True)
+        years = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+        raw["stats"]["pool_years"] = False
+        raw["output"].update(dir=str(tmp_path / "means"), write_leaves=False)
+        means = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+
+        keys = ["target_id", "band", "kumquat", "window", "statistic"]
+        pd.testing.assert_frame_equal(years[keys], means[keys])
+        is_mean = (years["statistic"] == "mean").to_numpy()
+        pd.testing.assert_series_equal(
+            years.loc[is_mean, "value"], means.loc[is_mean, "value"],
+            check_exact=False, rtol=1e-13,
+        )
+        assert (years.loc[~is_mean, "value"] != means.loc[~is_mean, "value"]).all()
+        assert (years["n_members"] == means["n_members"]).all()
+        assert (years["n_sample"] == 2 * means["n_members"]).all()
+        assert "n_sample" not in means.columns
+
+    def test_the_reduce_stage_gives_what_stage_all_gave(self, weights_dir, tmp_path):
+        """In one block, in a block a row group, and with two workers."""
+        raw, out = self._raw(
+            weights_dir, tmp_path, weighted=True, include_n_members=True
+        )
+        whole = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        for stem, memory_gb, n_workers, blocks in (
+            ("one", 1.0, None, 1),
+            ("two", _ONE_POOLED_GROUP_GB, None, 2),
+            ("pool", 2 * _ONE_POOLED_GROUP_GB, 2, 2),
+        ):
+            got = TestReduce._reduce(
+                raw, stem=stem, memory_gb=memory_gb, n_workers=n_workers
+            )
+            _same_frames(got.stats, whole.stats)
+            manifest = json.loads((out / f"{stem}.manifest.json").read_text())
+            assert manifest["reduce"]["blocks"] == blocks
+            assert manifest["stage"] == "reduce"
+            assert manifest["pool_years"] is True
+
+    def test_workers_in_both_passes_change_no_bit(self, weights_dir, tmp_path):
+        raw, _ = self._raw(weights_dir, tmp_path, weighted=True)
+        one = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+        raw, out = self._raw(
+            weights_dir, tmp_path, weighted=True, n_workers=2,
+            memory_gb=2 * _ONE_POOLED_GROUP_GB,
+        )
+        raw["output"]["dir"] = str(tmp_path / "pool")
+        two = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+        _same_frames(one, two)
+        manifest = json.loads(
+            (tmp_path / "pool" / "statistics.manifest.json").read_text()
+        )
+        assert manifest["reduce"]["blocks"] == 2
+        assert manifest["reduce"]["options"]["n_workers"] == 2
+
+    def test_the_manifest_says_the_years_were_pooled(self, weights_dir, tmp_path):
+        raw, out = self._raw(weights_dir, tmp_path, weighted=True)
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        manifest = json.loads((out / "statistics.manifest.json").read_text())
+        leaves = out / "leaves" / "statistics.leaves.manifest.json"
+        assert manifest["stage"] == "all"
+        assert manifest["pool_years"] is True
+        assert manifest["leaves_manifest"] == str(leaves)
+        assert manifest["leaves_manifest_sha256"] == hashlib.sha256(
+            leaves.read_bytes()
+        ).hexdigest()
+        assert manifest["reduced"] is None
+        assert manifest["reduce"]["kind"] == "pandas"
+        assert manifest["reduce"]["kept_share"] == 1.0
+        assert manifest["reduce"]["rows_pooled"] == 96
+        assert manifest["n_leaves"] == 6
+        assert manifest["model_weights_record"]["members"]["z2"]["weight"] == 0.0
+        assert result.paths == {
+            "statistics": str(out / "statistics.parquet"),
+            "manifest": str(out / "statistics.manifest.json"),
+            "leaves_manifest": str(leaves),
+        }
+
+    def test_a_run_of_window_means_records_that_no_year_was_pooled(
+        self, weights_dir, tmp_path
+    ):
+        raw, out = self._raw(weights_dir, tmp_path)
+        raw["stats"]["pool_years"] = False
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        TestReduce._reduce(raw)
+        for stem in ("statistics", "again"):
+            manifest = json.loads((out / f"{stem}.manifest.json").read_text())
+            assert manifest["pool_years"] is False
+
+    def test_what_stage_all_needs_is_asked_before_any_leaf_is_read(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Pass 1 can take hours. A missing budget, leaves that would
+        not be written and a reduced file that cannot be are refused
+        before it starts."""
+        from cil_regionalization.pipelines import montecarlo
+
+        def read_leaf(*args):
+            raise AssertionError("a leaf was read")
+
+        monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
+        for change, message in (
+            ({"reduce": {"pandas": {"memory_gb": None}}},
+             r"Set \[reduce.pandas\] memory_gb"),
+            ({"output": {"write_leaves": False}},
+             "stage 'all' needs output.write_leaves = true"),
+            ({"output": {"write_reduced": True}},
+             "stats.pool_years cannot write the reduced file.*"
+             "output.write_reduced = false"),
+        ):
+            raw, out = self._raw(weights_dir, tmp_path)
+            for section, values in change.items():
+                raw[section] = {**raw.get(section, {}), **values}
+            for dry_run in (True, False):
+                with pytest.raises(ValueError, match=message):
+                    run_pipeline(
+                        MonteCarloPipelineConfig.model_validate(raw), dry_run=dry_run
+                    )
+            assert not out.exists()
+
+    def test_the_first_pass_takes_no_window_mean_and_reads_the_weights_once(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """The window means of a leaf would be thrown away, and a table
+        read again for the second pass could have changed in between."""
+        from cil_regionalization.pipelines import montecarlo
+
+        def window_means(*args, **kwargs):
+            raise AssertionError("a window mean was taken")
+
+        real, reads = montecarlo.read_model_weights, []
+
+        def read_model_weights(path):
+            reads.append(path)
+            return real(path)
+
+        monkeypatch.setattr(montecarlo, "window_means", window_means)
+        monkeypatch.setattr(montecarlo, "read_model_weights", read_model_weights)
+        raw, _ = self._raw(weights_dir, tmp_path, weighted=True)
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert len(reads) == 1
+
+    def test_a_backend_that_cannot_give_the_methods_is_refused(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Before any leaf is read under stage 'all', and before any
+        block under stage 'reduce'."""
+        from cil_regionalization.pipelines import montecarlo
+        from cil_regionalization.reduce.pandas_blocks import PandasBlocks
+
+        class ExactOnly(PandasBlocks):
+            kind = "exact-only"
+            supports = frozenset({("inverted_cdf", "exact")})
+
+            def run(self, request):
+                raise AssertionError("a block was reduced")
+
+        raw, out = self._raw(weights_dir, tmp_path)
+        run_pipeline(
+            MonteCarloPipelineConfig.model_validate(raw), stage="aggregate"
+        )
+        monkeypatch.setattr(
+            montecarlo, "get_backend", lambda config: ExactOnly(config.pandas)
+        )
+        message = (
+            "the 'exact-only' reduce backend does not give "
+            "quantile_method='linear' with summation='fast' to the last bit"
+        )
+        with pytest.raises(ValueError, match=message):
+            TestReduce._reduce(raw)
+
+        def read_leaf(*args):
+            raise AssertionError("a leaf was read")
+
+        monkeypatch.setattr(montecarlo, "_read_leaf", read_leaf)
+        with pytest.raises(ValueError, match=message):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert not (out / "statistics.parquet").exists()
+
+    def test_the_reduce_stage_does_not_send_a_reduced_file_to_stage_all(
+        self, weights_dir, tmp_path
+    ):
+        """Without pooled years the reduce stage says to use stage
+        'all' for the reduced file. With them no stage writes it."""
+        raw, _ = self._raw(weights_dir, tmp_path)
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        raw["output"]["write_reduced"] = True
+        with pytest.raises(ValueError) as refused:
+            TestReduce._reduce(raw)
+        assert "stats.pool_years cannot write the reduced file" in str(refused.value)
+        assert "use stage 'all'" not in str(refused.value)
+
+    def test_a_dry_run_with_the_weights_table_gone_still_returns(
+        self, weights_dir, tmp_path
+    ):
+        raw, out = self._raw(weights_dir, tmp_path, weighted=True)
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        run_pipeline(cfg)
+        Path(raw["stats"]["model_weights"]).unlink()
+        lines = run_pipeline(cfg, dry_run=True).summary().splitlines()
+        assert lines[-1].startswith(
+            "  the leaves on disk now do not say how the blocks will be sized: "
+        )
+
+    def test_configs_that_cannot_pool_years_are_refused_when_read(
+        self, weights_dir, tmp_path
+    ):
+        raw, _ = self._raw(weights_dir, tmp_path)
+        passthrough = json.loads(json.dumps(raw))
+        del passthrough["weights"]
+        with pytest.raises(ValueError, match=r"stats.pool_years needs \[weights\]"):
+            MonteCarloPipelineConfig.model_validate(passthrough)
+        raw["stats"]["sample_dims"] = ["zeppelin", "year"]
+        with pytest.raises(
+            ValueError,
+            match="pools over stats.time_col 'year' itself. Leave it out of "
+            "stats.sample_dims",
+        ):
+            MonteCarloPipelineConfig.model_validate(raw)
+        raw["stats"]["pool_years"] = False
+        MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_a_leaf_column_named_like_the_count_of_rows_is_refused(
+        self, weights_dir, tmp_path
+    ):
+        """It runs under window means, which write no such column."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        TestLabelPlacement._build_tree(tree)
+        for path in tree.rglob("damages.parquet"):
+            pd.read_parquet(path).rename(columns={"band": "n_sample"}).to_parquet(
+                path, index=False
+            )
+        raw, _ = self._raw(weights_dir, tmp_path)
+        raw["stats"]["pool_years"] = False
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        with pytest.raises(ValueError, match="a column named 'n_sample'"):
+            TestReduce._reduce(raw, stats={"pool_years": True})
+
+    def test_a_second_pass_that_fails_leaves_the_leaves_and_says_so(
+        self, weights_dir, tmp_path
+    ):
+        """The blocks are sized from the leaves manifest, which only
+        exists after the first pass. A budget too small for one row
+        group stops the run there, with the leaves written."""
+        raw, out = self._raw(weights_dir, tmp_path, memory_gb=1e-9)
+        with pytest.raises(
+            ValueError,
+            match="smallest budget that runs with 1 workers is 1.34e-05 GB. The "
+            "leaves are written and their manifest is complete .*Stage "
+            "'reduce' takes the statistics from them without aggregating again",
+        ):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert _leaves_manifest(out)["complete"] is True
+        assert not (out / "statistics.parquet").exists()
+        got = TestReduce._reduce(raw, stem="statistics")
+        raw["reduce"]["pandas"]["memory_gb"] = 1.0
+        raw["output"]["dir"] = str(tmp_path / "whole")
+        whole = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        _same_frames(got.stats, whole.stats)
+
+    @pytest.mark.parametrize("kind", [ValueError, RuntimeError])
+    def test_a_second_pass_error_that_takes_more_than_a_message_is_still_raised(
+        self, weights_dir, tmp_path, monkeypatch, kind
+    ):
+        """Failed with the error built again from its own type, which
+        for a JSON error is a TypeError about missing arguments."""
+        from cil_regionalization.pipelines import montecarlo
+
+        original = (
+            json.JSONDecodeError("not a manifest", "{", 0)
+            if kind is ValueError
+            else RuntimeError("a worker died")
+        )
+
+        def run_reduce(*args, **kwargs):
+            raise original
+
+        monkeypatch.setattr(montecarlo, "_run_reduce", run_reduce)
+        raw, _ = self._raw(weights_dir, tmp_path)
+        with pytest.raises(kind, match="The leaves are written") as raised:
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert raised.value.__cause__ is original
+
+    def test_aggregate_needs_no_budget_and_writes_the_same_leaves(
+        self, weights_dir, tmp_path
+    ):
+        raw, out = self._raw(weights_dir, tmp_path, memory_gb=None)
+        result = run_pipeline(
+            MonteCarloPipelineConfig.model_validate(raw), stage="aggregate"
+        )
+        assert result.stats is None
+        pooled = _leaves_manifest(out)
+        raw["stats"]["pool_years"] = False
+        raw["output"]["dir"] = str(tmp_path / "means")
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw), stage="aggregate")
+        means = _leaves_manifest(tmp_path / "means")
+        assert pooled["aggregation_digest"] == means["aggregation_digest"]
+        assert [e["sha256"] for e in pooled["leaves"]] == [
+            e["sha256"] for e in means["leaves"]
+        ]
+
+    def test_the_dry_run_of_stage_all_says_when_the_blocks_are_sized(
+        self, weights_dir, tmp_path
+    ):
+        raw, out = self._raw(weights_dir, tmp_path, memory_gb=_ONE_POOLED_GROUP_GB)
+        cfg = MonteCarloPipelineConfig.model_validate(raw)
+        plan = run_pipeline(cfg, dry_run=True)
+        head = [
+            "pipeline plan: 6 declared leaves",
+            f"  statistics -> {out / 'statistics.parquet'}",
+            f"  manifest   -> {out / 'statistics.manifest.json'}",
+            f"  leaves     -> {out / 'leaves' / 'statistics.leaves.manifest.json'}",
+            "  reduce: stats.pool_years takes the statistics from the leaf "
+            "files, by blocks, after every leaf is written",
+        ]
+        assert plan.summary().splitlines() == head + [
+            "  the blocks are sized once the leaves are written",
+        ]
+        assert not out.exists()
+
+        run_pipeline(cfg)
+        before = sorted(p.name for p in out.iterdir())
+        lines = run_pipeline(cfg, dry_run=True).summary().splitlines()
+        assert lines[:5] == head
+        assert lines[5:8] == [
+            "  with the leaves on disk now, which this run writes again:",
+            "  reduce: pandas, 1.4e-05 GB over 1 workers, 1.4e-05 GB a worker",
+            "  2 blocks of up to 1 targets and 48 rows",
+        ]
+        assert "with 1 of a group's rows kept, each with its year." in lines[9]
+        assert sorted(p.name for p in out.iterdir()) == before
+
+        raw["policies"] = {"on_zero_weight": "skip"}
+        other = MonteCarloPipelineConfig.model_validate(raw)
+        lines = run_pipeline(other, dry_run=True).summary().splitlines()
+        assert lines[:5] == head and len(lines) == 6
+        assert lines[5].startswith(
+            "  the leaves on disk now do not say how the blocks will be sized: "
+            "the leaves were aggregated with policies"
+        )
+
+    def test_the_module_entry_point_runs_both_passes(
+        self, weights_dir, tmp_path, capsys
+    ):
+        from cil_regionalization.pipelines.montecarlo import main
+
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        cfg_path = tmp_path / "pipeline.toml"
+        cfg_path.write_text(
+            f"""
+[weights]
+dir = "{weights_dir}"
+weight = "area"
+
+[tree]
+root = "{tree}"
+levels = ["kumquat", "zeppelin"]
+filename = "damages.parquet"
+
+[tree.expect]
+kumquat = ["k0", "k1"]
+zeppelin = ["z0", "z1", "z2"]
+
+[data]
+kind = "extensive"
+version = "{SOURCE_VERSION}"
+
+[stats]
+sample_dims = ["kumquat", "zeppelin"]
+time_col = "year"
+quantile_method = "linear"
+summation = "fast"
+windows = [[2050, 2051]]
+pool_years = true
+include_n_members = true
+
+[output]
+dir = "{out}"
+write_leaves = true
+
+[reduce.pandas]
+memory_gb = 1
+"""
+        )
+        assert main([str(cfg_path), "--dry-run"]) == 0
+        assert "the blocks are sized once the leaves are written" in (
+            capsys.readouterr().out
+        )
+        assert main([str(cfg_path)]) == 0
+        printed = capsys.readouterr().out
+        assert "reduce: pandas, 1 GB over 1 workers" in printed
+        assert printed.count("is in a leaves manifest") == 1
+        assert "6 leaves aggregated; statistics rows=2" in printed
+        assert f"wrote statistics: {out / 'statistics.parquet'}" in printed
+        stats = pd.read_parquet(out / "statistics.parquet")
+        # six leaves, and both years of each
+        assert stats["n_members"].tolist() == [6, 6]
+        assert stats["n_sample"].tolist() == [12, 12]
 
 
 class TestOrderedIndex:
