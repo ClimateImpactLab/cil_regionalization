@@ -130,6 +130,7 @@ def _raw(
             "quantile_method": methods[0],
             "summation": methods[1],
             "include_n_members": True,
+            "model_dims": POOLED[-1:],
             **stats,
         },
         "output": {"dir": str(out), "write_leaves": True},
@@ -444,6 +445,7 @@ def test_warming_levels_pooled_are_xarrays_statistics(weights_dir, tmp_path, met
             "member": ["gcm", "rcp"],
             "reference_period": [1986, 2005],
             "smoothing": "unknown",
+            "join": "declared",
             "periods": [
                 {"gmst_span": list(p), "impact_span": list(p)} for p in PERIODS
             ],

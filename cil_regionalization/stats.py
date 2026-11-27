@@ -1,39 +1,46 @@
 """Statistics over Monte Carlo samples of already aggregated data.
 
-One function: mean over the time window first, then the statistics over
-the pooled samples. The caller supplies a frame and says which columns
-are the sample.
+`summarize_samples` takes each member's mean over a time window and
+then the statistics over the pooled members. `window_means` and
+`pooled_statistics` are its two halves as separate functions. The
+caller passes a frame and says which columns are the sample. Input that
+already carries a statistic is refused.
 
-The order matters, because aggregating across space and summarizing
-across samples do not commute. Each draw is aggregated spatially first,
-then averaged over the window, then pooled. Quantiles are not additive:
-summing per-unit quantiles overstates the aggregate tail unless the
-units move together, which is the mistake this closes off. Input that
-already carries a statistic dimension is refused.
-
-Pooling flattens every declared sample dimension into one sample, each
+Pooling puts every declared sample dimension into one sample, each
 member counting equally. ``weight_col`` names a per-member weight
 instead, which is how the SMME weights enter.
 
 NaN values drop out of the window mean, and a member whose whole window
 is NaN drops out of the statistics.
 
-``quantile_method`` names how a quantile is computed. "linear"
-interpolates between members, as pandas does, and has no weighted
-form. "lower_step" is the step of the historical extraction tool, the
-member one below the one whose cumulative weight share reaches q, with
-equal weights when none are given. "inverted_cdf" is the standard
-inverse of the empirical distribution (Hyndman and Fan type 1), one
-definition with or without weights.
+``quantile_method`` names how a quantile is computed, and the three are
+not three estimators of one thing. "inverted_cdf" is the estimator, the
+standard inverse of the empirical distribution (Hyndman and Fan type
+1), with or without weights, and it always returns the value of a
+member. "linear" interpolates between two members, as numpy does, and
+can return a number no member holds. It has no weighted form.
+"lower_step" reproduces the historical extraction tool and does not
+estimate a quantile. It returns the member one below the one
+"inverted_cdf" returns, so it is biased low at every quantile but the
+median of members that count equally, and it counts every member
+equally when no weights are given.
 
 ``summation`` names how a mean is summed. "fast" is the vectorised
 sum of pandas and numpy, whose last bits depend on the order the rows
 arrive in. "exact" is the exactly rounded sum, which does not depend
 on it.
 
-Neither has a default. Under "inverted_cdf" or "exact" an infinite
-statistic is an error.
+Neither has a default. An infinite member value is refused under every
+method and summation. The one infinity a statistic can have is the
+``-inf`` of "lower_step" at or below its first step.
 """
+
+# Each draw is aggregated across space first, then averaged over the
+# window, then pooled, because aggregating across space and summarizing
+# across samples do not commute. Quantiles are not additive. Summing
+# per-unit quantiles overstates the aggregate tail unless the units move
+# together, which is why input that already carries a statistic is
+# refused.
 
 from __future__ import annotations
 
@@ -76,6 +83,7 @@ def _warn_if_unweighted_gcm(sample_dims: list[str], weight_col: str | None) -> N
 # the legacy long (monetized_deaths_vsl_epa_scaled_q05) spelling.
 _STATISTIC_COLUMN = "statistic"
 _N_MEMBERS_COLUMN = "n_members"
+_N_MODELS_COLUMN = "n_models"
 
 # The computations of a quantile and of a sum, each under the name of
 # what it does. Neither option has a default.
@@ -128,9 +136,9 @@ _QUANTILE_NAME_RE = re.compile(r"(^|_)(q\d{1,3}|mean)$")
 
 
 class GroupError(ValueError):
-    """A refusal that names one identity group, held apart in ``group``
-    so that a caller whose identity columns are codes can name the
-    group by what the codes stand for, with `naming`."""
+    """A refusal that names one identity group, which it holds apart in
+    ``group``. A caller whose identity columns are codes can raise the
+    same refusal about the group the codes stand for, with `naming`."""
 
     def __init__(self, before: str, group: dict, after: str = "") -> None:
         self.before, self.group, self.after = before, group, after
@@ -156,6 +164,7 @@ def summarize_samples(
     include_mean: bool = True,
     weight_col: str | None = None,
     include_n_members: bool = False,
+    model_dims: Sequence[str] | None = None,
     quantile_method: str,
     summation: str,
 ) -> pd.DataFrame:
@@ -169,52 +178,53 @@ def summarize_samples(
 
     ``weight_col`` names a per-member weight, constant across the
     member's time rows. Weights must be finite and non-negative, and a
-    zero weight drops the member. Weights are not renormalized within
-    a model, so in an
-    unbalanced sample a model's total weight grows with how often it
-    appears. Leaving ``weight_col`` unset with a ``gcm`` sample
-    dimension warns with `UnweightedModelWeightsWarning`.
+    zero weight drops the member. Weights are not renormalized within a
+    model, so in an unbalanced sample a model's total weight grows with
+    how often it appears. Leaving ``weight_col`` unset with a ``gcm``
+    sample dimension warns with `UnweightedModelWeightsWarning`.
 
-    Returns a long frame: identity columns, 'statistic', ``value_col``.
-    Labels are 'mean' and 'qNN' in percent ('q05', 'q95', 'q2.5').
+    Returns a long frame with the identity columns, 'statistic' and
+    ``value_col``. Labels are 'mean' and 'qNN' in percent ('q05', 'q95',
+    'q2.5').
 
-    ``include_n_members`` adds an integer 'n_members' column after
-    ``value_col``: the members of the identity group that entered the
-    statistic, so those with a window mean that is not NaN and, when
-    weighted, a weight above zero. ``data`` must not already have a
-    column of that name.
+    ``include_n_members`` adds two integer columns after ``value_col``.
+    'n_members' is the samples behind a statistic, the members with a
+    window mean that is not NaN and, when weighted, a weight above zero,
+    so each batch of a model counts once. 'n_models' is the climate
+    models among them, the distinct values of ``model_dims``, which it
+    then has to name, such as ``["gcm"]``. ``data`` must not already
+    have columns of those names.
 
-    ``quantile_method`` is "linear", "lower_step" or "inverted_cdf",
-    and has no default. "linear" interpolates between members and is
-    refused with weights. "lower_step" is the left step inverse of the
-    weighted distribution, as the historical extraction tool computed
-    it. It returns the member one below the one whose cumulative weight
-    share reaches q, with every member weighted equally when
-    ``weight_col`` is unset. It differs from "linear" even when every
-    weight is equal, except at 0.5, which is then the plain median, and
-    a quantile below the first step is ``-inf``. "inverted_cdf"
-    returns, weighted or not, the smallest member value whose
-    cumulative weight share reaches q, so never ``-inf``.
+    ``quantile_method`` is "inverted_cdf", "linear" or "lower_step",
+    and has no default. "inverted_cdf" is the estimator of a quantile.
+    It returns, weighted or not, the smallest member value whose
+    cumulative weight share reaches q, always a value a member has.
+    "linear" interpolates between two members and can return a number
+    no member holds. It is refused with weights. "lower_step" is for
+    reproducing the historical extraction tool, not for estimating a
+    quantile. It returns the member one below the one "inverted_cdf"
+    returns, so it is biased low at every quantile, except at 0.5 with
+    members that count equally, where it is the plain median. A
+    quantile at or below the first member's share is ``-inf``, and with
+    ``weight_col`` unset every member counts the same.
 
     ``summation`` is "fast" or "exact", and has no default. "fast" is
     the vectorised sum, whose last bits depend on the order of the
     rows. "exact" takes the means from exactly rounded sums, whatever
-    the order. Under "inverted_cdf" or "exact" an infinite statistic
-    raises.
+    the order. An infinite member value raises, and so does a statistic
+    that comes out infinite other than the step's ``-inf``.
 
     The statistics are float64 whatever the dtype of ``value_col``. A
     column of another dtype is widened before the window mean, and a
     nullable one comes back with NaN where it had no value.
 
-    Raises if ``data`` already has a 'statistic' column or
-    quantile-named columns. Statistics of per-unit quantiles are wrong;
-    see the module docstring.
+    Raises if ``data`` already has a 'statistic' column, or a column
+    named for a statistic, such as 'q05', 'mean' or 'deaths_q95'.
     """
     check_quantile_method(quantile_method, weighted=weight_col is not None)
     check_summation(summation)
     _reject_presummarized(data, value_col)
-    if include_n_members:
-        _reject_n_members_column(data)
+    model_dims = _check_counts(data, include_n_members, model_dims, sample_dims)
 
     sample_dims = list(sample_dims)
     if not sample_dims:
@@ -263,6 +273,7 @@ def summarize_samples(
             f"window {window} on {time_col!r} selects no rows "
             f"(data spans {data[time_col].min()} to {data[time_col].max()})"
         )
+    _refuse_infinite_values(in_window, value_col)
 
     # A constant helper key lets the same groupby code serve inputs whose
     # every non-value column is a sample or time dimension.
@@ -320,9 +331,13 @@ def summarize_samples(
     )
     out = pd.concat(pieces, ignore_index=True)
     out = out[_output_columns(identity, value_col, include_n_members)]
+    if include_n_members:
+        out = _with_model_counts(
+            out, window_mean, identity, value_col, weight_col, model_dims
+        )
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
-    _refuse_infinite_statistics(out, value_col, quantile_method, summation)
+    _refuse_infinite_statistics(out, value_col, quantile_method)
     return out.reset_index(drop=True)
 
 
@@ -342,13 +357,15 @@ def _key_codes(
 ) -> tuple[np.ndarray, int, np.ndarray | None]:
     """One int64 code per row, equal exactly when the rows agree on ``cols``.
 
-    Categorical columns use their stored codes, and each column is folded
-    into the running code in place, so only one column's codes exist at a
-    time. That is what keeps memory down at hundreds of millions of rows.
-    Missing values count as equal. Rows with one in any column come back
-    as a mask, or None. Passing ``codes`` and ``card`` extends an existing
-    code without modifying it.
+    Also returns a bound every code lies below, and a mask of the rows
+    missing a value in any column, or None. Missing values count as
+    equal. Passing ``codes`` and ``card`` extends an existing code
+    without modifying it.
     """
+    # Categorical columns use their stored codes, and each column is
+    # combined into the running code in place, so only one column's codes
+    # exist at a time. That keeps memory down at hundreds of millions of
+    # rows.
     n = len(frame)
     owned = codes is None
     missing = None
@@ -391,8 +408,9 @@ def _key_codes(
 def _identity_groups(frame: pd.DataFrame, identity: list[str]) -> _Groups:
     """Dense group ids over the identity columns, in order of first
     appearance, the order ``groupby(sort=False)`` yields groups in.
-    Rows missing an identity value keep their own groups here; the
-    grouping drops them (`_grouping_ids`), the duplicate check does not."""
+    Rows missing an identity value are grouped like the others, missing
+    values equal, and are marked in ``missing``. `_grouping_ids` drops
+    their groups, and the duplicate check keeps them."""
     codes, _, missing = _key_codes(frame, identity)
     ids, uniques = pd.factorize(codes)
     return _Groups(ids.astype(np.int64, copy=False), len(uniques), missing)
@@ -408,9 +426,10 @@ def _has_duplicates(
 
 
 def _grouping_ids(groups: _Groups) -> tuple[np.ndarray, int]:
-    """Group id per row with the groups ``groupby(dropna=True)`` drops
-    (any identity value missing) removed: those rows get -1 and the rest
-    are renumbered, keeping the order of first appearance."""
+    """The group id of each row and the number of groups, without the
+    groups ``groupby(dropna=True)`` drops, those missing an identity
+    value. Their rows get -1, and the other groups are numbered again in
+    order of first appearance."""
     if groups.missing is None:
         return groups.ids, groups.n
     keep = np.zeros(groups.n, dtype=bool)
@@ -422,17 +441,18 @@ def _grouping_ids(groups: _Groups) -> tuple[np.ndarray, int]:
 
 
 def _first_rows(gid: np.ndarray) -> np.ndarray:
-    """Position of each group's first row, in group order. Groups are
-    numbered by first appearance, so a group starts where the running
-    maximum of the ids steps up."""
+    """Position of each group's first row, in group order, for ids that
+    number the groups by first appearance. Rows of -1 are passed over."""
+    # a group starts where the running maximum of the ids goes up
     running = np.maximum.accumulate(gid) if len(gid) else gid
     return np.flatnonzero(np.diff(running, prepend=-1) > 0)
 
 
 def _group_order(gid: np.ndarray, n_groups: int):
-    """Rows ordered by group, original order within a group (the order a
-    groupby hands each group over in), without the -1 rows; and each
-    group's [start, end) in that order."""
+    """The rows ordered by group, without the -1 rows, and the start and
+    the end of each group in that order, the end excluded. Within a
+    group the rows keep their order, which is the order a groupby hands
+    them over in."""
     n = len(gid)
     if (n_groups + 1) * n < 2**62:
         # one key per row, unique, so any sort is the stable order; a
@@ -462,13 +482,15 @@ def _statistic_pieces(
     quantile_method: str,
     summation: str,
 ) -> list[pd.DataFrame]:
-    """One frame per statistic over each identity group's members.
-    Under "linear" the quantiles come from numpy, and under
-    "lower_step" from the historical step distribution, with every
-    member weighted equally if there are no weights. Pass ``groups``
-    if the caller already has them. ``count_members`` adds to every
-    frame the number of members each group's statistics were computed
-    from."""
+    """One frame per statistic, with a row for each identity group of
+    ``members``. Under "linear" the quantiles come from numpy, under
+    "inverted_cdf" from the inverse of the empirical distribution and
+    under "lower_step" from the historical step distribution. Without
+    weights every member counts equally. Pass ``groups`` if the caller
+    already has them. ``count_members`` adds to every frame the number
+    of members each group's statistics were computed from. With weights,
+    raises if no member of a group has both a value and a weight above
+    zero."""
     if groups is None:
         groups = _identity_groups(members, identity)
     gid, n_groups = _grouping_ids(groups)
@@ -511,9 +533,6 @@ def _statistic_pieces(
             table = _equal_weight_quantiles(floats, gid, n_groups, quantiles)
         else:
             table = _linear_quantiles(floats, gid, n_groups, quantiles)
-            _refuse_nan_interpolation(
-                table, floats, gid, n_groups, keys[identity], quantiles
-            )
         stats += [
             (_quantile_label(q), lambda i=i: by_group(table[i]))
             for i, q in enumerate(quantiles)
@@ -612,10 +631,10 @@ def _output_columns(
 
 
 def _weighted_quantile(values: np.ndarray, weights: np.ndarray, q: float) -> float:
-    """The historical extraction tool's quantile: the left step inverse
-    of the weighted empirical distribution. A quantile below the first
-    step returns -inf; with all weights equal the 0.5 quantile is the
-    ordinary median, both matching that tool."""
+    """The quantile of the historical extraction tool, the left step
+    inverse of the weighted empirical distribution. A quantile at or
+    below the first member's share is -inf. With all weights equal the
+    0.5 quantile is the plain median, as in that tool."""
     return _step_quantiles(values, weights, [q], exact=False)[0]
 
 
@@ -627,11 +646,13 @@ def _step_quantiles(
     exact: bool,
 ) -> list[float]:
     """`_weighted_quantile` at every q, from one sort of the group.
-    ``exact`` takes the cumulative weight shares from exact sums, so
-    a share that equals q in exact arithmetic is not moved off it by
-    the order the weights were added in. It also takes equal values in
-    order of weight, because within equal values the step depends on
-    which member comes first, and so on the order of the rows."""
+    ``exact`` takes the cumulative weight shares from exact sums and
+    puts equal values in order of weight, so the result does not depend
+    on the order of the rows."""
+    # Under exact a share that equals q in exact arithmetic is not moved
+    # off it by the order the weights were added in. Equal values go in
+    # order of weight because within equal values the step depends on
+    # which member comes first.
     if not len(quantiles):
         return []
     equal = bool((weights == weights[0]).all())
@@ -656,10 +677,9 @@ def _step_quantiles(
 
 def _exact_shares(weights: np.ndarray) -> np.ndarray:
     """The share of the total weight that each running sum of
-    ``weights`` reaches. Every sum is exact and every share is their
-    ratio rounded once, so the shares do not depend on the order the
-    weights are added in. The weights are finite and not negative, and
-    their sum is above zero."""
+    ``weights`` reaches, the exact running sum over the exact total,
+    rounded once. The weights have to be finite and not negative, with
+    a sum above zero."""
     mantissa, exponent = np.frexp(weights)
     # every weight is an integer times a power of two, and in units of
     # the smallest such power it is an integer, which Python adds exactly
@@ -778,38 +798,8 @@ def _linear_quantiles(
     return out
 
 
-def _refuse_nan_interpolation(
-    table: np.ndarray,
-    values: np.ndarray,
-    gid: np.ndarray,
-    n_groups: int,
-    keys: pd.DataFrame,
-    quantiles: Sequence[float],
-) -> None:
-    """Raise where a linear quantile came out NaN for a group that has
-    values. numpy's interpolation gives NaN when a member next to the
-    point it interpolates at is infinite, where pandas gave the
-    neighbour or an infinity, and a NaN would read as a group with no
-    value."""
-    counts = np.bincount(gid[~np.isnan(values)], minlength=n_groups)
-    bad = np.isnan(table) & (counts > 0)
-    if not bad.any():
-        return
-    row, group = np.argwhere(bad)[0]
-    raise GroupError(
-        f"{int(bad.sum())} linear quantiles interpolate next to an infinite "
-        f"member and have no value (first: {_quantile_label(quantiles[row])} "
-        f"of ",
-        keys.iloc[group].to_dict(),
-        "). An infinity in impact data means something upstream of the "
-        "statistics broke.",
-    )
-
-
 def _fsum(values: list[float]) -> float:
-    """The exactly rounded sum. An infinity sums to itself and is left
-    to `_refuse_infinite_statistics`. Infinities of both signs have no
-    such sum and raise here, and so do finite values whose sum passes
+    """The exactly rounded sum of finite values. Raises if it passes
     the largest float."""
     try:
         return math.fsum(values)
@@ -817,23 +807,23 @@ def _fsum(values: list[float]) -> float:
         raise ValueError(
             "summation='exact': a sum overflows the largest float"
         ) from None
-    except ValueError:
-        raise ValueError(
-            "summation='exact': a sum holds infinities of both signs, so "
-            "it has no value; something upstream of the statistics broke"
-        ) from None
 
 
 def _refuse_infinite_statistics(
-    out: pd.DataFrame, value_col: str, quantile_method: str, summation: str
+    out: pd.DataFrame, value_col: str, quantile_method: str
 ) -> None:
-    """Raise if a statistic is infinite under "inverted_cdf" or
-    "exact". NaN is left alone because a group with no value has no
-    statistic. "linear" and "lower_step" with the fast sum return
-    what comes out."""
-    if quantile_method != "inverted_cdf" and summation == "fast":
-        return
-    infinite = np.isinf(_float_values(out[value_col]))
+    """Raise if a statistic is infinite, other than a "lower_step"
+    quantile at or below its first step, which is ``-inf`` by its
+    definition. NaN is left alone, because a group with no value has no
+    statistic."""
+    # The members are finite by then, so any other infinity is the
+    # arithmetic passing the largest float.
+    values = _float_values(out[value_col])
+    infinite = np.isinf(values)
+    if quantile_method == "lower_step":
+        infinite &= ~(
+            (out[_STATISTIC_COLUMN] != "mean").to_numpy() & (values == -np.inf)
+        )
     if not infinite.any():
         return
     counts = out.loc[infinite, _STATISTIC_COLUMN].value_counts(sort=False)
@@ -843,9 +833,22 @@ def _refuse_infinite_statistics(
         f"({', '.join(f'{label}: {n}' for label, n in counts.items())}; "
         f"first: ",
         first,
-        f"). With quantile_method={quantile_method!r} and "
-        f"summation={summation!r} an infinite statistic is refused. "
-        f"'linear' and 'lower_step' with summation='fast' return it.",
+        "). Every member is finite, so the arithmetic passed the largest float.",
+    )
+
+
+def _refuse_infinite_values(data: pd.DataFrame, value_col: str) -> None:
+    """Raise if a member value is infinite, under every quantile method
+    and summation, naming the first such row by its other columns."""
+    infinite = np.isinf(_float_values(data[value_col]))
+    if not infinite.any():
+        return
+    first = data.loc[infinite].iloc[0].drop(value_col).to_dict()
+    raise GroupError(
+        f"{int(infinite.sum())} values of {value_col!r} are infinite (first: ",
+        first,
+        "). An infinity in impact data means something upstream of the "
+        "statistics broke.",
     )
 
 
@@ -924,12 +927,78 @@ def _quantile_label(q: float) -> str:
     return f"q{percent:g}"
 
 
-def _reject_n_members_column(data: pd.DataFrame) -> None:
-    if _N_MEMBERS_COLUMN in data.columns:
+def _check_counts(
+    data: pd.DataFrame,
+    include_n_members: bool,
+    model_dims: Sequence[str] | None,
+    sample_dims: Sequence[str],
+) -> list[str] | None:
+    """``model_dims`` as a list, checked against the request for counts.
+    Raises if counts are asked for without it, or it without them, or
+    it names a column that is not a sample dimension, or ``data``
+    already has a column of a count."""
+    if not include_n_members:
+        if model_dims is not None:
+            raise ValueError(
+                "model_dims names the columns of the climate model for its "
+                "count, which only include_n_members writes"
+            )
+        return None
+    if model_dims is None or not list(model_dims):
         raise ValueError(
-            f"data already has a {_N_MEMBERS_COLUMN!r} column; "
-            f"include_n_members would write a second one. Rename or drop it."
+            "include_n_members counts the samples and the climate models "
+            "behind each statistic, so model_dims has to name the sample "
+            "dimensions of the climate model, such as ['gcm']"
         )
+    model_dims = list(model_dims)
+    stray = [d for d in model_dims if d not in sample_dims]
+    if stray:
+        raise ValueError(
+            f"model_dims {stray} are not among sample_dims {list(sample_dims)}; "
+            f"a climate model is counted among the members it pools"
+        )
+    for column in (_N_MEMBERS_COLUMN, _N_MODELS_COLUMN):
+        if column in data.columns:
+            raise ValueError(
+                f"data already has a {column!r} column; include_n_members "
+                f"would write a second one. Rename or drop it."
+            )
+    return model_dims
+
+
+def _with_model_counts(
+    out: pd.DataFrame,
+    members: pd.DataFrame,
+    identity: list[str],
+    value_col: str,
+    weight_col: str | None,
+    model_dims: list[str],
+) -> pd.DataFrame:
+    """``out`` with 'n_models', the distinct climate models among the
+    members of each identity group that 'n_members' counts."""
+    counted = members[value_col].notna()
+    if weight_col is not None:
+        counted &= members[weight_col] > 0
+    models = (
+        members.loc[counted, identity + model_dims]
+        .drop_duplicates()
+        .groupby(identity, sort=False, observed=True)
+        .size()
+        .rename(_N_MODELS_COLUMN)
+        .reset_index()
+    )
+    keys = out[identity].astype(object)
+    found = keys.merge(
+        models.astype({c: object for c in identity}), on=identity, how="left"
+    )
+    return out.assign(
+        **{
+            _N_MODELS_COLUMN: found[_N_MODELS_COLUMN]
+            .fillna(0)
+            .astype(np.int64)
+            .to_numpy()
+        }
+    )
 
 
 def _reject_presummarized(data: pd.DataFrame, value_col: str) -> None:
@@ -965,27 +1034,24 @@ def window_means(
 ) -> pd.DataFrame:
     """Mean over each time window, per combination of the other columns.
 
-    The first half of `summarize_samples`, split out so a pipeline can
-    reduce each leaf before pooling. It never crosses sample members, so
-    reducing early and pooling later gives the same statistics.
+    It is the first half of `summarize_samples` and never mixes sample
+    members, so taking it leaf by leaf and pooling later gives the same
+    statistics. ``time_col`` is replaced by ``window_col``, labelled like
+    "2040-2059", or by the year alone for a one-year window.
 
-    ``time_col`` is replaced by ``window_col``, labelled like "2040-2059",
-    or by the year alone for a one-year window. Data that already has
-    ``window_col`` is refused: its time dimension is gone, so to change
-    windows rerun from the unreduced data. Rows repeated on every column
-    but ``value_col`` are refused too, in any year, including years no
-    window covers.
+    Raises if ``data`` already has ``window_col``, since its years are
+    gone and other windows need the unreduced data. Rows repeated on
+    every column but ``value_col`` raise too, in any year, including
+    years no window covers, and so does an infinite value in a window.
 
     ``summation`` has no default. "exact" takes each mean from an
-    exactly rounded sum, and "fast" is the pandas mean. An infinite
-    value gives an infinite mean either way, and it is the statistics
-    that refuse it.
-
-    The mean is float64 whatever the dtype of ``value_col``. A float32
-    column is widened before the mean and not after, because a float32
-    mean stored as float64 still holds seven digits. A nullable column
-    comes back with NaN where it had no value.
+    exactly rounded sum, and "fast" is the pandas mean. The mean is
+    float64 whatever the dtype of ``value_col``, and a column of another
+    dtype is widened before the mean is taken. A nullable column comes
+    back with NaN where it had no value.
     """
+    # A float32 column is widened before the mean and not after, because
+    # a float32 mean stored as float64 still holds seven digits.
     check_summation(summation)
     windows = [tuple(w) for w in windows]
     _reject_presummarized(data, value_col)
@@ -1009,6 +1075,12 @@ def window_means(
     if len(set(labels)) != len(labels):
         raise ValueError(f"duplicate window labels in request: {labels}")
 
+    _refuse_infinite_values(
+        data.loc[
+            np.logical_or.reduce([data[time_col].between(lo, hi) for lo, hi in windows])
+        ],
+        value_col,
+    )
     group = [c for c in data.columns if c not in (time_col, value_col)]
     full_key = group + [time_col]
     # The group codes are worked out once and serve the duplicate check
@@ -1105,6 +1177,7 @@ def pooled_statistics(
     include_mean: bool = True,
     weight_col: str | None = None,
     include_n_members: bool = False,
+    model_dims: Sequence[str] | None = None,
     quantile_method: str,
     summation: str,
 ) -> pd.DataFrame:
@@ -1112,15 +1185,15 @@ def pooled_statistics(
 
     The second half of `summarize_samples`. The window column is an
     ordinary identity column here. ``weight_col``,
-    ``include_n_members``, ``quantile_method`` and ``summation`` behave
-    the same, and the same input is refused. Returns identity columns,
-    'statistic', ``value_col``, then 'n_members' if asked for.
+    ``include_n_members``, ``model_dims``, ``quantile_method`` and
+    ``summation`` behave the same, and the same input is refused.
+    Returns identity columns, 'statistic', ``value_col``, then
+    'n_members' and 'n_models' if asked for.
     """
     check_quantile_method(quantile_method, weighted=weight_col is not None)
     check_summation(summation)
     _reject_presummarized(data, value_col)
-    if include_n_members:
-        _reject_n_members_column(data)
+    model_dims = _check_counts(data, include_n_members, model_dims, sample_dims)
 
     sample_dims = list(sample_dims)
     if not sample_dims:
@@ -1146,6 +1219,7 @@ def pooled_statistics(
     if len(set(labels)) != len(labels):
         raise ValueError(f"duplicate statistic labels in request: {labels}")
 
+    _refuse_infinite_values(data, value_col)
     drop = sample_dims + [value_col]
     if weight_col is not None:
         drop = drop + [weight_col]
@@ -1181,9 +1255,11 @@ def pooled_statistics(
     del groups
     out = pd.concat(pieces, ignore_index=True)
     out = out[_output_columns(identity, value_col, include_n_members)]
+    if include_n_members:
+        out = _with_model_counts(out, work, identity, value_col, weight_col, model_dims)
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
-    _refuse_infinite_statistics(out, value_col, quantile_method, summation)
+    _refuse_infinite_statistics(out, value_col, quantile_method)
     return out.reset_index(drop=True)
 
 
@@ -1200,9 +1276,9 @@ def mixture_quantile(weights, means, variances, q):
     The quantile is the smallest x whose mixture CDF reaches ``q``.
     ``q`` may be a scalar or an array. The result has the leading shape
     followed by the shape of ``q``, and is a plain float when both are
-    scalar. ``q = 0`` and ``q = 1`` return the ends of the support:
-    infinite when any weighted component has positive variance,
-    otherwise the smallest or largest point mass.
+    scalar. ``q = 0`` and ``q = 1`` return the ends of the support,
+    which are infinite when any weighted component has positive variance
+    and otherwise the smallest or largest point mass.
     """
     w, m, v = (np.asarray(a, dtype="float64") for a in (weights, means, variances))
     if (

@@ -1,26 +1,19 @@
-"""Legacy 13-column CSV exporter.
+"""Writes weights in the column layout of the legacy weights CSV.
 
-The legacy ``intersect_zonalstats_par.py`` writes per-region weight files
-with this column order:
+The legacy ``intersect_zonalstats_par.py`` writes per-region weight
+files with the columns area, crop, hierid, pix_cent_x, pix_cent_y, pop,
+areatotal, poptotal, croptotal, areawt, popwt, cropwt and shpid, in
+that order. Downstream consumers, the splines pipeline and the indirect
+impact pipelines, read ``hierid``, ``pix_cent_x`` / ``pix_cent_y`` and
+the relevant ``*wt`` column. Here ``shpid`` is the 0-based dense rank
+of the hierid in ascending order, not the legacy writer's per-shapefile
+constant.
 
-    area, crop, hierid, pix_cent_x, pix_cent_y, pop,
-    areatotal, poptotal, croptotal,
-    areawt, popwt, cropwt,
-    shpid
+``cropwt`` is NaN for a region with no cropland, the outcome of the
+``fallback = "nan"`` policy, as in the legacy files. Downstream
+aggregation fills it per pixel from ``areawt``.
 
-Downstream consumers (splines pipeline, indirect impact pipelines) read
-``hierid``, ``pix_cent_x`` / ``pix_cent_y``, and the relevant ``*wt``
-column. ``shpid`` is a per-shapefile constant in the legacy writer and
-is never used as a join key in any reader we have visibility into; the
-exporter here fills it with the 0-based dense rank of the hierid sorted
-ascending. That is portable across backends and deterministic.
-
-NaN handling: ``cropwt`` is NaN for regions with zero cropland (the
-``fallback = "nan"`` policy outcome). The legacy file convention is the
-same; the downstream backfills per-pixel with ``areawt`` at
-aggregation time.
-
-Env note for the RCC HPC where this exporter is used::
+On the RCC, run it in this environment::
 
     module load python
     source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
@@ -63,21 +56,14 @@ _REQUIRED_WEIGHTS = ("area", "crop", "pop")
 
 
 def to_legacy_frame(result: WeightsResult) -> pd.DataFrame:
-    """Translate the canonical weights frame into the legacy 13-column schema.
+    """The canonical weights frame of ``result`` in the legacy column
+    layout, with the totals summed from the raw weights per hierid.
 
-    The result must carry ``area``, ``crop``, and ``pop`` weights (the
-    legacy schema is a fixed shape; this exporter is not the place for
-    runtime weight discovery). The id field must be a single ``hierid``
-    column; multi-key region sets are out of scope for the legacy
-    format.
-
-    NaN cropwt entries from the ``fallback = "nan"`` policy are
-    preserved verbatim. ``croptotal`` for such regions is 0.0 (the sum
-    of ``crop_raw`` is genuinely zero); ``cropwt`` is NaN. Both signals
-    arrive at the downstream consumer.
-
-    Raises ``ValueError`` naming the missing input if any required
-    weight column is absent.
+    A NaN ``cropwt`` from the ``fallback = "nan"`` policy is kept, and
+    such a region's ``croptotal`` is 0.0, the sum of its ``crop_raw``.
+    Raises ``ValueError`` naming the missing input if any of the
+    ``area``, ``crop`` and ``pop`` weights is absent, and raises if the
+    id fields are anything but a single ``hierid``.
     """
     frame = result.frame
     weight_names = result.schema.weight_names
@@ -120,13 +106,10 @@ def to_legacy_frame(result: WeightsResult) -> pd.DataFrame:
 
 
 def _dense_rank_hierid(hierid: pd.Series) -> pd.Series:
-    """0-based dense rank of hierid in sorted ascending order.
-
-    Deterministic, backend-agnostic, and survives a reorder of the
-    underlying frame. NOT the legacy "per-shapefile constant tag" --
-    downstream consumers do not join on shpid, so a stable integer
-    per-region is the safer surface.
-    """
+    """The 0-based dense rank of each hierid in ascending order, the
+    same for any order of the frame and on either backend."""
+    # Not the legacy per-shapefile constant. Downstream consumers do not
+    # join on shpid, so a stable integer per region is the safer choice.
     unique = pd.Series(sorted(hierid.unique()))
     rank_map = pd.Series(range(len(unique)), index=unique)
     return hierid.map(rank_map).astype("int64")
@@ -136,11 +119,9 @@ def write_legacy_csv(
     result: WeightsResult,
     output_path: str | Path,
 ) -> str:
-    """Write ``result`` as a legacy 13-column CSV at ``output_path``.
-
-    Returns the written path. ``gs://`` URIs are supported via gcsfs.
-    Parent directories are created automatically for local paths.
-    """
+    """Writes ``result`` as a legacy weights CSV at ``output_path``, a
+    local path or a ``gs://`` URI, and returns the path. The parent
+    directories of a local path are created."""
     frame = to_legacy_frame(result)
     if str(output_path).startswith("gs://"):
         import gcsfs

@@ -1,22 +1,22 @@
-"""Delta-method gradients: read, aggregate, and evaluate.
+"""Reads delta-method gradient leaves, aggregates the gradients to
+targets, and gives each target's mean and standard deviation.
 
-Some projection trees carry parameter uncertainty as gradients rather
-than draws: each region-year holds the vector of derivatives of the
-impact with respect to the regression coefficients, and the file
-embeds the coefficient covariance matrix. The variance of any linear
-aggregate follows without sampling: aggregate the gradient vectors
-with the same weights as the values, then take one quadratic form
-against the covariance matrix. Summing independently drawn
-region-level values instead loses the cross-region correlation the
-shared coefficients create, and understates the aggregate spread.
+Some projection trees carry parameter uncertainty as gradients, not
+draws. Each region and year holds the derivatives of the impact with
+respect to the regression coefficients, and the file embeds the
+coefficient covariance matrix. The variance of a linear aggregate is
+the quadratic form of its aggregated gradient against that matrix.
+Summing independently drawn region-level values instead loses the
+cross-region correlation the shared coefficients create, and
+understates the aggregate spread. When the response is linear in the
+coefficients, the mean is the gradient times the coefficient vector.
 
-A gradient leaf is too large for the long-frame route the rest of the
-package uses (coefficients times years times regions), so this module
-works on arrays: one year per call, matching how the files are
-chunked. The mean needs no separate file when the response is linear
-in the coefficients: it is the gradient times the coefficient vector.
+The functions work on arrays, one year of a leaf per call, not on the
+long frames the rest of the package uses.
 """
 
+# A gradient leaf, coefficients by years by regions, is too large for
+# the long frames, and the files are chunked one year per chunk.
 from __future__ import annotations
 
 import warnings
@@ -30,9 +30,10 @@ from cil_regionalization.apply import WeightsArtifact
 
 @dataclass(frozen=True)
 class GradientLeaf:
-    """One year of a gradient file: regions, the gradient matrix
-    (coefficient by region), the coefficient covariance matrix, and
-    the file's own stored variance per region when present."""
+    """One year of a gradient file, with the region ids, the gradient
+    matrix (coefficient by region), the coefficient covariance matrix,
+    and the file's own stored variance per region, or None when the file
+    has none."""
 
     regions: list[str]
     gradient: np.ndarray
@@ -48,13 +49,19 @@ def read_gradient_leaf(
     vcv_variable: str = "vcv",
     value_variable: str = "rebased",
 ) -> GradientLeaf:
-    """Read one year of a delta-method leaf.
+    """One year of a delta-method leaf as a `GradientLeaf`.
 
-    Uses netCDF4 directly: the covariance matrix is stored with the
-    coefficient dimension repeated, which xarray does not accept. The
-    files are chunked one year per chunk, so a single-year read moves
-    one chunk, not the whole file.
+    ``variable`` holds the gradients, with coefficient and year as its
+    first two dimensions in either order. ``vcv_variable`` holds the
+    covariance matrix, and ``value_variable`` the stored variance, read
+    when present. Raises if the file has no ``year``, if the gradient's
+    first dimensions are not coefficient and year, or if the covariance
+    matrix is not square or does not match the gradient's coefficients.
     """
+    # netCDF4 rather than xarray, since the covariance matrix is stored
+    # with the coefficient dimension repeated, which xarray does not
+    # accept. The files are chunked one year per chunk, so a single-year
+    # read moves one chunk, not the whole file.
     try:
         import netCDF4
     except ImportError as e:
@@ -110,22 +117,23 @@ def aggregate_gradient(
     scale: np.ndarray | None = None,
     normalize: bool = False,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """Aggregate gradient vectors to the weight file's targets.
+    """The target key frame and the gradient aggregated to the weight
+    file's targets, target by coefficient.
 
-    ``gradient`` is coefficient by region, in the order of ``regions``.
-    Every region must appear in the weight file; weight rows for other
-    regions are ignored, which mirrors ``restrict_to_sources``.
+    ``gradient`` is coefficient by region, in the order of ``regions``,
+    and the shares are the column ``<weight>wt``. Weight rows for other
+    regions are ignored, as with ``restrict_to_sources``. For a total,
+    an extensive value, leave ``scale`` and ``normalize`` alone, and
+    each region's gradient is split by the weight shares and summed. For
+    a rate, pass the per-region sizes (population) as ``scale`` and set
+    ``normalize=True``, and each target becomes the size-weighted mean
+    of its regions' gradients. The aggregation is linear, so aggregating
+    a difference of gradients, such as one against histclim, equals
+    differencing the aggregated ones.
 
-    For a total (an extensive value), leave ``scale`` and ``normalize``
-    alone: each region's gradient is split by the weight shares and
-    summed. For a rate, pass the per-region sizes (population) as
-    ``scale`` and set ``normalize=True``: each target becomes the
-    size-weighted mean of its regions' gradients.
-
-    Returns the target key frame and the aggregated gradient, target
-    by coefficient. The aggregation is linear, so it commutes with
-    differencing histclim and with evaluating means: aggregating a
-    difference of gradients equals differencing aggregated ones.
+    Raises if the share column is missing, if a region has no weight
+    rows, if ``scale`` is not one value per region, or if a target has
+    zero total weight under ``normalize``.
     """
     frame = weights.frame
     key_cols = list(weights.schema.id_fields)
@@ -176,19 +184,17 @@ def window_gradient(
     years,
     window: tuple[float, float],
 ) -> np.ndarray:
-    """Mean of stacked yearly gradients over an inclusive year window.
+    """The mean of stacked yearly gradients over the years of
+    ``window``, both ends included, as in `window_means`.
 
-    ``gradients`` has year on the first axis, in the order of
-    ``years``; the other axes pass through unchanged, so the result
-    still carries the coefficient axis and the quadratic form can be
-    taken on it afterwards. Stacked leaves (year, coefficient, region)
-    and stacked aggregates (year, target, coefficient) both work, and
-    since both steps are linear, windowing before or after
-    `aggregate_gradient` gives the same answer.
-
-    The window bounds match `window_means`: both ends included, and a
-    window that selects no year raises. NaN entries drop out of the
-    mean the way NaN rows do there.
+    ``gradients`` has year on its first axis, in the order of
+    ``years``, and its other axes pass through. Stacked leaves (year,
+    coefficient, region) and stacked aggregates (year, target,
+    coefficient) both work, and windowing before or after
+    `aggregate_gradient` gives the same answer. NaN entries drop out of
+    the mean as NaN rows do in `window_means`. Raises if the window
+    selects no year or starts after it ends, if ``years`` has
+    duplicates, or if its length does not match the first axis.
     """
     gradients = np.asarray(gradients, dtype="float64")
     years = np.asarray(years)
@@ -219,12 +225,13 @@ def delta_method(
     vcv: np.ndarray,
     coefficients: np.ndarray | None = None,
 ) -> pd.DataFrame:
-    """Mean and standard deviation per target from aggregated gradients.
+    """A frame of the mean and standard deviation per target from
+    aggregated gradients, target by coefficient.
 
-    Variance is the quadratic form G V G' per target. The mean is
-    G times the coefficient vector and is exact when the response is
-    linear in the coefficients, which is what makes the gradients
-    constant in them; omit ``coefficients`` to get only the spread.
+    The variance is the quadratic form G V G' of each target. The mean
+    is G times ``coefficients``, exact when the response is linear in
+    the coefficients. Without ``coefficients`` the frame has only 'sd'.
+    Raises if the shapes of the inputs do not match.
     """
     if aggregated.shape[1] != vcv.shape[0]:
         raise ValueError(

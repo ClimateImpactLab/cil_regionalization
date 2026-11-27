@@ -55,7 +55,8 @@ class ModelWeights:
 
     def attach(self, members: pd.Series) -> pd.Series:
         """The weight of each row's member, as float64 on the index of
-        ``members``. Raises if a member has no row in the table."""
+        ``members``. Raises if a member has no row in the table, or a
+        row names no member."""
         codes, distinct = pd.factorize(members)
         absent = self.missing(distinct)
         if absent or (codes < 0).any():
@@ -68,12 +69,11 @@ class ModelWeights:
         return pd.Series(per_member[codes], index=members.index, name="model_weight")
 
     def record(self, members: Iterable[str]) -> dict:
-        """The manifest entry of a run, given one member value per leaf
-        that was pooled. ``members`` holds each model attached, with its
-        table row, its weight and its number of leaves.
-        ``unmatched_rows`` holds the rows no member matched with their
-        weights, so the two together are the whole table. Raises if a
-        member has no row."""
+        """The manifest entry of a run, given the member of each leaf
+        that was pooled. Its 'members' holds each member with its table
+        row, its weight and its number of leaves, and 'unmatched_rows'
+        the weight of every row no member matched, so the two together
+        cover the whole table. Raises if a member has no row."""
         counts = Counter(members)
         absent = self.missing(counts)
         if absent:

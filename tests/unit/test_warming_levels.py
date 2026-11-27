@@ -10,16 +10,20 @@ from __future__ import annotations
 
 import json
 import math
+import re
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from cil_regionalization.warming_levels import (
+    EVERY_DECLARED,
     GMSTTable,
     LevelWindow,
     Period,
     assign_warming_levels,
+    members_that_join,
     read_gmst,
 )
 
@@ -50,6 +54,8 @@ def _table(members: dict, member_cols=("gcm", "rcp")) -> GMSTTable:
 
 
 def _assign(table, **changes):
+    """With every member of the table joining unless ``members`` says
+    otherwise."""
     settings = dict(
         reference_period=REFERENCE,
         offset=0.5,
@@ -57,6 +63,7 @@ def _assign(table, **changes):
         half_width=0.25,
         periods=[MID, LATE],
         smoothing="unknown",
+        members=table.members,
     )
     settings.update(changes)
     return assign_warming_levels(table, **settings)
@@ -100,7 +107,15 @@ class TestRebasing:
 
     @pytest.mark.parametrize(
         "left_out",
-        ["reference_period", "offset", "levels", "half_width", "periods", "smoothing"],
+        [
+            "reference_period",
+            "offset",
+            "levels",
+            "half_width",
+            "periods",
+            "smoothing",
+            "members",
+        ],
     )
     def test_nothing_that_decides_a_level_has_a_default(self, left_out):
         table = _table({("a", "rcp45"): _series(0.25, 1.25, 2.75)})
@@ -111,6 +126,7 @@ class TestRebasing:
             half_width=0.25,
             periods=[MID],
             smoothing="unknown",
+            members=[("a", "rcp45")],
         )
         del settings[left_out]
         with pytest.raises(TypeError, match=left_out):
@@ -316,10 +332,9 @@ class TestMembers:
         )
         assert _assign(three).levels[("a", "ssp245", "r1")] == (1.5, 3.0)
 
-    def test_a_surrogate_is_a_member_of_its_own(self):
-        """Its name is matched as it is written, so it is not the model
-        it was made from, and that model's row does not stand in for
-        it."""
+    def test_a_name_is_matched_as_it_is_written(self):
+        """A member named after another is a member of its own, and the
+        other's row does not stand in for it."""
         table = _table(
             {
                 ("GFDL-ESM2G", "rcp85"): _series(0.25, 1.25, 2.75),
@@ -370,7 +385,7 @@ class TestMembers:
 
 class TestRecord:
     @staticmethod
-    def _levels():
+    def _levels(**changes):
         table = _table(
             {
                 ("a", "rcp45"): _series(0.25, 1.25, 2.75),
@@ -382,6 +397,7 @@ class TestRecord:
             table,
             levels=[1.5, 2.0, 3.0, 4.0],
             smoothing="as delivered, window not recorded",
+            **changes,
         )
 
     def test_it_says_what_decided_the_levels_and_what_they_are(self):
@@ -429,11 +445,13 @@ class TestRecord:
             ],
         }
         assert record["in_no_bin"] == [{"gcm": "b", "rcp": "rcp85"}]
-        assert record["unused_members"] == []
+        assert record["excluded"] == []
 
-    def test_a_run_records_its_own_members_and_lists_the_rest_of_the_table(self):
-        levels = self._levels()
-        record = levels.record([("a", "rcp85"), ("a", "rcp45"), ("a", "rcp85")])
+    def test_a_member_that_does_not_join_is_listed_with_the_reason(self):
+        """Apart from the members that join, in the run or not."""
+        levels = self._levels(members=[("a", "rcp85"), ("a", "rcp45")])
+        b = {"gcm": "b", "rcp": "rcp85"}
+        record = levels.record([("a", "rcp45"), ("b", "rcp85"), ("a", "rcp85")])
         assert [entry["member"]["rcp"] for entry in record["members"]] == [
             "rcp85",
             "rcp45",
@@ -446,9 +464,20 @@ class TestRecord:
         }
         assert record["unassigned"]["2040-2058"] == []
         assert record["in_no_bin"] == []
-        assert record["unused_members"] == [{"gcm": "b", "rcp": "rcp85"}]
+        assert record["excluded"] == [
+            {"member": b, "reason": "in the run and not among the members that join"}
+        ]
+        assert levels.record()["excluded"] == [
+            {"member": b, "reason": "in the temperature table and not in the run"}
+        ]
         with pytest.raises(ValueError, match="has no row in the temperature table"):
-            levels.record([("c", "rcp45")])
+            levels.record([("a", "rcp85"), ("a", "rcp45"), ("c", "rcp45")])
+        with pytest.raises(
+            ValueError,
+            match=r"1 members that join are not in the run \(first: "
+            r"\{'gcm': 'a', 'rcp': 'rcp45'\}\)",
+        ):
+            levels.record([("a", "rcp85")])
 
 
 class TestRead:
@@ -489,3 +518,138 @@ class TestRead:
             sep="\t",
         )
         assert _assign(table).levels[("a", "ssp245")] == (1.5, 3.0)
+
+
+class TestMembersThatJoin:
+    """The caller names the members that join, and no name decides
+    anything."""
+
+    @staticmethod
+    def _table():
+        series = _series(0.25, 1.25, 2.75)
+        empty = {year: float("nan") for year in series}
+        return _table(
+            {
+                ("GFDL-ESM2G", "rcp45"): series,
+                ("surrogate_GFDL-ESM2G_06", "rcp45"): empty,
+                ("surrogate_GFDL-ESM2G_06", "rcp85"): _series(0.25, 1.75, 4.75),
+            }
+        )
+
+    def test_only_the_members_that_join_are_assessed(self):
+        """The rest of the table is at no level and recorded, the member
+        with no temperature among them."""
+        table = self._table()
+        got = _assign(table, members=[("GFDL-ESM2G", "rcp45")])
+        assert list(got.levels) == [("GFDL-ESM2G", "rcp45")]
+        assert got.excluded == (
+            ("surrogate_GFDL-ESM2G_06", "rcp45"),
+            ("surrogate_GFDL-ESM2G_06", "rcp85"),
+        )
+        assert got.windows_of(("surrogate_GFDL-ESM2G_06", "rcp85")) == ()
+        assert [entry["member"] for entry in got.record()["excluded"]] == [
+            {"gcm": "surrogate_GFDL-ESM2G_06", "rcp": "rcp45"},
+            {"gcm": "surrogate_GFDL-ESM2G_06", "rcp": "rcp85"},
+        ]
+
+    def test_a_member_named_for_a_surrogate_joins_when_it_is_named(self):
+        """It went red on the code that read the prefix, where a member
+        whose name began with surrogate_ could be left out by a
+        setting."""
+        got = _assign(self._table(), members=[("surrogate_GFDL-ESM2G_06", "rcp85")])
+        assert got.levels == {("surrogate_GFDL-ESM2G_06", "rcp85"): (2.0, None)}
+        assert ("GFDL-ESM2G", "rcp45") in got.excluded
+
+    def test_the_module_reads_no_member_name(self):
+        """No prefix and no name convention, in the library or in the
+        pipeline. It went red on the code that recognised surrogate_."""
+        import cil_regionalization.pipelines.montecarlo as pipeline
+        import cil_regionalization.warming_levels as module
+
+        for source in (module, pipeline):
+            assert "surrogate" not in Path(source.__file__).read_text().lower()
+
+    def test_a_member_that_joins_without_a_temperature_is_refused_by_name(self):
+        with pytest.raises(
+            ValueError,
+            match=r"\{'gcm': 'surrogate_GFDL-ESM2G_06', 'rcp': 'rcp45'\} has no "
+            r"temperature for 20 of the 20",
+        ):
+            _assign(self._table())
+
+    def test_a_member_that_joins_without_a_row_is_refused_by_name(self):
+        with pytest.raises(
+            ValueError,
+            match=r"1 of the members that join have no row in the temperature "
+            r"table \(first: \{'gcm': 'CCSM4', 'rcp': 'rcp45'\}\)",
+        ):
+            _assign(
+                self._table(), members=[("CCSM4", "rcp45"), ("GFDL-ESM2G", "rcp45")]
+            )
+
+    @pytest.mark.parametrize(
+        "members, message",
+        [
+            ([], "at least one member that joins"),
+            ([("GFDL-ESM2G",)], r"one value for each of \['gcm', 'rcp'\]"),
+            ("GFDL-ESM2G", "got the string 'GFDL-ESM2G'"),
+        ],
+    )
+    def test_members_that_name_no_member_are_refused(self, members, message):
+        with pytest.raises(ValueError, match=message):
+            _assign(self._table(), members=members)
+
+
+class TestJoin:
+    """`members_that_join` turns what a run declares into the members."""
+
+    COLS = ["gcm", "rcp"]
+    DECLARED = [("a", "rcp45"), ("b", "rcp45"), ("a", "rcp85"), ("s_a", "rcp85")]
+
+    def test_declared_is_every_member_declared_in_their_order(self):
+        assert EVERY_DECLARED == "declared"
+        assert members_that_join("declared", self.DECLARED, self.COLS) == self.DECLARED
+
+    def test_a_list_by_column_takes_its_values_under_every_other_value(self):
+        """The models listed join under each scenario the tree has."""
+        assert members_that_join({"gcm": ["b", "a"]}, self.DECLARED, self.COLS) == [
+            ("a", "rcp45"),
+            ("b", "rcp45"),
+            ("a", "rcp85"),
+        ]
+        assert members_that_join(
+            {"gcm": ["a"], "rcp": ["rcp85"]}, self.DECLARED, self.COLS
+        ) == [("a", "rcp85")]
+
+    @pytest.mark.parametrize(
+        "join, message",
+        [
+            ("all", "join is 'declared' or a mapping"),
+            ({}, "join names no member column"),
+            (
+                {"model": ["a"]},
+                r"join names \['model'\], which are not among the member "
+                r"columns \['gcm', 'rcp'\]",
+            ),
+            ({"gcm": "a"}, "join.gcm has to be a list of values"),
+            ({"gcm": []}, "join.gcm lists no value"),
+            ({"gcm": ["a", "b", "a"]}, r"join.gcm lists \['a'\] more than once"),
+        ],
+    )
+    def test_a_join_that_is_not_precise_is_refused(self, join, message):
+        with pytest.raises(ValueError, match=message):
+            members_that_join(join, self.DECLARED, self.COLS)
+
+    def test_a_value_listed_that_no_member_declared_holds_is_refused_by_name(self):
+        with pytest.raises(
+            ValueError,
+            match=re.escape(
+                "2 values listed to join are held by no member declared: "
+                "[\"gcm = 'c'\", \"rcp = 'rcp26'\"]"
+            ),
+        ):
+            members_that_join(
+                {"gcm": ["a", "c"], "rcp": ["rcp26", "rcp45"]},
+                self.DECLARED,
+                self.COLS,
+            )

@@ -1,0 +1,50 @@
+# Warming levels of the CMIP5 models with the AR5 offset to
+# pre-industrial. README.md beside this file says where each number
+# comes from. A pipeline config takes this block as it is, with gmst
+# written relative to that config instead of to this file.
+
+[stats.warming_levels]
+gmst = "../../data/external/GMTanom_all_temp_2001_2010_smooth.csv"
+member = ["gcm", "rcp"]
+time_col = "year"
+value_col = "temp"
+smoothing = "smoothed before it reached the table, how is not recorded"
+reference_period = [1986, 2005]
+offset = 0.61
+levels = [1.5, 2.0, 3.0, 4.0, 5.0]
+half_width = 0.25
+
+# The 21 CMIP5 models, under every scenario the tree has. The 12
+# surrogates of the ensemble are left out.
+[stats.warming_levels.join]
+gcm = [
+    "ACCESS1-0",
+    "BNU-ESM",
+    "CCSM4",
+    "CESM1-BGC",
+    "CNRM-CM5",
+    "CSIRO-Mk3-6-0",
+    "CanESM2",
+    "GFDL-CM3",
+    "GFDL-ESM2G",
+    "GFDL-ESM2M",
+    "IPSL-CM5A-LR",
+    "IPSL-CM5A-MR",
+    "MIROC-ESM",
+    "MIROC-ESM-CHEM",
+    "MIROC5",
+    "MPI-ESM-LR",
+    "MPI-ESM-MR",
+    "MRI-CGCM3",
+    "NorESM1-M",
+    "bcc-csm1-1",
+    "inmcm4",
+]
+
+[[stats.warming_levels.periods]]
+gmst_span = [2040, 2059]
+impact_span = [2040, 2059]
+
+[[stats.warming_levels.periods]]
+gmst_span = [2080, 2099]
+impact_span = [2080, 2099]

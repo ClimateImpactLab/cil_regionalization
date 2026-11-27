@@ -1,10 +1,8 @@
-"""Backend ABC and result type.
+"""The abstract weights backend and the result every backend returns.
 
-Both backends are constructed from a `Config`, then asked to `compute()`
-against a `RegionSet` and a `GridSpec`. Both return a `WeightsResult` whose
-`frame` follows the canonical `OutputSchema`. Anything the BigQuery and
-local backends disagree on (boundary fractions, geodesic vs spherical
-predicates) is documented at the call site, not hidden in a switch.
+A backend's `compute()` takes the regions, the grid, the weights and the
+`Config`, and returns a `WeightsResult` whose `frame` follows the
+canonical `OutputSchema`.
 """
 
 from __future__ import annotations
@@ -25,7 +23,8 @@ from cil_regionalization.weights import WeightSpec
 
 @dataclass
 class WeightsResult:
-    """Combined output: frame + schema + manifest + validation report."""
+    """A backend's output, the weights frame with its schema, its manifest
+    and its sum-to-one report."""
 
     frame: pd.DataFrame
     schema: OutputSchema
@@ -42,5 +41,6 @@ class WeightsBackend(ABC):
         weights: list[WeightSpec],
         cfg: Config,
     ) -> WeightsResult:
-        """``grid`` is None in polygon mode (``[source]`` declared)."""
+        """The weights of ``regions`` as a `WeightsResult`. ``grid`` is None in
+        polygon mode, when the config declares ``[source]``."""
         ...

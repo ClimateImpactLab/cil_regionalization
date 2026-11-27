@@ -1,66 +1,30 @@
-"""Apply a weights artifact to source-level data.
+"""Applying a weights artifact to source-level data.
 
-The repo's other modules build weights; this one consumes them. The core
-operation joins a weights frame to a data frame on the source-unit key
-columns recorded in the artifact, applies the declared operation, and
-groups to the target id fields. Every other column of the data is treated
-as an opaque dimension and carried through: nothing here knows or assumes
-dimension names like gcm, rcp, ssp, model, or year. Only the region
-dimension, the source key columns, is special.
+`apply_weights` joins the data to the weights on the source key columns
+the artifact records and groups to the id fields it records. Joins never
+use display names. Every other column of the data is a dimension carried
+through to the output, and no dimension name is special.
 
-Variable kind is declared, never inferred
------------------------------------------
-    extensive : target value = sum of weight * value. Requires per_source
-        weights (each source unit's weights sum to 1 across its targets),
-        so the operation allocates the source total and conserves it.
-    intensive : target value = sum(weight * value) / sum(weight) over the
-        source units with data. Requires per_destination weights. The
-        denominator uses only the units present with non-null values, so
-        partial coverage renormalizes instead of deflating the mean.
-    ratio : numerator and denominator are each aggregated extensively,
-        then divided. Requires per_source weights. This is the correct
-        order for shares (damages over GDP); averaging per-unit ratios is
-        a different and generally wrong number.
+The variable kind is declared, never inferred. An extensive value is the
+sum of weight times value, and needs per_source weights. An intensive
+value is that sum divided by the sum of the weights of the source units
+that have a value, and needs per_destination weights. A ratio sums its
+numerator and its denominator extensively and then divides, and needs
+per_source weights. A kind that does not match the artifact's recorded
+normalization raises, and so does a ``data_version`` that is missing or
+differs from the artifact's ``source_version``.
 
-The declared kind is checked against the artifact's recorded
-normalization direction with `schema.require_normalization`; a mismatch
-raises with an explanation rather than producing plausible wrong numbers.
-
-Qualified keys only
--------------------
-Joins run on the source key columns the weight file records, and targets
-are identified by the id fields it records. There is no parameter for
-joining on anything else, display names included, so the name-collision
-failure mode (the same admin name in two countries merging into one unit)
-cannot be expressed through this interface.
-
-Version agreement
------------------
-The artifact records the version of the geometry its source units come
-from (``source_version``). The caller must state the version the data was
-built against; a mismatch raises, and a missing version on either side is
-itself an error rather than an assumed compatibility.
-
-Validation
-----------
-Source coverage runs on every application: unmatched, zero-weight, and
-absent-from-data source units go through the configured
-`SourceUnitPolicies` (error by default) and are reported on the result.
-Extensive and ratio aggregations then run the mass balance check over the
-data that was actually applied; failure raises. The mass balance
-therefore proves the aggregation machinery conserved what it processed,
-while the coverage report accounts for what was excluded and why. For a
-subset run (for example one country's targets), restrict the source
-universe explicitly with ``restrict_to_sources`` instead of relaxing the
-coverage policies.
-
-This is a library API. There is no CLI verb for application yet; see the
-increment notes for the reasoning.
+Every application checks source coverage against `SourceUnitPolicies`,
+which raise by default, and reports it on the result. An extensive or
+ratio application also checks the mass balance over the data it applied,
+and raises if it fails. A run over a subset of the sources names them in
+``restrict_to_sources`` rather than relaxing the policies.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +41,7 @@ from cil_regionalization.schema import (
     GRID_CELLS,
     OutputSchema,
     SourceUnits,
+    raw_column,
     require_normalization,
     weight_column,
 )
@@ -88,6 +53,15 @@ from cil_regionalization.validate import (
     check_sum_to_one,
     enforce_source_policies,
 )
+
+logger = logging.getLogger(__name__)
+
+# The column `apply_weights` writes on every row, the share of the
+# target's weight basis behind the value.
+SHARE_COLUMN = "weight_share"
+# why a target the weights know is not in the output
+NO_WEIGHT = "no weight"
+NO_DATA = "no data"
 
 # column spellings accepted for cell centroids in external tables,
 # including the pix_cent_x / pix_cent_y of CIL segment weight files
@@ -108,12 +82,14 @@ _KIND_TO_DIRECTION: dict[str, str] = {
 class WeightsArtifact:
     """A weights frame plus the metadata needed to apply it safely.
 
-    ``partial_coverage`` is the generation-time coverage accounting for
-    polygon-mode artifacts (threshold, count, per-unit shortfalls,
-    whether the target set was a subset). None means the artifact
-    carries no accounting: hand-built artifacts and pre-accounting
-    manifests. Generated polygon artifacts always carry it, count zero
-    included, so a real artifact cannot lose the marking by accident.
+    ``partial_coverage`` is the record of partially covered source units
+    that every generated polygon artifact carries, a count of zero
+    included. It holds the threshold, the count, the units below the
+    threshold and whether the targets were a subset. `apply_weights`
+    refuses an artifact whose count is not zero unless
+    ``allow_partial_coverage`` is set. It is None for an artifact built
+    by hand, a grid artifact and one loaded from a manifest without the
+    record, and such an artifact is not refused.
     """
 
     frame: pd.DataFrame
@@ -138,13 +114,11 @@ class WeightsArtifact:
 
     @classmethod
     def load(cls, output_dir: str | Path, stem: str = "weights") -> "WeightsArtifact":
-        """Load a written artifact (parquet + manifest sidecar).
-
-        Reconstructs the schema from the manifest's recorded column roles.
-        Manifests written before those fields existed cannot be applied;
-        regenerate the weights or construct the artifact in memory via
-        `from_result`.
-        """
+        """The artifact written as ``{stem}.parquet`` and
+        ``{stem}.manifest.json`` in ``output_dir``, a local directory or a
+        ``gs://`` prefix. The schema is rebuilt from the column roles the
+        manifest records. Raises if the manifest does not record them, as
+        a manifest from an older version of the package does not."""
         base = str(output_dir).rstrip("/")
         if base.startswith("gs://"):
             import gcsfs
@@ -201,47 +175,37 @@ class WeightsArtifact:
         check: bool = True,
         tolerance: float = 1e-6,
     ) -> "WeightsArtifact":
-        """Build an artifact from a weight table produced elsewhere.
+        """An artifact built from a weight table made elsewhere, with
+        what a manifest would record passed as arguments.
 
-        ``table`` is a frame, or a path to a CSV or parquet file, with
-        one row per (region, source unit) and one normalized weight
-        column per weight. No manifest is needed: what the manifest
-        would record is passed here.
+        ``table`` is a frame, or the path of a CSV or parquet file, with
+        one row per (region, source unit) and one normalized column per
+        weight. ``weights`` maps each weight name to its column, for
+        example ``{"pop": "popwt"}``, and the columns are renamed to the
+        ``{name}wt`` form `apply_weights` reads. ``source`` becomes the
+        artifact's ``source_version``, which `apply_weights` compares
+        with the data's ``data_version`` as an exact string.
 
-        ``weights`` maps each weight name to its column, for example
-        ``{"pop": "popwt"}``; columns are renamed to the ``{name}wt``
-        form `apply_weights` reads. ``source`` becomes the artifact's
-        ``source_version``, which `apply_weights` compares against the
-        data's ``data_version``.
-
-        When ``source`` names a grid (``grid-0.25deg-center-[-180,180)``,
-        the form `GridSpec.source_version` writes), source units are
-        grid cells. Without ``cell_ix`` / ``cell_iy`` they are derived
-        from a longitude and a latitude column (spelled
+        When ``source`` names a grid in the form `GridSpec.source_version`
+        writes, such as ``grid-0.25deg-center-[-180,180)``, the source
+        units are grid cells. Without ``cell_ix`` and ``cell_iy`` they are
+        found from a longitude and a latitude column, spelled
         ``cell_lon``/``cell_lat``, ``lon``/``lat``,
-        ``longitude``/``latitude`` or ``pix_cent_x``/``pix_cent_y``).
+        ``longitude``/``latitude`` or ``pix_cent_x``/``pix_cent_y``.
         Longitudes are wrapped into the grid's convention first, so the
         180.125 centroid CIL files carry becomes -179.875, and every
-        point must sit on a cell centroid.
+        point must sit on a cell centroid. A table's own ``cell_ix`` and
+        ``cell_iy`` are used as they are after a bounds check, and must
+        map back to its longitude or latitude column when it has one.
+        With neither column, nothing checks that the indices were built
+        on the grid ``source`` names.
 
-        Given ``cell_ix`` / ``cell_iy`` are used as they are, after a
-        bounds check. When a longitude or latitude column is also
-        present, each row's index must map back to that centroid on the
-        named grid, which catches indices built on a different grid of
-        the same shape (a [0,360) table read as [-180,180), shifted by
-        half the columns, or latitudes counted from the north). When
-        neither column is present the indices are taken on trust: the
-        only defense is that ``source`` names the grid they were built
-        on exactly, since `apply_weights` compares it to the data's
-        version as a literal string and nothing checks the geography.
-
-        Any other ``source`` is a polygon source version and
-        ``source_keys`` names the id columns of its units.
-
-        With ``check`` the table must have no duplicated (region,
-        source unit) rows and every weight must sum to 1 within each
-        normalization group (`check_sum_to_one`); both failures raise
-        naming the offending groups.
+        Any other ``source`` is a polygon source version, and
+        ``source_keys`` names the id columns of its units. With
+        ``check``, the table must have no duplicated (region, source
+        unit) rows and every weight must sum to 1 within each
+        normalization group. Both failures raise naming the offending
+        groups.
         """
         if normalization not in ("per_destination", "per_source"):
             raise ValueError(
@@ -389,7 +353,8 @@ def _read_table(path: str | os.PathLike, string_cols: list[str]) -> pd.DataFrame
 def _find_column(
     frame: pd.DataFrame, spellings: tuple[str, ...], what: str
 ) -> str | None:
-    """The one column among ``spellings``, None if absent; several raise."""
+    """The one column of ``frame`` among ``spellings``, or None if there
+    is none. Raises if there are several."""
     found = [c for c in spellings if c in frame.columns]
     if len(found) > 1:
         raise ValueError(
@@ -414,7 +379,10 @@ def _wrap_lon(lon: np.ndarray, spec: GridSpec) -> np.ndarray:
 
 
 def _attach_grid_cells(frame: pd.DataFrame, spec: GridSpec) -> pd.DataFrame:
-    """Add integer cell indices (and centroids) for a grid source."""
+    """``frame`` with int64 ``cell_ix`` and ``cell_iy`` on ``spec``, and
+    with ``cell_lon`` and ``cell_lat`` too when the indices are found
+    from the coordinates. Raises if a row is off the grid, or its indices
+    and its coordinates disagree."""
     has_ix = "cell_ix" in frame.columns
     has_iy = "cell_iy" in frame.columns
     if has_ix != has_iy:
@@ -501,8 +469,9 @@ class AppliedResult:
 
     ``frame`` is keyed by the artifact's id fields plus every passthrough
     dimension of the input data. ``mass_balance`` is None for intensive
-    aggregations, whose weighted means are not conserved quantities;
+    aggregations, whose weighted means are not conserved quantities.
     ``mass_balance_denominator`` is set only for ratio aggregations.
+    ``targets`` is what `apply_weights` found of the targets.
     """
 
     frame: pd.DataFrame
@@ -511,6 +480,31 @@ class AppliedResult:
     coverage: SourceCoverageReport
     mass_balance: MassBalanceReport | None
     mass_balance_denominator: MassBalanceReport | None = None
+    targets: "TargetReport | None" = None
+
+
+@dataclass(frozen=True)
+class TargetReport:
+    """The targets an application was asked for that are not in its
+    output, by reason, and those whose value rests on part of their
+    weight basis, each with the smallest share a row of it has.
+    ``basis`` is the column the shares are taken against.
+
+    A target is asked for when the weights, restricted to the sources
+    asked for, have a row of it. It is left out for "no weight" when
+    none of those rows has a weight, and for "no data" when none of its
+    weighted sources is in the data."""
+
+    basis: str
+    left_out: Mapping[str, tuple[tuple, ...]]
+    partial: tuple[tuple[tuple, float], ...]
+
+    @property
+    def counts(self) -> dict:
+        return {
+            "left_out": {reason: len(ids) for reason, ids in self.left_out.items()},
+            "partial": len(self.partial),
+        }
 
 
 def apply_weights(
@@ -532,11 +526,11 @@ def apply_weights(
 
     ``data`` must carry the artifact's source key columns (exact names),
     ``value_col``, and for ratio kind ``denominator_col``. Every other
-    column is a passthrough dimension: aggregation happens independently
+    column is a passthrough dimension. Aggregation happens independently
     per combination of dimension values, and the output keeps those
     columns. Columns that are labels of the source unit rather than
-    dimensions (a country tag, a display name) behave as dimensions too;
-    drop them beforehand if they should not appear in the output. Rows
+    dimensions (a country tag, a display name) behave as dimensions too,
+    so drop them beforehand if they should not appear in the output. Rows
     duplicated on (source keys + dimensions) would double count and raise.
 
     ``data_version`` states the geometry version the data was built
@@ -544,8 +538,18 @@ def apply_weights(
     ``group_col`` optionally names a data column to run the mass balance
     per group (typically the country) as well as globally.
     ``restrict_to_sources`` limits the weight frame to an explicit source
-    universe for subset runs; the coverage checks stay fully strict within
+    universe for subset runs. The coverage checks stay fully strict within
     that universe.
+
+    Every row of the output carries ``weight_share``, the share of its
+    target's weight basis behind the value, exactly 1 when every unit of
+    the target that carries basis contributed. The basis is the
+    artifact's raw column of the weight, its population or crop area, so
+    a unit with no crop area takes nothing from a target's share, and a
+    target with no basis at all, fed by the area fallback alone, is
+    measured by its weights. ``AppliedResult.targets`` lists the targets
+    the weights have that are not in the output, with the reason, and
+    the partial ones. A sum over no value is NaN, not zero.
     """
     if kind not in _KIND_TO_DIRECTION:
         raise ValueError(
@@ -580,6 +584,11 @@ def apply_weights(
     if group_col is not None and group_col not in data.columns:
         raise ValueError(f"data is missing group column {group_col!r}")
 
+    if SHARE_COLUMN in data.columns:
+        raise ValueError(
+            f"data has a column named {SHARE_COLUMN!r}, which apply_weights "
+            f"writes on every row of its output"
+        )
     dim_cols = [c for c in data.columns if c not in source_keys + value_cols]
     dup_key = source_keys + dim_cols
     # Each key column is hashed once: the source codes serve both the
@@ -595,7 +604,16 @@ def apply_weights(
             f"{dup_key}; duplicated rows would double count"
         )
 
-    weights_frame = artifact.frame[id_fields + source_keys + [wcol]]
+    raw = raw_column(weight)
+    basis_col = raw if raw in artifact.frame.columns else wcol
+    weights_frame = _with_basis(
+        artifact.frame[
+            id_fields + source_keys + list(dict.fromkeys([wcol, basis_col]))
+        ],
+        id_fields,
+        wcol,
+        basis_col,
+    )
     if restrict_to_sources is not None:
         allowed = {tuple(t) for t in restrict_to_sources}
         mask = weights_frame[source_keys].apply(tuple, axis=1).isin(allowed)
@@ -612,24 +630,72 @@ def apply_weights(
     )
     enforce_source_policies(coverage, policies or SourceUnitPolicies())
 
-    # NaN weights (the marked 'nan' fallback) carry no mass; the coverage
-    # check above has already classified all-NaN source units, so the
-    # remaining rows drop cleanly here.
-    weights_frame = weights_frame.dropna(subset=[wcol])
-    merged = weights_frame.merge(data, on=source_keys, how="inner")
+    requested = _ids(weights_frame, id_fields)
+    # A row with no weight, NaN as the marked 'nan' fallback leaves it or
+    # zero, carries no mass. The coverage check above has classified the
+    # source units all of whose rows are such.
+    weighted = weights_frame[weights_frame[wcol].notna() & (weights_frame[wcol] != 0)]
+    merged = weighted.merge(data, on=source_keys, how="inner")
 
     out_keys = id_fields + dim_cols
-    if kind == "extensive":
-        out = _aggregate_extensive(merged, out_keys, wcol, value_col)
-    elif kind == "intensive":
-        out = _aggregate_intensive(merged, out_keys, wcol, value_col)
+    contributing = merged[value_col].notna()
+    if denominator_col is not None:
+        contributing &= merged[denominator_col].notna()
+    columns = {
+        "_bc": merged["_basis"].where(contributing, 0.0),
+        "_cc": (contributing & (merged["_basis"] > 0)).astype(np.int64),
+    }
+    if kind == "intensive":
+        columns["_wx"] = merged[wcol] * merged[value_col]
+        columns["_w"] = merged[wcol].where(merged[value_col].notna(), 0.0)
     else:
-        num = _aggregate_extensive(merged, out_keys, wcol, value_col)
-        den = _aggregate_extensive(merged, out_keys, wcol, denominator_col)
-        out = num.merge(den, on=out_keys, how="outer")
-        out[value_col] = out[value_col] / out[denominator_col].where(
-            out[denominator_col] != 0.0
-        )
+        columns["_num"] = merged[wcol] * merged[value_col]
+        if kind == "ratio":
+            columns["_den"] = merged[wcol] * merged[denominator_col]
+    grouped = (
+        merged[out_keys + ["_total", "_rows"]]
+        .assign(**columns)
+        .groupby(out_keys, sort=False)
+    )
+    sums = grouped[list(columns)].sum(min_count=1)
+    sums[["_total", "_rows"]] = grouped[["_total", "_rows"]].first()
+    sums = sums.reset_index()
+    if kind == "intensive":
+        sums[value_col] = sums["_wx"] / sums["_w"].where(sums["_w"] != 0.0)
+    elif kind == "extensive":
+        sums[value_col] = sums["_num"]
+    else:
+        sums[value_col] = sums["_num"] / sums["_den"].where(sums["_den"] != 0.0)
+    # every row of the target that carries basis contributed, so exactly 1
+    sums[SHARE_COLUMN] = np.where(
+        sums["_cc"].fillna(0).to_numpy() == sums["_rows"].to_numpy(),
+        1.0,
+        sums["_bc"].fillna(0.0) / sums["_total"],
+    )
+    out = sums[out_keys + [value_col, SHARE_COLUMN]]
+    if kind != "intensive":
+        num = sums[out_keys + ["_num"]].rename(columns={"_num": value_col})
+    if kind == "ratio":
+        den = sums[out_keys + ["_den"]].rename(columns={"_den": denominator_col})
+
+    present = _ids(out, id_fields)
+    weighted_ids = _ids(weighted, id_fields)
+    shares = out.groupby(id_fields, sort=False)[SHARE_COLUMN].min()
+    partial = shares[shares < 1.0]
+    targets = TargetReport(
+        basis=basis_col,
+        left_out={
+            NO_WEIGHT: tuple(sorted(requested - weighted_ids)),
+            NO_DATA: tuple(sorted(weighted_ids - present)),
+        },
+        partial=tuple(
+            sorted(
+                ((key if isinstance(key, tuple) else (key,)), float(share))
+                for key, share in partial.items()
+            )
+        ),
+    )
+    _say_targets(targets, len(requested))
 
     balance: MassBalanceReport | None = None
     balance_den: MassBalanceReport | None = None
@@ -655,7 +721,6 @@ def apply_weights(
             balance_den = _run_mass_balance(
                 applied_data, den, denominator_col, group_col, mass_balance_tolerance
             )
-            out = out.drop(columns=[denominator_col])
 
     return AppliedResult(
         frame=out,
@@ -664,25 +729,65 @@ def apply_weights(
         coverage=coverage,
         mass_balance=balance,
         mass_balance_denominator=balance_den,
+        targets=targets,
     )
+
+
+def _ids(frame: pd.DataFrame, id_fields: list[str]) -> set[tuple]:
+    return set(frame[id_fields].drop_duplicates().itertuples(index=False, name=None))
+
+
+def _with_basis(
+    frame: pd.DataFrame, id_fields: list[str], wcol: str, basis_col: str
+) -> pd.DataFrame:
+    """``frame`` with each row's basis, its target's total basis and the
+    number of its target's rows that carry basis, over every row of the
+    artifact. A target whose rows carry no basis at all, as rows of the
+    area fallback carry none of the raster's, is measured by its
+    weights instead."""
+    basis = frame[basis_col].fillna(0.0).astype("float64")
+    keys = [frame[f] for f in id_fields]
+    total = basis.groupby(keys, sort=False).transform("sum")
+    by_weight = total == 0.0
+    if by_weight.any():
+        basis = basis.where(~by_weight, frame[wcol].fillna(0.0).astype("float64"))
+        total = basis.groupby(keys, sort=False).transform("sum")
+    rows = (basis > 0).groupby(keys, sort=False).transform("sum")
+    return frame.assign(_basis=basis, _total=total, _rows=rows.astype(np.int64))
+
+
+def _say_targets(targets: TargetReport, n_requested: int) -> None:
+    left = {reason: len(ids) for reason, ids in targets.left_out.items() if ids}
+    if not left and not targets.partial:
+        return
+    parts = []
+    if left:
+        parts.append(
+            f"{sum(left.values())} of {n_requested} targets are left out ("
+            + ", ".join(f"{reason}: {n}" for reason, n in left.items())
+            + ")"
+        )
+    if targets.partial:
+        smallest = min(share for _, share in targets.partial)
+        parts.append(
+            f"{len(targets.partial)} rest on part of their {targets.basis} "
+            f"(smallest share {smallest:.3g}, in column {SHARE_COLUMN!r})"
+        )
+    logger.warning("%s; AppliedResult.targets lists them", " and ".join(parts))
 
 
 def _check_coverage_marking(
     artifact: WeightsArtifact, allow_partial_coverage: bool
 ) -> None:
-    """Refuse artifacts whose generation recorded partially covered units.
-
-    A source unit only partially intersected by the target set (a border
-    neighbor in a subset-target run) carries weights that sum to 1 over a
-    sliver of the real unit, so sum-to-one cannot flag the problem and an
-    extensive application would silently misplace that unit's entire
-    value into the sliver's targets. Passing
-    ``allow_partial_coverage=True`` is the explicit acknowledgment, for
-    callers who have restricted the data to match the artifact's actual
-    coverage. Artifacts without accounting (None) pass: hand-built
-    artifacts own their frames, and generated polygon artifacts always
-    carry the record, count zero included.
-    """
+    """Raises if the artifact records partially covered source units and
+    ``allow_partial_coverage`` is false. An artifact with no record
+    passes. A caller sets ``allow_partial_coverage`` after restricting
+    the data to what the artifact covers."""
+    # A source unit only partly intersected by the targets, a border
+    # neighbor in a run over a subset of targets, has weights that sum to
+    # 1 over a sliver of the real unit. Sum-to-one cannot flag it, and an
+    # extensive application would put the unit's whole value into the
+    # sliver's targets.
     pc = artifact.partial_coverage
     if pc is None or pc.get("count", 0) == 0 or allow_partial_coverage:
         return
@@ -738,15 +843,17 @@ def _group_codes(
     codes: np.ndarray | None = None,
     card: int = 1,
 ) -> tuple[np.ndarray, int]:
-    """One int64 code per row, equal exactly when the rows agree on ``cols``.
+    """One int64 code per row, equal exactly when the rows agree on
+    ``cols``, and the bound ``card`` with every code in ``[0, card)``.
 
     Missing values are all equal to each other, as in
-    `DataFrame.duplicated`. Each column is factorized once and the codes
-    are combined arithmetically, so codes lie in ``[0, card)``; they are
-    compressed by factorizing only when the combined range would outgrow
-    `_dense_ok`, which also keeps the product far from int64 overflow.
-    Passing ``codes``/``card`` extends an existing code with more columns.
+    `DataFrame.duplicated`. Passing ``codes`` and ``card`` extends an
+    existing code with more columns.
     """
+    # Each column is factorized once and the codes are combined
+    # arithmetically. They are compressed by factorizing only when the
+    # combined range would outgrow `_dense_ok`, which also keeps the
+    # product far from int64 overflow.
     n = len(frame)
     for col in cols:
         c, uniques = pd.factorize(frame[col])
@@ -789,40 +896,11 @@ def _first_rows(codes: np.ndarray, card: int) -> np.ndarray:
 
 
 def _rows_in(frame: pd.DataFrame, keys: list[str], ids: set[tuple]) -> np.ndarray:
-    """Boolean mask of the rows whose ``keys`` tuple is in ``ids``.
-
-    Same result as ``frame[keys].apply(tuple, axis=1).isin(ids)`` without
-    building one Python tuple per row, which at 100M rows cost minutes
-    and about 16 GiB.
-    """
+    """Boolean mask of the rows whose ``keys`` tuple is in ``ids``, the
+    same as ``frame[keys].apply(tuple, axis=1).isin(ids)``."""
+    # This builds no Python tuple per row. Building one per row cost
+    # minutes and about 16 GiB at 100M rows.
     return pd.MultiIndex.from_frame(frame[keys]).isin(ids)
-
-
-def _aggregate_extensive(
-    merged: pd.DataFrame, out_keys: list[str], wcol: str, value_col: str
-) -> pd.DataFrame:
-    contrib = merged[wcol] * merged[value_col]
-    out = (
-        merged.assign(_contrib=contrib)
-        .groupby(out_keys, sort=False)["_contrib"]
-        .sum()
-        .reset_index()
-        .rename(columns={"_contrib": value_col})
-    )
-    return out
-
-
-def _aggregate_intensive(
-    merged: pd.DataFrame, out_keys: list[str], wcol: str, value_col: str
-) -> pd.DataFrame:
-    has_value = merged[value_col].notna()
-    frame = merged.assign(
-        _wx=merged[wcol] * merged[value_col],
-        _w=merged[wcol].where(has_value, 0.0),
-    )
-    sums = frame.groupby(out_keys, sort=False)[["_wx", "_w"]].sum().reset_index()
-    sums[value_col] = sums["_wx"] / sums["_w"].where(sums["_w"] != 0.0)
-    return sums.drop(columns=["_wx", "_w"])
 
 
 def _run_mass_balance(

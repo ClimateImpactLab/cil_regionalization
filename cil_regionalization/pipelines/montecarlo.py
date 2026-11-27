@@ -1,87 +1,49 @@
-"""Monte Carlo aggregation pipeline: apply weights per leaf, then statistics.
+"""Monte Carlo aggregation pipeline, with weights applied leaf by leaf and
+statistics taken over the pooled leaves.
 
-Composes the library core and adds no mathematics. The sequence:
+The tree of leaves is declared in the config, as an ordered list of
+level names and the values each level takes. Every declared leaf has to
+be on disk before any work starts. Each leaf is read, given to
+`apply.apply_weights` with the configured kind, weight, version and
+policies, and reduced to its window means by `stats.window_means`. Its
+level values go on the reduced rows as columns. Coverage and mass
+balance are checked leaf by leaf as in a direct call, and a failing
+leaf fails the run. The reduced leaves are then pooled, and
+`stats.pooled_statistics` takes the statistics once, with the window
+label as an ordinary identity column. The statistics file and its
+manifest are written only after every leaf has succeeded, with the rows
+sorted by `_ordered` whatever order the leaves were pooled in.
 
-    1. Resolve the declared tree of Monte Carlo leaves. The directory
-       grammar is configuration: an ordered list of level names and the
-       expected values per level. The historical batch/rcp/gcm/iam/ssp
-       layout is one instance of the pattern; nothing here knows those
-       names, the depth, or the order.
-    2. Fail before any work if a declared leaf is missing on disk.
-    3. Per leaf: read the frame and run `apply.apply_weights` with the
-       configured kind, weight, versions, and policies. Coverage and mass
-       balance run per leaf exactly as they do for a direct library call,
-       and a failing leaf fails the run. Optionally write the aggregated
-       leaf, mirrored under the output directory, in the layout of the
-       `leaves` module. Then take the window
-       mean (`stats.window_means`) over the configured windows, collapsing
-       the time dimension to the window count before anything is pooled,
-       and attach the leaf's level values as columns to the reduced rows.
-    4. Concatenate the reduced leaves and run `stats.pooled_statistics`
-       once, with the window label as an ordinary identity dimension;
-       write the combined statistics plus a pipeline manifest recording
-       every leaf and its accounting. The rows are sorted (`_ordered`),
-       whatever order the leaves were pooled in.
+Without a ``[weights]`` section the run is a passthrough. The tree
+walk, the subtraction, the window means and the statistics are the
+same, with no spatial aggregation. The rows are the leaf's own regions,
+keyed by the column ``data.region_col`` names, and there is no coverage
+or mass balance. A ratio is refused, since its numerator is divided by
+its denominator at an aggregation target.
 
-Passthrough: leaving the ``[weights]`` section out entirely runs the
-same tree walk, subtraction, window reduction, and pooled statistics
-with no spatial aggregation at all. The leaf's own regions are the
-output rows, keyed by the column ``data.region_col`` names (there is
-no artifact to name it), and no coverage or mass-balance accounting
-exists because no weights were applied. This produces the statistics
-one step before any aggregated product: if a pattern in an aggregated
-map looks odd, the passthrough twin says whether it came from the
-weighting or from the data. Ratios stay out of passthrough: dividing
-numerator by denominator happens at an aggregation target, and without
-weights there is no such step.
+In this flow each leaf is reduced to its window means as it is
+aggregated, so the windows are fixed before the first leaf is read.
+Other windows take a new run, or a run of stage ``reduce`` if the
+leaves were kept.
 
-The window mean moves before concatenation purely for memory: it is
-computed per sample member either way, so the staging is provably
-equivalent (the equivalence is a pinned test, not an assumption) while
-shrinking the pooled frame by the ratio of years to windows, about 45
-fold for 90 years and two windows. The consequence is that the window
-bounds are final before any leaf is processed; the reduced frames carry
-no time dimension, so a different window means a rerun, or a run of
-the reduce stage if the leaves were kept, and
-`stats.window_means` refuses already reduced input rather than silently
-relabeling it. The statistics ordering itself is unchanged: spatial
-aggregation per draw, then window mean, then statistics over the pooled
-sample.
-
-A run either completes every declared leaf or raises naming what
-finished and what did not; there is no silently partial output. The
-statistics file is written only after every leaf succeeded.
-
-Memory at scale, measured rather than estimated: a full mortality ADM2
-run (about 4,000 leaves by 42,726 targets, roughly 500 million member
-rows) peaked at 188.3 GB resident in the parent process at the
-pooled-statistics stage. Requests of 128 GB died three times at that
-scale before the instrumented run produced the number. Size ADM2-scale
-requests at 224 GB or more, and read the memory[...] lines the run
-prints before trusting any smaller figure.
-
-Dry run resolves the tree and reports the plan (leaves, their paths,
-missing entries, output locations) without creating or writing anything.
-
-Stages. ``--stage aggregate`` runs steps 1 to 3 without the window mean
-and stops. It writes the leaf files and their manifest,
+Stages. ``--stage aggregate`` writes the leaf files and their manifest,
 ``leaves/<stem>.leaves.manifest.json``, and no statistics. The manifest
 is written before the first leaf, marked incomplete, and again when
 every leaf has succeeded. ``--stage reduce`` takes the statistics from
 leaf files written before. It checks them against their manifest, asks
-a backend of the `reduce` package for the statistics, and opens neither
-the source tree nor the weights. The windows, the quantiles and
-everything else under ``[stats]`` can differ from the run that wrote
-the leaves. The default stage, ``all``, runs everything in one process
-and holds every reduced leaf at once.
+a backend of the `reduce` package for the statistics, never opens the
+source tree and reads the weights artifact only to hash it. The
+windows, the quantiles and everything else under ``[stats]`` can differ
+from the run that wrote the leaves. The default stage, ``all``, runs
+everything in one process and holds every reduced leaf at once.
 
 Time reduction. ``stats.time_reduction`` says what happens to the
 years of a member. Under "window_mean" each member's window is reduced
-to its mean first, as described above. Under "pooled" no mean is taken:
-every year of a member inside a window is a member of the sample, so
-the statistics are over models, draws and years together. Under
-"per_year" no mean is taken either, and the year stays in the output:
-the statistics are over the members within each year of
+to its mean first, as described above. Under "pooled" no mean is
+taken, and every year of a member inside a window is a member of the
+sample, so the statistics are over models, draws and years together.
+Under "per_year" no mean is taken either, and the year stays in the
+output, so the statistics are over the members within each year of
 ``stats.years``. The rows of the last two are the leaves' own rows, far
 too many to hold at once, so their statistics always come from the
 leaf files, one block of targets at a time. Stage ``all`` then writes
@@ -97,21 +59,33 @@ a period and left out of the periods in which it has none. This also
 runs from the leaf files under every stage, so one aggregation serves
 every level, every period and both ways of reducing.
 
-Per-capita to total conversion is deliberately outside: leaves must
-already carry the extensive quantity to aggregate. The hook for such a
-conversion is the step that produces the tree this pipeline reads.
+The leaves must already carry the extensive quantity to aggregate. A
+per-capita value is turned into a total by the step that writes the
+tree.
 
-Parallelism is explicit: ``run.n_workers`` above 1 processes leaves in a
-multiprocessing pool. The weights artifact is shipped to workers per
-task, which is acceptable at current artifact sizes and revisitable if
-profiling ever says otherwise.
+With ``run.n_workers`` above 1 the leaves are processed in a
+multiprocessing pool, and each worker loads the weights artifact once.
+A dry run resolves the tree and reports the plan, with the leaves,
+their paths, the missing ones and the output files, and creates or
+writes nothing.
 
-Entry point: ``python -m cil_regionalization.pipelines.montecarlo
-<config.toml> [--dry-run] [--stage all|aggregate|reduce]
-[--verify-leaves]``. Job submission is
-out of scope; a scheduler template that calls this entry point lives
-under ``examples/``.
+The entry point, which a scheduler template under ``examples/`` calls::
+
+    python -m cil_regionalization.pipelines.montecarlo <config.toml>
+        [--dry-run] [--stage all|aggregate|reduce] [--verify-leaves]
 """
+
+# The window mean is taken before the leaves are pooled to save memory.
+# It is taken per sample member either way, so the statistics are the
+# same, which a test pins, and the pooled frame shrinks by the ratio of
+# years to windows.
+#
+# Memory at scale, measured: a full mortality ADM2 run (about 4,000
+# leaves by 42,726 targets, roughly 500 million member rows) peaked at
+# 188.3 GB resident in the parent process at the pooled-statistics
+# stage, and requests of 128 GB died three times at that scale. Size
+# ADM2-scale requests at 224 GB or more, and read the memory[...] lines
+# the run prints before trusting any smaller figure.
 
 from __future__ import annotations
 
@@ -126,7 +100,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Iterable, Literal, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -138,7 +112,7 @@ else:  # pragma: no cover
     import tomli as tomllib
 
 from cil_regionalization import leaves as leaf_format
-from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.apply import SHARE_COLUMN, WeightsArtifact, apply_weights
 from cil_regionalization.config import SourceUnitPolicies, _Strict
 from cil_regionalization.manifest import collect_package_versions
 from cil_regionalization.model_weights import ModelWeights, read_model_weights
@@ -158,9 +132,12 @@ from cil_regionalization.stats import (
     window_means,
 )
 from cil_regionalization.warming_levels import (
+    GMSTTable,
     Period,
     WarmingLevels,
+    _listed,
     assign_warming_levels,
+    members_that_join,
     read_gmst,
 )
 
@@ -182,13 +159,15 @@ class WeightsRef(_Strict):
 class TreeConfig(_Strict):
     """Declared layout of the Monte Carlo tree.
 
-    ``levels`` names the directory levels in path order; each level
-    becomes a column on the aggregated output. ``expect`` declares the
-    values per level, and the expected leaf set is their full cross
-    product: a leaf path is ``root/<v1>/.../<vN>/filename``. Anything
-    declared but absent on disk fails the run before any processing.
-    ``exclude`` takes cells out of that product. A cell has one value
-    for each level, and ``"*"`` stands for every value of its level.
+    ``levels`` names the directory levels in path order, and a level
+    that is not a sample dimension becomes a column of the statistics.
+    ``expect`` gives the values of each level, and the leaves are every
+    combination of them, each at ``root/<v1>/.../<vN>/filename``.
+    ``exclude`` takes cells out of those combinations. A cell has one
+    value for each level, and ``"*"`` stands for every value of its
+    level. ``subtract_filename`` names a sibling file whose values are
+    taken off the leaf's, row for row. A declared leaf that is not on
+    disk fails the run before any work.
     """
 
     root: str = Field(min_length=1)
@@ -233,15 +212,17 @@ class TreeConfig(_Strict):
 class DataConfig(_Strict):
     """What a leaf contains and how to aggregate it.
 
-    ``format`` is declared, never inferred from the file extension:
-    inference invites a mismatch between what a user thinks is being
-    read and what is read. For ``netcdf`` leaves (the ``[netcdf]``
-    optional extra), ``value_col`` names the data variable and
-    ``region_dim`` names the file's region dimension, which the reader
-    maps to the weights artifact's source key column. Every other
-    dimension passes through exactly as a parquet column would.
+    ``format`` is declared and never inferred from the file extension.
+    For ``netcdf`` leaves, which need the ``[netcdf]`` extra,
+    ``value_col`` names the data variable and ``region_dim`` the file's
+    region dimension. The reader turns it into the source key column of
+    the weights artifact, or into ``region_col`` in a run without
+    weights. Every other dimension passes through as a parquet column
+    would.
     """
 
+    # Inferring the format from the extension invites a mismatch between
+    # what a user thinks is being read and what is read.
     format: Literal["parquet", "csv", "netcdf"] = "parquet"
     value_col: str = "value"
     denominator_col: Optional[str] = None
@@ -296,7 +277,10 @@ class WarmingLevelsConfig(_Strict):
     a level has a default. ``reference_period`` and ``offset`` go
     together, since the offset is the warming up to that period.
     ``smoothing`` says in words how the series in the table was
-    smoothed, and "unknown" is an answer.
+    smoothed, and "unknown" is an answer. ``join`` names the members
+    that join, "declared" for every member the tree declares, or a table
+    of member columns to the values that join. A member of the tree
+    that does not join is pooled at no level, and the record lists it.
     """
 
     gmst: str = Field(min_length=1)
@@ -309,18 +293,65 @@ class WarmingLevelsConfig(_Strict):
     levels: list[float] = Field(min_length=1)
     half_width: float = Field(gt=0)
     smoothing: str = Field(min_length=1)
+    join: Union[Literal["declared"], dict[str, list[str]]]
     periods: list[WarmingPeriod] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _join_names_member_columns(self) -> "WarmingLevelsConfig":
+        try:
+            _listed(self.join, self.member)
+        except ValueError as error:
+            raise ValueError(f"stats.warming_levels.{error}") from None
+        return self
+
+    def read_table(self) -> GMSTTable:
+        """The temperature table, read with the columns named here."""
+        return read_gmst(
+            self.gmst,
+            member_cols=self.member,
+            time_col=self.time_col,
+            value_col=self.value_col,
+            sep=self.sep,
+        )
+
+    def assign(
+        self, table: GMSTTable, declared: Iterable[Sequence[str]]
+    ) -> WarmingLevels:
+        """The levels of the members of ``declared`` that join, with the
+        settings here. Raises if a member of ``declared`` has no row in
+        ``table``, even one that does not join, and as
+        `members_that_join` and `assign_warming_levels` raise."""
+        declared = list(dict.fromkeys(tuple(member) for member in declared))
+        known = set(table.members)
+        absent = [member for member in declared if member not in known]
+        if absent:
+            raise ValueError(
+                f"{len(absent)} of the {len(declared)} members the tree "
+                f"declares have no row in the temperature table {self.gmst} "
+                f"(first: {dict(zip(self.member, absent[0]))}). A name is "
+                f"matched as it is written."
+            )
+        return assign_warming_levels(
+            table,
+            reference_period=tuple(self.reference_period),
+            offset=self.offset,
+            levels=self.levels,
+            half_width=self.half_width,
+            periods=[
+                Period(tuple(period.gmst_span), tuple(period.impact_span))
+                for period in self.periods
+            ],
+            smoothing=self.smoothing,
+            members=members_that_join(self.join, declared, self.member),
+        )
 
 
 class StatsConfig(_Strict):
     """Statistics stage.
 
-    ``windows`` is final before any leaf is processed: each leaf is
-    reduced to window means as it is aggregated, and the reduced frames
-    carry no time dimension. Changing the windows afterwards is a rerun,
-    not a reprocessing of reduced data, and the reduction step refuses
-    already reduced input by construction. If the leaves were kept, the
-    reduce stage takes other windows from them.
+    Under stage ``all`` with "window_mean" each leaf is reduced to its
+    window means as it is aggregated, so other ``windows`` take a new
+    run, or a run of the reduce stage over leaves that were kept.
     """
 
     sample_dims: list[str] = Field(min_length=1)
@@ -330,15 +361,18 @@ class StatsConfig(_Strict):
     warming_levels: Optional[WarmingLevelsConfig] = None
     quantiles: list[float] = Field(default_factory=list)
     include_mean: bool = True
-    # Adds an n_members column to the statistics file: the members each
-    # statistic was computed from. Off by default, so the file keeps its
-    # columns unless a recipe asks.
+    # Adds two count columns to the statistics file. n_members is the
+    # samples each statistic was computed from, a batch of a model
+    # counting once a batch, and n_models the climate models among them,
+    # the distinct values of model_dims. Off unless asked for, and on
+    # whatever the config says where a run pools fewer leaves than were
+    # aggregated or takes warming levels.
     include_n_members: bool = False
-    # How a quantile is computed. "linear" interpolates between members
-    # and has no weighted form, "lower_step" is the extraction tool's
-    # step, with equal weights when there are no model weights, and
-    # "inverted_cdf" is the standard inverse of the empirical
-    # distribution. How a mean is summed. "fast" is the vectorised sum,
+    # How a quantile is computed. "inverted_cdf" is the estimator, the
+    # standard inverse of the empirical distribution. "linear"
+    # interpolates between two members and has no weighted form.
+    # "lower_step" reproduces the extraction tool, one member below the
+    # standard inverse, and is biased low. How a mean is summed. "fast" is the vectorised sum,
     # whose last bits depend on the order the workers hand their leaves
     # back in, and "exact" is the exactly rounded one. Neither has a
     # default, and the manifest records both. See
@@ -359,6 +393,10 @@ class StatsConfig(_Strict):
     years: Optional[tuple[int, int]] = None
     model_weights: Optional[str] = None
     model_weight_level: Optional[str] = None
+    # The sample dimensions of the climate model, such as ["gcm"], which
+    # the count of models beside the count of samples is taken over.
+    # Required wherever the statistics carry their counts.
+    model_dims: Optional[list[str]] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -379,6 +417,33 @@ class StatsConfig(_Strict):
             if data.get("summation") == "legacy":
                 check_summation("legacy")
         return data
+
+    @model_validator(mode="after")
+    def _model_dims_are_pooled(self) -> "StatsConfig":
+        if self.model_dims is not None:
+            if not self.model_dims:
+                raise ValueError("stats.model_dims must name at least one column")
+            stray = [d for d in self.model_dims if d not in self.sample_dims]
+            if stray:
+                raise ValueError(
+                    f"stats.model_dims {stray} must be among stats.sample_dims "
+                    f"{self.sample_dims}; a climate model is counted among the "
+                    f"members it pools"
+                )
+        counted = self.include_n_members or self.warming_levels is not None
+        if counted and self.model_dims is None:
+            why = (
+                "stats.include_n_members is set"
+                if self.include_n_members
+                else "a warming level writes its counts"
+            )
+            raise ValueError(
+                f"{why}, and the counts are of the samples and of the "
+                f"climate models behind each statistic, so stats.model_dims "
+                f"has to name the sample dimensions of the climate model, "
+                f'such as ["gcm"]'
+            )
+        return self
 
     @model_validator(mode="after")
     def _weights_come_together(self) -> "StatsConfig":
@@ -470,14 +535,13 @@ class StatsConfig(_Strict):
 
 
 class PipelineOutputConfig(_Strict):
-    """Where results land. ``stem`` names the statistics and manifest
-    files, so several runs can share one directory. ``write_reduced``
-    keeps the pooled window-mean frame (one row per target, window,
-    and sample member), which downstream regrouping needs; per-draw
-    quantities cannot be recovered from the statistics file.
-    ``write_leaves`` keeps every aggregated leaf with its years, under
-    ``leaves/``. It is off unless asked for, because the leaves take
-    far more disk than the statistics. ``leaves_stem`` names the leaves
+    """Where the results are written. ``stem`` names the statistics and
+    manifest files, so several runs can share one directory.
+    ``write_reduced`` also writes the pooled window means, one row a
+    target, window and sample member, which `regroup` works on.
+    ``write_leaves`` keeps every aggregated leaf with its years under
+    ``leaves/``. It is off unless asked for, because the leaves take far
+    more disk than the statistics. ``leaves_stem`` names the leaves
     manifest, and is ``stem`` unless set, so a product with other
     windows can take its own stem and reduce the leaves of another."""
 
@@ -493,9 +557,9 @@ class RunConfig(_Strict):
 
 
 class MonteCarloPipelineConfig(_Strict):
-    """``weights`` is optional: without it the pipeline runs in
-    passthrough, producing statistics per source region with no spatial
-    aggregation (see the module docstring)."""
+    """The config of a pipeline run. Without ``weights`` the run is a
+    passthrough, with statistics per source region and no spatial
+    aggregation."""
 
     weights: Optional[WeightsRef] = None
     tree: TreeConfig
@@ -583,11 +647,12 @@ class MonteCarloPipelineConfig(_Strict):
 
 
 def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
-    """Load and validate a pipeline TOML; resolve relative paths.
+    """The validated config of a pipeline TOML.
 
-    ``weights.dir``, ``tree.root``, and ``output.dir`` given as relative
-    paths resolve against the config file's directory, matching
-    `config.load_config`.
+    ``weights.dir``, ``tree.root``, ``output.dir``,
+    ``stats.model_weights`` and ``stats.warming_levels.gmst`` given as
+    relative paths resolve against the config file's directory, as in
+    `config.load_config`. Raises if the file does not exist.
     """
     p = Path(path).resolve()
     if not p.exists():
@@ -596,20 +661,49 @@ def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
         data = tomllib.load(f)
 
     def _resolve(value: str) -> str:
-        if "://" in value or value.startswith("/"):
-            return value
-        return str((p.parent / value).resolve())
+        return _resolved(value, p.parent)
 
-    for section, key in (("weights", "dir"), ("tree", "root"), ("output", "dir")):
-        block = data.get(section)
+    for *sections, key in (
+        ("weights", "dir"),
+        ("tree", "root"),
+        ("output", "dir"),
+        ("stats", "model_weights"),
+        ("stats", "warming_levels", "gmst"),
+    ):
+        block = data
+        for section in sections:
+            block = block.get(section) if isinstance(block, dict) else None
         if isinstance(block, dict) and isinstance(block.get(key), str):
             block[key] = _resolve(block[key])
     return MonteCarloPipelineConfig.model_validate(data)
 
 
+def _resolved(value: str, base: Path) -> str:
+    if "://" in value or value.startswith("/"):
+        return value
+    return str((base / value).resolve())
+
+
+def load_warming_levels(path: str | Path) -> WarmingLevelsConfig:
+    """The ``[stats.warming_levels]`` table of a TOML file, validated,
+    so that a run and a test can read the same settings. A relative
+    ``gmst`` resolves against the file's directory, as in
+    `load_pipeline_config`. Raises if the file has no such table."""
+    p = Path(path).resolve()
+    with p.open("rb") as f:
+        data = tomllib.load(f)
+    warming = data.get("stats", {}).get("warming_levels")
+    if not isinstance(warming, dict):
+        raise ValueError(f"{p} has no [stats.warming_levels] table")
+    if isinstance(warming.get("gmst"), str):
+        warming["gmst"] = _resolved(warming["gmst"], p.parent)
+    return WarmingLevelsConfig.model_validate(warming)
+
+
 @dataclass(frozen=True)
 class Leaf:
-    """One unit of work: level values plus the resolved paths."""
+    """One unit of work, its level values and its resolved paths.
+    ``output_path`` is None when the run writes no leaf file."""
 
     values: tuple[str, ...]
     path: Path
@@ -622,7 +716,8 @@ class Leaf:
 
 @dataclass(frozen=True)
 class PipelinePlan:
-    """What a run would do. Produced by dry run; consumed by execution."""
+    """What a run would do. A dry run returns it, and a run carries it
+    out."""
 
     leaves: list[Leaf]
     missing: list[Leaf]
@@ -663,10 +758,10 @@ class PipelineResult:
 
 
 def resolve_plan(cfg: MonteCarloPipelineConfig, stage: Stage = "all") -> PipelinePlan:
-    """Expand the declared tree into leaves; report missing ones.
-
-    Touches nothing: no directories are created and no files written.
-    """
+    """The plan of a run, with every declared leaf and those missing on
+    disk. Under stage "reduce" a leaf is missing if its leaf file is,
+    and otherwise if its source file or its subtract file is. Nothing is
+    created or written."""
     root = Path(cfg.tree.root)
     out_root = Path(cfg.output.dir)
     value_lists = [cfg.tree.expect[level] for level in cfg.tree.levels]
@@ -740,12 +835,14 @@ def run_pipeline(
     stage: Stage = "all",
     verify_leaves: bool = False,
 ) -> PipelinePlan | PipelineResult:
-    """Run the pipeline, or return the plan untouched when ``dry_run``.
-    ``stage="aggregate"`` writes the leaf files and their manifest and
-    stops, and the result's ``stats`` is then None. ``stage="reduce"``
-    takes the statistics from leaf files written before and opens
-    neither the source tree nor the weights. ``verify_leaves`` makes it
-    hash every leaf file first, which reads all of them."""
+    """The result of a run, or under ``dry_run`` its plan, with nothing
+    written. ``stage="aggregate"`` writes the leaf files and their
+    manifest and stops, and the result's ``stats`` is then None.
+    ``stage="reduce"`` takes the statistics from leaf files written
+    before, never opens the source tree and reads the weights artifact
+    only to hash it. ``verify_leaves`` goes with stage "reduce" alone
+    and hashes every leaf file first, which reads all of them. Outside
+    a dry run, raises if a declared leaf is missing or any leaf fails."""
     _check_stage(cfg, stage)
     if verify_leaves and stage != "reduce":
         raise ValueError(
@@ -908,8 +1005,9 @@ def run_pipeline(
         )
 
     files = {tuple(o["leaf"]): o.pop("leaf_file") for o in outcomes}
+    common = _split_targets(outcomes)
     if leaves_document is not None:
-        _finish_leaves(plan, leaves_document, outcomes, files)
+        _finish_leaves(plan, leaves_document, outcomes, files, common)
         if not by_blocks:
             # the second pass prints it
             print(_unlisted_report(plan.leaves_manifest_path.parent), flush=True)
@@ -957,6 +1055,7 @@ def run_pipeline(
         include_mean=cfg.stats.include_mean,
         weight_col=weight_col,
         include_n_members=cfg.stats.include_n_members,
+        model_dims=cfg.stats.model_dims if cfg.stats.include_n_members else None,
         quantile_method=cfg.stats.quantile_method,
         summation=cfg.stats.summation,
     )
@@ -967,6 +1066,14 @@ def run_pipeline(
     for col in stats.columns:
         if isinstance(stats[col].dtype, pd.CategoricalDtype):
             stats[col] = stats[col].astype(str)
+    targets = None
+    if artifact is not None:
+        stats, targets = _with_shares(
+            stats,
+            list(artifact.schema.id_fields),
+            common,
+            [o["target_coverage"] for o in outcomes],
+        )
     stats = _ordered(stats, cfg)
     _log_memory("after pooled statistics")
 
@@ -1012,9 +1119,11 @@ def run_pipeline(
         "time_reduction": cfg.stats.time_reduction,
         "years": None,
         "warming_levels": None,
+        "target_coverage": targets,
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
+        "model_dims": cfg.stats.model_dims,
         "model_weights_record": _model_weights_record(
             cfg, model_weights, [o["leaf"] for o in outcomes]
         ),
@@ -1037,6 +1146,124 @@ def run_pipeline(
             ),
         },
     )
+
+
+def _leaf_targets(report) -> dict:
+    """What `apply_weights` reported of one leaf's targets, as plain
+    values."""
+    return {
+        "basis": report.basis,
+        "left_out": {
+            reason: [list(key) for key in ids]
+            for reason, ids in report.left_out.items()
+        },
+        "partial": [[list(key), share] for key, share in report.partial],
+    }
+
+
+def _split_targets(outcomes: list[dict]) -> Optional[dict]:
+    """The targets every leaf leaves out, by reason, with the basis the
+    shares are taken against, or None if no leaf was weighted. Each
+    outcome's ``target_coverage`` is rewritten in place to the targets
+    it leaves out that not every leaf does, and its partial ones."""
+    reports = [
+        o["target_coverage"] for o in outcomes if o.get("target_coverage") is not None
+    ]
+    if not reports:
+        return None
+    reasons = list(reports[0]["left_out"])
+    every = {
+        reason: set.intersection(
+            *({tuple(key) for key in report["left_out"][reason]} for report in reports)
+        )
+        for reason in reasons
+    }
+    for outcome in outcomes:
+        report = outcome.get("target_coverage")
+        if report is None:
+            continue
+        outcome["target_coverage"] = {
+            "left_out": {
+                reason: [
+                    list(key)
+                    for key in sorted(
+                        {tuple(k) for k in report["left_out"][reason]} - every[reason]
+                    )
+                ]
+                for reason in reasons
+            },
+            "partial": report["partial"],
+        }
+    return {
+        "basis": reports[0]["basis"],
+        "left_out": {
+            reason: [list(key) for key in sorted(every[reason])] for reason in reasons
+        },
+    }
+
+
+def _with_shares(
+    stats: pd.DataFrame, id_fields: list[str], common: dict, leaves: list[dict]
+) -> tuple[pd.DataFrame, dict]:
+    """``stats`` with the column of the share of each target's weight
+    basis, the smallest any pooled leaf gave it, 1 where none was
+    partial. Also what the manifest says of the targets, those left out
+    of every pooled leaf by reason and the partial ones."""
+    left_out = {}
+    for reason, ids in common["left_out"].items():
+        extra = [{tuple(key) for key in leaf["left_out"][reason]} for leaf in leaves]
+        keys = {tuple(key) for key in ids} | (
+            set.intersection(*extra) if extra else set()
+        )
+        left_out[reason] = {
+            "count": len(keys),
+            "ids": [list(key) for key in sorted(keys)],
+        }
+    smallest: dict[tuple, float] = {}
+    for leaf in leaves:
+        for key, share in leaf["partial"]:
+            key = tuple(key)
+            smallest[key] = min(share, smallest.get(key, share))
+    shares = pd.Series(1.0, index=stats.index, dtype="float64")
+    if smallest:
+        table = pd.DataFrame(
+            [list(key) + [share] for key, share in smallest.items()],
+            columns=id_fields + ["_share"],
+        )
+        for field in id_fields:
+            table[field] = table[field].astype(stats[field].dtype)
+        found = stats[id_fields].merge(table, on=id_fields, how="left")["_share"]
+        shares = pd.Series(found.fillna(1.0).to_numpy(), index=stats.index)
+    stats = stats.copy()
+    stats[SHARE_COLUMN] = shares
+    partial = sorted(smallest.items())
+    return stats, {
+        "basis": common["basis"],
+        "left_out": left_out,
+        "partial": {
+            "count": len(partial),
+            "smallest": min((share for _, share in partial), default=None),
+            "targets": [list(key) + [share] for key, share in partial],
+        },
+    }
+
+
+def _model_dims(
+    cfg: MonteCarloPipelineConfig, reasons: list[str], warming
+) -> list[str]:
+    """The columns the climate models are counted over, none if the
+    statistics carry no counts. Raises if they carry them for ``reasons``
+    and the config names none."""
+    if not (cfg.stats.include_n_members or reasons or warming is not None):
+        return []
+    if cfg.stats.model_dims is None:
+        raise ValueError(
+            f"the statistics carry their counts ({'; '.join(reasons)}), and "
+            f"they are of the samples and of the climate models behind each "
+            f"statistic, so stats.model_dims has to name the sample "
+            f'dimensions of the climate model, such as ["gcm"]'
+        )
+    return list(cfg.stats.model_dims)
 
 
 def _model_weights(cfg: MonteCarloPipelineConfig) -> Optional[ModelWeights]:
@@ -1066,7 +1293,9 @@ def _model_weights_record(
     model_weights: Optional[ModelWeights],
     leaves: list[list[str]],
 ) -> Optional[dict]:
-    """What the leaves were given, not what the config declares."""
+    """The manifest record of the model weights, taken from the members
+    of the pooled leaves and not from the values the config declares.
+    None without model weights."""
     if model_weights is None:
         return None
     level = cfg.tree.levels.index(cfg.stats.model_weight_level)
@@ -1181,8 +1410,9 @@ def _aggregation_identity(
     cfg: MonteCarloPipelineConfig, artifact: WeightsArtifact, sha256: dict
 ) -> dict:
     """What decides the content of an aggregated leaf, apart from the
-    leaf itself. It holds no path. A path says where something was, and
-    the hashes say what it was."""
+    leaf itself. It holds the hashes of the weights artifact and no
+    path."""
+    # A path says where something was, and the hashes say what it was.
     return {
         **_config_identity(cfg),
         "artifact": {
@@ -1285,10 +1515,15 @@ def _begin_leaves(
 
 
 def _finish_leaves(
-    plan: PipelinePlan, document: dict, outcomes: list[dict], files: dict
+    plan: PipelinePlan,
+    document: dict,
+    outcomes: list[dict],
+    files: dict,
+    common: Optional[dict],
 ) -> None:
     """Write the leaves manifest again, complete, with the accounting
-    of every leaf in plan order."""
+    of every leaf in plan order. ``common`` is what `_split_targets`
+    found every leaf shares, and ``outcomes`` hold what each adds."""
     by_leaf = {tuple(o["leaf"]): o for o in outcomes}
     schema = files[plan.leaves[0].values]["schema"]
     profiles: list[dict] = []
@@ -1309,6 +1544,7 @@ def _finish_leaves(
                 "rows_in": outcome["rows_in"],
                 "rows_out": outcome["rows_out"],
                 "coverage": outcome["coverage"],
+                "target_coverage": outcome["target_coverage"],
                 "mass_balance_rel_error": outcome["mass_balance_rel_error"],
                 "size": written["size"],
                 "sha256": written["sha256"],
@@ -1320,6 +1556,7 @@ def _finish_leaves(
         {
             **document,
             "complete": True,
+            "target_coverage": common,
             "leaves": entries,
             "schema": schema,
             "rows_per_group": rows_per_group.tolist(),
@@ -1331,8 +1568,9 @@ def _finish_leaves(
 
 def _load_leaves_document(path: Path) -> tuple[dict, str]:
     """The leaves manifest and the SHA256 of its bytes. Raises if it is
-    missing, which is what a directory of old leaf files looks like, or
-    if the run that wrote it did not finish."""
+    missing, as it is beside leaf files of the old layout, if the run
+    that wrote it did not finish, or if its layout version is not the
+    one this library reads."""
     if not path.exists():
         raise ValueError(
             f"stage 'reduce' reads the leaves manifest {path}, and it is not "
@@ -1413,10 +1651,12 @@ def _reduce_request(
     """The request for the declared leaves, and the reasons, if any, the
     member counts are switched on whatever the config says.
 
-    ``windows_of`` gives a leaf's own windows from its level values. It
-    is the list in ``stats.windows`` for every leaf unless given. With
-    ``warming`` a leaf has the periods in which its member is at a
-    level, each under a label that names the period and the level.
+    ``windows_of`` gives a leaf's own windows from its level values, and
+    every leaf has the spans of `_windows` unless it is given. With
+    ``warming`` it is not used, and a leaf has the periods in which its
+    member is at a level, each under a label that names the period and
+    the level. Raises if a declared leaf is not in the manifest, or a
+    window of a leaf has no row in it.
     """
     time_col = cfg.stats.time_col
     columns = [c["name"] for c in document["schema"]]
@@ -1550,6 +1790,7 @@ def _reduce_request(
         include_n_members=(
             cfg.stats.include_n_members or bool(reasons) or warming is not None
         ),
+        model_dims=tuple(_model_dims(cfg, reasons, warming)),
         quantile_method=cfg.stats.quantile_method,
         summation=cfg.stats.summation,
         time_reduction=cfg.stats.time_reduction,
@@ -1611,41 +1852,15 @@ def _level_windows(cfg: MonteCarloPipelineConfig) -> dict[str, tuple[float, str]
 def _warming_levels(
     cfg: MonteCarloPipelineConfig, plan: PipelinePlan
 ) -> Optional[WarmingLevels]:
-    """The warming level of every member of the temperature table, or
-    None if the config has no warming levels. The table is read here
-    and nowhere else. Raises if a member the tree declares has no row
-    in it, or if no declared member is at any level."""
+    """The warming levels of the members of the tree that join, or None
+    if the config has no warming levels. The table is read here and
+    nowhere else. Raises if a member the tree declares has no row in
+    it, or if no declared member is at any level."""
     warming = cfg.stats.warming_levels
     if warming is None:
         return None
-    table = read_gmst(
-        warming.gmst,
-        member_cols=warming.member,
-        time_col=warming.time_col,
-        value_col=warming.value_col,
-        sep=warming.sep,
-    )
-    levels = assign_warming_levels(
-        table,
-        reference_period=tuple(warming.reference_period),
-        offset=warming.offset,
-        levels=warming.levels,
-        half_width=warming.half_width,
-        periods=[
-            Period(tuple(period.gmst_span), tuple(period.impact_span))
-            for period in warming.periods
-        ],
-        smoothing=warming.smoothing,
-    )
     members = list(dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves))
-    absent = levels.missing(members)
-    if absent:
-        raise ValueError(
-            f"{len(absent)} of the {len(members)} members the tree declares "
-            f"have no row in the temperature table {warming.gmst} (first: "
-            f"{dict(zip(warming.member, absent[0]))}). A name is matched as "
-            f"it is written, so a surrogate needs rows of its own."
-        )
+    levels = warming.assign(warming.read_table(), members)
     if not any(levels.windows_of(member) for member in members):
         raise ValueError(
             f"none of the {len(members)} members the tree declares is at "
@@ -1740,15 +1955,22 @@ def _run_reduce(
     warming=_UNREAD,
     stage: str = "reduce",
 ) -> PipelinePlan | PipelineResult:
-    """Pass 2. The statistics come from leaf files a run of stage
-    'aggregate' or 'all' wrote, checked against their manifest first.
-    The source tree is not opened, and neither is the weights artifact
-    beyond hashing it if it is still there. ``model_weights`` and
-    ``warming`` are the model weights and the warming levels if the
-    caller has read them, and ``stage`` the stage the manifest
-    records."""
+    """The result of taking the statistics from leaf files that a run of
+    stage 'aggregate' or 'all' wrote, checked against their manifest
+    first, or under ``dry_run`` the plan with what the checks found.
+    The source tree is not opened, and the weights artifact is only
+    hashed, if it is still there. ``model_weights`` and ``warming`` are
+    passed when the caller has read them already, and ``stage`` is the
+    stage the manifest records."""
     leaves_dir = plan.leaves_manifest_path.parent
     document, document_sha256 = _load_leaves_document(plan.leaves_manifest_path)
+    if "target_coverage" not in document:
+        raise ValueError(
+            f"the leaves manifest {plan.leaves_manifest_path} was written "
+            f"before each leaf recorded its targets left out and the shares "
+            f"of its partial ones, so the statistics could not say which "
+            f"rest on part of a target. Aggregate the leaves again."
+        )
     notes = _check_identity(cfg, document)
     _check_level_names(cfg.tree.levels, document["targets"]["id_fields"])
     if model_weights is _UNREAD:
@@ -1816,6 +2038,12 @@ def _run_reduce(
         # what the same ids are in a frame of the pipeline's own
         wanted = "string" if column["pandas"] == "string" else pd.Series(["a"]).dtype
         stats[id_field] = stats[id_field].astype(wanted)
+    stats, targets = _with_shares(
+        stats,
+        list(request.id_fields),
+        document["target_coverage"],
+        [entry["target_coverage"] for entry in entries],
+    )
     stats = _ordered(stats, cfg)
     _log_memory("after reduce")
 
@@ -1860,16 +2088,21 @@ def _run_reduce(
         "summation": cfg.stats.summation,
         "time_reduction": cfg.stats.time_reduction,
         "years": list(cfg.stats.years) if cfg.stats.years else None,
+        "target_coverage": targets,
         "warming_levels": (
-            warming.record(
-                dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves)
-            )
+            {
+                **warming.record(
+                    dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves)
+                ),
+                "join": cfg.stats.warming_levels.join,
+            }
             if warming is not None
             else None
         ),
         "reduced": None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
+        "model_dims": cfg.stats.model_dims,
         "model_weights_record": _model_weights_record(
             cfg, model_weights, [entry["leaf"] for entry in entries]
         ),
@@ -1924,9 +2157,11 @@ def _check_level_names(levels: list[str], id_fields: list[str]) -> None:
         "window": "the column of window labels",
         "statistic": "the column of statistic labels",
         "n_members": "the column stats.include_n_members writes",
+        "n_models": "the column of the climate models behind a statistic",
         "n_sample": "the column of pooled rows stats.time_reduction writes",
         "warming_level": "the column of levels [stats.warming_levels] writes",
         "n_bin_members": "the column of members [stats.warming_levels] writes",
+        SHARE_COLUMN: "the column of the share of each target's weight basis",
         "model_weight": "the column the model weights travel in",
         leaf_format.ORDINAL_COLUMN: "the ordinal column of a leaf file",
     }
@@ -1953,9 +2188,12 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
     """``frame`` in the order it is written in. Rows go by the
     statistic as requested, then each tree level by its declared
     values, then the window as configured, or the year ascending when
-    each year is kept, then the target's id fields ascending. Together
-    those name a row, so the order is total and does not depend on the
-    order the leaves were pooled in."""
+    each year is kept, then the other columns ascending in the order of
+    the frame's columns, such as the target's id fields, leaving out the
+    value, the counts, the share and the model weight. Together those
+    name a row, so the order does not depend on the order the leaves
+    were pooled in. Raises if a declared column holds a value the config
+    does not declare."""
     if cfg.stats.time_reduction == "per_year":
         first, last = cfg.stats.years
         time = {cfg.stats.time_col: list(range(first, last + 1))}
@@ -1996,7 +2234,9 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
             cfg.data.value_col,
             "n_members",
             "n_sample",
+            "n_models",
             "n_bin_members",
+            SHARE_COLUMN,
             "model_weight",
         ):
             continue
@@ -2029,8 +2269,9 @@ def _current_rss_gb() -> Optional[float]:
 
 
 def _cgroup_gb() -> Optional[float]:
-    """The job cgroup's memory charge in GB, the number the OOM killer
-    compares against the limit; includes every worker and page cache."""
+    """The memory charged to the job's cgroup in GB, which the OOM
+    killer compares with the limit, or None outside a cgroup. It
+    includes every worker and the page cache."""
     for path in (
         "/sys/fs/cgroup/memory.current",
         "/sys/fs/cgroup/memory/memory.usage_in_bytes",
@@ -2078,7 +2319,9 @@ def _init_worker(
 def _read_leaf(
     path: Path, data_cfg: DataConfig, artifact: Optional["WeightsArtifact"]
 ) -> pd.DataFrame:
-    """Read one leaf in the declared format; no inference from extensions."""
+    """One leaf, read in the declared format whatever its extension.
+    Raises for a NetCDF leaf if the artifact keys its sources by more
+    than one column."""
     if data_cfg.format == "parquet":
         return pd.read_parquet(path)
     if data_cfg.format == "csv":
@@ -2113,12 +2356,12 @@ def _read_leaf(
 def _subtract_leaf(
     frame: pd.DataFrame, path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact"
 ) -> pd.DataFrame:
-    """Difference a second file's values from the first, row for row.
-
-    The effect of climate change in the projection trees is the
-    scenario file minus its histclim sibling; this performs that
-    subtraction before any weighting. The two files must cover the
-    same rows: every key of one present in the other, no duplicates.
+    """``frame`` with the values of the file at ``path`` taken off, row
+    for row, in a float64 value column. In the projection trees this is
+    the scenario file minus its histclim sibling, before any weighting.
+    Raises if the two files differ in columns, if a key repeats in
+    either, or if a row of ``frame`` has no match in the file. Rows of
+    the file with no match in ``frame`` are dropped.
     """
     other = _read_leaf(path, data_cfg, artifact)
     keys = [c for c in frame.columns if c != data_cfg.value_col]
@@ -2142,19 +2385,18 @@ def _subtract_leaf(
 
 
 def _process_leaf(task: tuple) -> dict:
-    """Apply weights to one leaf (unless passthrough), then reduce it
-    to window means unless the stage stops before that. The leaf's
-    level values go on the reduced rows, never on the frame the weights
-    are applied to. An aggregated leaf file has them in its footer and
-    its path, and a passthrough one as columns.
-
-    Returns accounting, never raises. Module-level and tuple-argument so
-    a multiprocessing pool can run it; errors come back as strings so
-    the parent can report a partial run coherently instead of losing the
-    traceback to a worker crash. The optional per-leaf output on disk is
-    the full aggregated frame (years intact); only the in-memory frame
-    handed back for pooling is reduced.
+    """The accounting of one leaf, with the weights applied unless the
+    run is a passthrough, and its window means under "frame" unless
+    the job stops before them. It never raises, and an error comes back
+    as text under "error". A leaf file written here keeps every year,
+    and only the frame handed back is reduced. The level values go on
+    the reduced rows and never on the frame the weights are applied to.
+    An aggregated leaf file has them in its footer and its path, and a
+    passthrough one as columns.
     """
+    # Module-level, with one tuple argument, so that a multiprocessing
+    # pool can run it. An error comes back as text so that the parent can
+    # report a partial run, where a worker crash would lose the traceback.
     leaf, levels, data_cfg, weight, policies, stats_cfg, job = task
     artifact = _WORKER_STATE["artifact"]
     try:
@@ -2180,6 +2422,7 @@ def _process_leaf(task: tuple) -> dict:
             # weights were applied
             out_frame = frame
             coverage = None
+            targets = None
             rel_error = None
         else:
             applied = apply_weights(
@@ -2193,7 +2436,11 @@ def _process_leaf(task: tuple) -> dict:
                 policies=policies,
                 group_col=data_cfg.group_col,
             )
-            out_frame = applied.frame
+            # The shares go on the statistics rows, by target, from what
+            # each leaf reports here. On the leaf they would be one more
+            # column to group by.
+            out_frame = applied.frame.drop(columns=[SHARE_COLUMN])
+            targets = _leaf_targets(applied.targets)
             coverage = applied.coverage.counts
             balance = applied.mass_balance
             rel_error = balance.rel_error if balance is not None else None
@@ -2228,6 +2475,7 @@ def _process_leaf(task: tuple) -> dict:
                 "rows_out": int(len(out_frame)),
                 "rows_reduced": None,
                 "coverage": coverage,
+                "target_coverage": targets,
                 "mass_balance_rel_error": rel_error,
                 "output": str(leaf.output_path),
                 "worker_peak_gb": round(_peak_rss_gb(), 2),
@@ -2280,6 +2528,7 @@ def _process_leaf(task: tuple) -> dict:
             "rows_out": int(len(out_frame)),
             "rows_reduced": int(len(reduced)),
             "coverage": coverage,
+            "target_coverage": targets,
             "mass_balance_rel_error": rel_error,
             "output": str(leaf.output_path) if leaf.output_path else None,
             "worker_peak_gb": round(_peak_rss_gb(), 2),

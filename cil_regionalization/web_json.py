@@ -1,28 +1,19 @@
-"""The Impact Map web document contract.
+"""The gzipped JSON documents the Impact Map front end reads, one per
+product, admin level and scenario.
 
-The front end reads one gzipped JSON document per product, admin level
-and scenario: a metadata block and a data dict keyed by composite GADM
-2.0 unit id. This module owns the envelope -- the rounding rule, the
-gzip framing, the lite subsetting, and the two guards that catch a
-broken document before it reaches Box -- so that every converter
-writing into the published tree agrees on the shape by construction
-rather than by copy-paste.
-
-What is deliberately not here: how a converter builds its composite
-ids. That rule follows the source schema, which differs per product
-(separate ISO / ID_1 / ID_2 columns in the damage statistics parquets,
-a single pipe-joined key in the CMIP6 climate ensemble) and collapses
-to a one-line expression in each converter. Only `ID_SEPARATOR` is
-shared, because the front end's id grammar is shared.
-
-Writes are strictly additive. A publication tree accumulates products
-across runs and its sibling directories are usually live -- they are
-what the next rsync to Box carries -- so nothing here removes,
-truncates or prunes anything other than the single file it was asked
-to write. There is deliberately no "clean the output directory" helper
-in this module, and adding one would be a mistake.
+A document holds a metadata block and a data dict keyed by composite
+GADM 2.0 unit id. This module gives every converter the rounding rule,
+the gzip framing, the lite subsetting, and the checks that stop a
+broken document before it reaches Box. Each converter builds its own
+composite ids, from the columns its source has, joined by
+`ID_SEPARATOR`. Writes only add or replace the one file asked for, and
+nothing here removes, truncates or prunes anything else.
 """
 
+# A publication tree accumulates products across runs, and its sibling
+# directories are usually live, since they are what the next rsync to
+# Box carries. There is no "clean the output directory" helper here on
+# purpose, and adding one would be a mistake.
 from __future__ import annotations
 
 import gzip
@@ -71,14 +62,12 @@ NAMES_OMITTED = (
 
 
 def round_significant(value: float) -> float:
-    """`value` to `SIGNIFICANT_DIGITS`, leaving 0 and non-finite alone.
-
-    Formatted through `%g` rather than `round(value, n)` because the
-    magnitudes inside one document span many orders -- deaths per year
-    runs from fractions to hundreds of thousands across units -- so a
-    fixed number of decimal places would either flatten the small units
-    to zero or keep meaningless digits on the large ones.
-    """
+    """`value` to `SIGNIFICANT_DIGITS`, leaving 0 and non-finite alone."""
+    # `%g` rather than `round(value, n)`, since the magnitudes inside one
+    # document span many orders, and deaths per year run from fractions
+    # to hundreds of thousands across units. A fixed number of decimal
+    # places would flatten the small units to zero or keep meaningless
+    # digits on the large ones.
     if value == 0 or not math.isfinite(value):
         return value
     return float(f"{value:.{SIGNIFICANT_DIGITS}g}")
@@ -87,13 +76,12 @@ def round_significant(value: float) -> float:
 def check_ids_resolve(
     ids: Iterable[str], known: Iterable[str], *, context: str
 ) -> None:
-    """Raise unless every id in `ids` appears in `known`.
-
-    An id the GADM name table does not carry means the converter's id
-    rule and the boundary layer have diverged. Published that way the
-    unit does not error anywhere downstream, it just silently fails to
-    draw, so this stops the run instead of shipping a map with holes.
-    """
+    """Raises unless every id in `ids` appears in `known`, the ids of the
+    GADM 2.0 name table. `context` labels the error."""
+    # An id the name table does not carry means the converter's id rule
+    # and the boundary layer have diverged. Published that way the unit
+    # raises nothing downstream and fails to draw, so this stops the run
+    # instead of shipping a map with holes.
     unknown = sorted(set(ids) - set(known))
     if unknown:
         raise ValueError(
@@ -106,12 +94,10 @@ def check_ids_resolve(
 def check_statistics_available(
     statistics: Iterable[str], available: Iterable[str], *, context: str
 ) -> None:
-    """Raise unless every requested statistic is one the product has.
-
-    Asking for a statistic the product never computed is a silent
-    nothing if it is simply skipped: the lite document comes out short
-    a series and the front end draws an empty layer. Name the gap here.
-    """
+    """Raises unless every requested statistic is one the product has.
+    `context` labels the error."""
+    # A statistic the product never computed, if skipped, leaves the lite
+    # document short a series and the front end draws an empty layer.
     have = set(available)
     missing = [s for s in statistics if s not in have]
     if missing:
@@ -128,16 +114,15 @@ def lite_document(
     *,
     drop_names: bool = False,
 ) -> tuple[dict, dict]:
-    """The same document restricted to `statistics`.
+    """A new (metadata, data) pair of the same document restricted to
+    `statistics`, with the inputs left unchanged.
 
-    Returns a new (metadata, data) pair; the inputs are not mutated, so
-    a caller can write the full document afterwards from the originals.
-
-    `drop_names` additionally omits the per-unit `name` and
-    `country_iso` fields. That saves roughly another sixth of the file
-    but changes the unit shape the front end reads, so it is off by
-    default and the metadata says where the names went.
+    `drop_names` also omits the per-unit `name` and `country_iso`
+    fields, and the metadata's `names` then says where the names went.
+    Raises if a statistic is not one the metadata lists.
     """
+    # drop_names saves roughly another sixth of the file but changes the
+    # unit shape the front end reads, so it is off by default.
     statistics = list(statistics)
     check_statistics_available(
         statistics, metadata["statistics"], context="lite document"
@@ -170,18 +155,17 @@ def lite_document(
 def write_document(
     out_dir: str | Path, filename: str, metadata: Mapping, data: Mapping
 ) -> Path:
-    """Write one gzipped web document and return its path.
+    """Writes one gzipped web document as `filename` in `out_dir` and
+    returns its path.
 
-    Creates `out_dir` if absent and writes exactly one file. Nothing
-    else in the tree is touched: an existing document of the same name
-    is replaced, which makes a rerun idempotent, and every sibling --
-    including other products staged for the same rsync -- is left
-    alone. See the module docstring on why that is a contract and not
-    an accident.
-
-    The separators are compact on purpose. Whitespace is about a tenth
-    of the uncompressed document and survives gzip badly.
+    `out_dir` is created if absent. A document of the same name is
+    replaced, so a rerun gives the same tree, and no other file is
+    touched. The JSON has compact separators.
     """
+    # Every sibling, including other products staged for the same rsync,
+    # is left alone, as the comment at the top of the module says.
+    # Whitespace is about a tenth of the uncompressed document and
+    # survives gzip badly, hence the compact separators.
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     path = out / filename

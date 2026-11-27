@@ -1,9 +1,7 @@
-"""Pipeline layer: named workflows composed from the library core.
+"""Named workflows built from the library core.
 
-The core (geometry, weights, application, statistics) knows nothing
-about file trees, schedulers, or environments. Pipelines add exactly
-that composition: resolve a declared data layout, run the core stages
-per unit of work, and account for every piece. All site-specific facts
-(paths, tree grammars, window bounds, parallelism) arrive through the
-pipeline's own config; none live in code.
+A pipeline resolves a declared layout of data files, runs the core
+stages on each unit of work and accounts for every unit. The paths, the
+layout of the tree, the windows and the parallelism all come from the
+pipeline's own config.
 """

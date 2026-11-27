@@ -50,7 +50,7 @@ own country codes.
 
 ```
 uv sync --extra examples
-FRANCE_GMST=<the temperature table> uv run marimo edit examples/france/france.py
+uv run marimo edit examples/france/france.py
 ```
 
 `python examples/france/france.py` runs it as a script, and
@@ -60,8 +60,9 @@ it reads and writes.
 - `FRANCE_DATA` is the data directory, `examples/france/data` unless set.
 - `FRANCE_OUT` is where the weights, the configs and the pipeline
   outputs go, `examples/france/out` unless set.
-- `FRANCE_GMST` is the temperature table of section 8. Without it that
-  section is skipped and says so.
+- `FRANCE_WARMING` is the warming level settings of section 8, with the
+  temperature table they name, `examples/warming_levels/ar5_cmip5_smme.toml`
+  unless set.
 - `FRANCE_OFFLINE=1` reads the committed France rows of the published
   weights instead of fetching them in section 3.
 
@@ -70,7 +71,7 @@ layout, which the test suite does too.
 
 ```
 python examples/france/synthetic_data.py /tmp/france
-FRANCE_DATA=/tmp/france/data FRANCE_GMST=/tmp/france/gmst.csv \
+FRANCE_DATA=/tmp/france/data FRANCE_WARMING=/tmp/france/warming_levels.toml \
     FRANCE_OFFLINE=1 FRANCE_OUT=/tmp/france/out python examples/france/france.py
 ```
 
@@ -91,9 +92,8 @@ python examples/france/prepare_data.py \
 `data/sources.json` records where each file came from, its terms and
 its SHA256.
 
-The temperature table is not copied into `data/`. It is a derived file
-of the lab, and whether it may be published has not been settled. The
-real run reads it from its path on the cluster through `FRANCE_GMST`.
+The temperature table is the mortality paper's, committed under
+`data/external/` with its source and terms.
 
 ## Sources and terms
 
@@ -107,11 +107,3 @@ real run reads it from its path on the cluster through `FRANCE_GMST`.
 - Published weights: Climate Impact Lab, GADM 2.0 weights,
   doi:10.5281/zenodo.21934155.
 - Mortality projections and SSP3 population: Climate Impact Lab.
-
-## A note on two paths
-
-The pipeline resolves `weights.dir`, `tree.root` and `output.dir`
-against the directory of its config, and `stats.model_weights` and
-`stats.warming_levels.gmst` against the directory it runs in. So the
-notebook writes those two whole, and shows them with the machine's
-directories taken out.

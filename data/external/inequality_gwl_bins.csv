@@ -1,0 +1,71 @@
+# The models at each warming level in the Inequality Paper, as its
+# extraction hardcodes them. Read on 2026-11-26 from the inequality
+# repository, branch elliot_wip at 4dd6b9c,
+# 3_extraction/extract_physical_impacts/inequality_extract_mort_impacts.sh,
+# binlist at line 25 and the case arms over lines 42 to 107. The a and b
+# suffixes there are one level split by rcp, and are merged here. A row
+# is one (gcm, rcp) member. No surrogate appears in any list.
+period,level,rcp,gcm
+2040-2059,1.5,rcp45,GFDL-ESM2G
+2040-2059,1.5,rcp45,GFDL-ESM2M
+2040-2059,1.5,rcp45,inmcm4
+2040-2059,1.5,rcp45,MRI-CGCM3
+2040-2059,1.5,rcp45,NorESM1-M
+2040-2059,1.5,rcp85,inmcm4
+2040-2059,2,rcp45,ACCESS1-0
+2040-2059,2,rcp45,bcc-csm1-1
+2040-2059,2,rcp45,BNU-ESM
+2040-2059,2,rcp45,CCSM4
+2040-2059,2,rcp45,CESM1-BGC
+2040-2059,2,rcp45,CNRM-CM5
+2040-2059,2,rcp45,CSIRO-Mk3-6-0
+2040-2059,2,rcp45,IPSL-CM5A-LR
+2040-2059,2,rcp45,IPSL-CM5A-MR
+2040-2059,2,rcp45,MIROC5
+2040-2059,2,rcp45,MPI-ESM-LR
+2040-2059,2,rcp45,MPI-ESM-MR
+2040-2059,2,rcp85,bcc-csm1-1
+2040-2059,2,rcp85,CNRM-CM5
+2040-2059,2,rcp85,GFDL-ESM2G
+2040-2059,2,rcp85,GFDL-ESM2M
+2040-2059,2,rcp85,MIROC5
+2040-2059,2,rcp85,MPI-ESM-MR
+2040-2059,2,rcp85,MRI-CGCM3
+2040-2059,2,rcp85,NorESM1-M
+2040-2059,3,rcp85,CanESM2
+2040-2059,3,rcp85,GFDL-CM3
+2040-2059,3,rcp85,MIROC-ESM
+2040-2059,3,rcp85,MIROC-ESM-CHEM
+2080-2099,1.5,rcp45,GFDL-ESM2G
+2080-2099,2,rcp45,bcc-csm1-1
+2080-2099,2,rcp45,CESM1-BGC
+2080-2099,2,rcp45,GFDL-ESM2M
+2080-2099,2,rcp45,inmcm4
+2080-2099,2,rcp45,MPI-ESM-LR
+2080-2099,2,rcp45,MRI-CGCM3
+2080-2099,2,rcp45,NorESM1-M
+2080-2099,3,rcp45,ACCESS1-0
+2080-2099,3,rcp45,BNU-ESM
+2080-2099,3,rcp45,CanESM2
+2080-2099,3,rcp45,CSIRO-Mk3-6-0
+2080-2099,3,rcp45,IPSL-CM5A-LR
+2080-2099,3,rcp45,IPSL-CM5A-MR
+2080-2099,3,rcp45,MIROC-ESM
+2080-2099,3,rcp45,MIROC-ESM-CHEM
+2080-2099,3,rcp85,GFDL-ESM2M
+2080-2099,3,rcp85,inmcm4
+2080-2099,4,rcp85,bcc-csm1-1
+2080-2099,4,rcp85,CCSM4
+2080-2099,4,rcp85,CESM1-BGC
+2080-2099,4,rcp85,CNRM-CM5
+2080-2099,4,rcp85,MIROC5
+2080-2099,4,rcp85,MPI-ESM-LR
+2080-2099,4,rcp85,MPI-ESM-MR
+2080-2099,4,rcp85,MRI-CGCM3
+2080-2099,4,rcp85,NorESM1-M
+2080-2099,5,rcp85,BNU-ESM
+2080-2099,5,rcp85,CanESM2
+2080-2099,5,rcp85,GFDL-CM3
+2080-2099,5,rcp85,IPSL-CM5A-LR
+2080-2099,5,rcp85,IPSL-CM5A-MR
+2080-2099,5,rcp85,MIROC-ESM

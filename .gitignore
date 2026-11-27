@@ -254,9 +254,11 @@ Temporary Items
 # legacy reference scripts: env-specific, not pushed
 refs/
 
-# env-specific data (inputs from NFS/GCS, generated outputs).
-# tests/data/ is anchored elsewhere and remains tracked.
-/data/
+# env-specific data (inputs from NFS/GCS, generated outputs), except the
+# reference data under data/external/. tests/data/ is anchored elsewhere
+# and remains tracked.
+/data/*
+!/data/external/
 
 # credentials and secrets
 *-service-account*.json
@@ -276,6 +278,7 @@ service-account.json
 !examples/climate/data/**/*.parquet
 !examples/climate/data/**/*.csv
 !examples/*/data/**/*.csv
+!/data/external/*.csv
 
 # notebook execution artifacts
 .ipynb_checkpoints/

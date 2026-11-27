@@ -1,8 +1,9 @@
-"""Result writers.
+"""Writes a weights result as Parquet, CSV or both, with its JSON
+manifest beside it.
 
-Writes the canonical output frame as Parquet (default), CSV, or both, and
-a JSON manifest sidecar. Local paths and `gs://` URIs are supported; the
-GCS path uses `gcsfs` which is part of the `[bigquery]` extra.
+The output directory is a local path or a `gs://` URI, which needs
+`gcsfs` from the `[bigquery]` extra. A local write records each frame
+file's SHA256 in the manifest, and a `gs://` write records none.
 """
 
 from __future__ import annotations

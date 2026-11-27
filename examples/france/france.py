@@ -45,11 +45,17 @@ def _(Path, mo, os):
     HERE = mo.notebook_dir()
     DATA = Path(os.environ.get("FRANCE_DATA", HERE / "data")).resolve()
     OUT = Path(os.environ.get("FRANCE_OUT", HERE / "out")).resolve()
-    # the paper's temperature table, which this repository does not hold
-    GMST = os.environ.get("FRANCE_GMST")
+    # the warming level settings of the CMIP5 models, unless others are
+    # given, and the temperature table they name
+    WARMING_FILE = Path(
+        os.environ.get(
+            "FRANCE_WARMING",
+            HERE.parents[1] / "warming_levels" / "ar5_cmip5_smme.toml",
+        )
+    ).resolve()
     OFFLINE = os.environ.get("FRANCE_OFFLINE") == "1"
     OUT.mkdir(parents=True, exist_ok=True)
-    return DATA, GMST, HERE, OFFLINE, OUT
+    return DATA, HERE, OFFLINE, OUT, WARMING_FILE
 
 
 @app.cell
@@ -736,10 +742,12 @@ def _(mo):
     `summarize_samples` does both in one call, and the cell checks that
     it gives the same numbers. Here the quantile is the step of the
     historical extraction tool, `quantile_method="lower_step"`, and the
-    means are the vectorised sums, `summation="fast"`, as in the published
-    runs. With the step, a quantile below the first draw's share is
-    `-inf`. `summation="exact"` sums exactly and refuses an infinite
-    statistic.
+    means are the vectorised sums, `summation="fast"`, because that is
+    what the published runs use.
+
+    The step returns `-inf` for a quantile below the first draw's share
+    of the weight, by its definition. A warming level that holds one
+    model has such a 5th percentile.
     """
     )
     return
@@ -994,13 +1002,11 @@ def _(DATA, LEAVES, OUT, relative):
 def _(DATA, OUT, cilreg_cli, mo, pipeline_config, relative, shown, tree_section):
     _deaths = 'format = "parquet"\nvalue_col = "deaths"\nkind = "extensive"\nversion = "world-combo-201710"\n'
     _stats = (
-        'sample_dims = ["batch", "gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\n'
+        'sample_dims = ["batch", "gcm"]\nmodel_dims = ["gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\n'
         'quantile_method = "lower_step"\nsummation = "fast"\n'
     )
-    # the pipeline resolves this path against the directory it runs in,
-    # not the config's, so it is written whole
     _weights = (
-        f'model_weights = "{DATA / "smme" / "rcp85_SMME_weights.tsv"}"\n'
+        f'model_weights = "{relative(DATA / "smme" / "rcp85_SMME_weights.tsv", OUT / "configs")}"\n'
         'model_weight_level = "gcm"\n'
     )
     aggregate_deaths = pipeline_config(
@@ -1105,57 +1111,65 @@ def _(members, mo, plt, products):
 
 
 @app.cell
-def _(mo):
+def _(WARMING, mo):
+    _start, _end = WARMING.reference_period
+    _models = (
+        "every model of the tree joins"
+        if isinstance(WARMING.join, str)
+        else f"the {sum(len(_v) for _v in WARMING.join.values())} models it "
+        "lists join, and every other member is at no level"
+    )
     mo.md(
-        r"""
+        f"""
     ## 8. Warming levels
 
     A warming level product pools the draws by how warm their climate
-    model is in a period, not by the calendar alone. Each member of the
+    model is in a period, not by the calendar alone. The settings are
+    read from `examples/warming_levels/ar5_cmip5_smme.toml` unless
+    `FRANCE_WARMING` names another file, as the synthetic run does, and
+    the README beside it says where each number comes from. Here
+    {_models}. Each member of the
     temperature table, a model under an rcp, has its global mean
-    temperature rebased to its own mean over 1986 to 2005 and raised by
-    0.61, the warming from pre-industrial to that period in AR5 (WG1
-    TS.2.2.1). Its mean over a period then picks its level, which holds a
-    mean from 0.25 below the level to 0.25 above it. The levels are 1.5,
-    2, 3, 4 and 5. In mid century no model reaches 4 or 5, so those come
-    out empty, and the record says so.
+    temperature rebased to its own mean over {_start} to {_end} and
+    raised by {WARMING.offset:g}, the warming from pre-industrial to that
+    period in AR5. Its mean over a period then picks its level, which
+    holds a mean from {WARMING.half_width:g} below the level to
+    {WARMING.half_width:g} above it. The levels are
+    {", ".join(f"{_level:g}" for _level in WARMING.levels)}. In mid
+    century no model reaches 4 or 5, so those come out empty, and the
+    record says so.
 
-    The table is the one the Inequality Paper read, given by
-    `FRANCE_GMST`. It is a derived file of the lab and is not in this
-    repository, so without it this section stops here.
+    The file names the mortality paper's table, which the Inequality
+    Paper read, under `data/external/` of this repository.
     """
     )
     return
 
 
 @app.cell
-def _(GMST, cilreg, mo):
-    mo.stop(
-        GMST is None,
-        mo.md("**`FRANCE_GMST` is not set, so the warming levels are skipped.**"),
-    )
+def _(WARMING_FILE, mo):
+    from cil_regionalization.pipelines.montecarlo import load_warming_levels
+
+    WARMING = load_warming_levels(WARMING_FILE)
+    GMST = WARMING.gmst
     PERIODS = {
-        # the physical products average nineteen years of impacts, as the
-        # extraction tool did, and the valued ones pool twenty
+        # the valued products pool the file's twenty years, and the
+        # physical ones average nineteen years of impacts, as the
+        # extraction tool did
+        "valued": WARMING.periods,
         "physical": [
-            cilreg.Period(gmst_span=(2040, 2059), impact_span=(2040, 2058)),
-            cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2098)),
-        ],
-        "valued": [
-            cilreg.Period(gmst_span=(2040, 2059), impact_span=(2040, 2059)),
-            cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2099)),
+            _period.model_copy(
+                update={
+                    "impact_span": (_period.impact_span[0], _period.impact_span[1] - 1)
+                }
+            )
+            for _period in WARMING.periods
         ],
     }
-    WARMING = dict(
-        reference_period=(1986, 2005),
-        offset=0.61,
-        levels=[1.5, 2.0, 3.0, 4.0, 5.0],
-        half_width=0.25,
-        smoothing="smoothed before it reached the table, how is not recorded",
-    )
-    gmst_table = cilreg.read_gmst(GMST, member_cols=["gcm", "rcp"])
-    warming_levels = cilreg.assign_warming_levels(
-        gmst_table, periods=PERIODS["physical"], **WARMING
+    gmst_table = WARMING.read_table()
+    # every member of the table is declared, and the file says which join
+    warming_levels = WARMING.model_copy(update={"periods": PERIODS["physical"]}).assign(
+        gmst_table, gmst_table.members
     )
     _record = warming_levels.record()
     mo.vstack(
@@ -1171,13 +1185,13 @@ def _(GMST, cilreg, mo):
             mo.md(f"Members at no level in any period: {_record['in_no_bin']}"),
         ]
     )
-    return PERIODS, WARMING, gmst_table, warming_levels
+    return GMST, PERIODS, WARMING, gmst_table, warming_levels
 
 
 @app.cell
 def _(WARMING, gmst_table, plt, warming_levels):
     _fig, _ax = plt.subplots(figsize=(9, 4))
-    _start, _end = WARMING["reference_period"]
+    _start, _end = WARMING.reference_period
     for _member, _series in gmst_table.series().items():
         _years = sorted(_series)
         _reference = sum(_series[_y] for _y in range(_start, _end + 1)) / (
@@ -1185,13 +1199,13 @@ def _(WARMING, gmst_table, plt, warming_levels):
         )
         _ax.plot(
             _years,
-            [_series[_y] - _reference + WARMING["offset"] for _y in _years],
+            [_series[_y] - _reference + WARMING.offset for _y in _years],
             linewidth=0.5,
             color="grey",
         )
-    for _level in WARMING["levels"]:
+    for _level in WARMING.levels:
         _ax.axhspan(
-            _level - WARMING["half_width"], _level + WARMING["half_width"], alpha=0.12
+            _level - WARMING.half_width, _level + WARMING.half_width, alpha=0.12
         )
     for _period in warming_levels.periods:
         _ax.axvspan(*_period.gmst_span, color="tab:orange", alpha=0.1)
@@ -1222,31 +1236,37 @@ def _(
     GMST,
     OUT,
     PERIODS,
-    Path,
     WARMING,
     cilreg_cli,
     mo,
     pipeline_config,
+    relative,
     shown,
     tree_section,
 ):
-    mo.stop(GMST is None)
     _configs = OUT / "configs"
 
     def warming_block(family):
         lines = [
             "",
             "[stats.warming_levels]",
-            # resolved against the directory the pipeline runs in, like
-            # the model weights, so written whole
-            f'gmst = "{Path(GMST).resolve()}"',
-            'member = ["gcm", "rcp"]',
-            f"reference_period = {list(WARMING['reference_period'])}",
-            f"offset = {WARMING['offset']}",
-            f"levels = {WARMING['levels']}",
-            f"half_width = {WARMING['half_width']}",
-            f'smoothing = "{WARMING["smoothing"]}"',
+            f'gmst = "{relative(GMST, _configs)}"',
+            f"member = {WARMING.member!r}".replace("'", '"'),
+            f'time_col = "{WARMING.time_col}"',
+            f'value_col = "{WARMING.value_col}"',
+            f"reference_period = {list(WARMING.reference_period)}",
+            f"offset = {WARMING.offset}",
+            f"levels = {WARMING.levels}",
+            f"half_width = {WARMING.half_width}",
+            f'smoothing = "{WARMING.smoothing}"',
         ]
+        if isinstance(WARMING.join, str):
+            lines.append(f'join = "{WARMING.join}"')
+        else:
+            lines += ["", "[stats.warming_levels.join]"] + [
+                f"{_column} = {_values!r}".replace("'", '"')
+                for _column, _values in WARMING.join.items()
+            ]
         for _period in PERIODS[family]:
             lines += [
                 "",
@@ -1257,7 +1277,7 @@ def _(
         return "\n".join(lines) + "\n"
 
     _both = ["rcp45", "rcp85"]
-    _common = 'sample_dims = ["batch", "rcp", "gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\nsummation = "fast"\n'
+    _common = 'sample_dims = ["batch", "rcp", "gcm"]\nmodel_dims = ["gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\nsummation = "fast"\n'
     aggregate_damages = pipeline_config(
         "damages_aggregate",
         tree=tree_section("damages.parquet", _both),
@@ -1310,7 +1330,6 @@ def _(
 
 @app.cell
 def _(GMST, PIPELINE, WARMING_REDUCES, department_map, mo, pd):
-    mo.stop(GMST is None)
     warming_products = {
         _name: pd.read_parquet(PIPELINE / f"{_name}.parquet")
         for _name in WARMING_REDUCES

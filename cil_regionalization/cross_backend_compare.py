@@ -1,31 +1,22 @@
-"""Cross-backend characterization: local vs BigQuery output.
+"""Compares the canonical `OutputSchema` weights of the local backend
+with those of BigQuery, such as a local run on the GPW GeoTIFF against
+the s51 BigQuery deliverable.
 
-Both backends produce the canonical `OutputSchema`. This module compares
-two such frames; typically a local-backend run on the GPW GeoTIFF
-against the s51 BQ deliverable; and reports the per-region weight
-agreement distribution against `validation.cross_backend_tolerance`
-(default 1e-3).
+The report describes the differences and is not a pass or fail check.
+It gives each region's largest absolute weight difference, with the
+median, 95th percentile and maximum of those over the regions native to
+both, and the regions above ``tolerance``. It also lists the
+mass-displaced regions, whose maximum-weight cell differs between the
+backends, which is the sign of a real spatial disagreement. The default
+``tolerance`` of 1e-3 is that of `validation.cross_backend_tolerance`.
 
-The comparison is a CHARACTERIZATION, not a regression gate. Expected
-small differences:
+Small differences are expected. Areas are geodesic on the ellipsoid
+(pyproj.Geod) locally and spherical in BigQuery (ST_AREA and
+ST_INTERSECTION). The local intersection is planar shapely, which
+differs mostly in boundary cells. Population is a GPW raster sum
+locally and a GPW point sum in BigQuery, on the same pixel footprint.
 
-    - geodesic local (pyproj.Geod, ellipsoid) vs spherical BQ
-      (ST_AREA / ST_INTERSECTION on the sphere);
-    - planar shapely intersection (local) vs spherical BQ; mostly
-      the boundary-cell tail;
-    - GPW raster sum (local) vs GPW point-sum (BQ) on the same pixel
-      footprint.
-
-What the report surfaces:
-
-    - per-region max|delta wt| distribution (median, p95, max) on
-      the both-native subset;
-    - count of regions exceeding `tolerance`; the agreement budget,
-      not a fail trigger;
-    - mass-displaced regions (max-weight cell flipped between
-      backends); the real spatial-disagreement signal.
-
-Run instructions for the RCC use the three-line env::
+On the RCC, run it in this environment::
 
     module load python
     source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
@@ -88,18 +79,19 @@ def compare_outputs(
     weight: str,
     tolerance: float = 1e-3,
 ) -> CrossBackendReport:
-    """Characterize ``weight`` agreement between local and BQ frames.
+    """A `CrossBackendReport` of the agreement in the column ``weight``
+    between a local and a BigQuery weights frame.
 
-    Both inputs must be canonical-schema weights frames (``hierid``,
-    ``cell_ix``, ``cell_iy``, ``<weight>``). Join on the integer
-    cell index triple; exact, no rounding. Regions present in only
-    one frame are counted in `local_only` / `bq_only` and contribute
-    neither to the delta distribution nor the mass-displacement
-    check.
-
-    ``weight`` is the column name (``"popwt"`` or ``"areawt"``), not
-    the bare weight (``"pop"`` / ``"area"``). The frames are the
-    canonical OutputSchema directly; do not pre-translate.
+    Both are canonical OutputSchema frames as written, with
+    ``hierid``, ``cell_ix``, ``cell_iy`` and ``<weight>``, joined
+    exactly on the first three. ``weight`` is the column name
+    (``"popwt"`` or ``"areawt"``), not the bare weight (``"pop"`` /
+    ``"area"``). A region is native to a side when any of its cells has
+    a weight there. A region native to one side only is counted in
+    `n_regions_local_only` or `n_regions_bq_only` and is left out of the
+    differences and the mass-displacement check. Within a region native
+    to both, a cell missing on one side counts as weight 0. Raises if a
+    frame lacks one of the columns.
     """
     for f, label in ((local, "local"), (bq, "bq")):
         missing = set(_JOIN_KEYS) | {weight}
@@ -202,11 +194,9 @@ def compare_outputs(
 
 
 def load_canonical_parquet(path: str | Path) -> pd.DataFrame:
-    """Load a canonical-schema weights parquet from local or `gs://`.
-
-    Both backends write this format (`cil_regionalization.io.write_result`);
-    this helper exists so script and notebook share one loader.
-    """
+    """A canonical weights parquet, as both backends write it with
+    `cil_regionalization.io.write_result`, read from a local path or a
+    `gs://` URI."""
     spath = str(path)
     if spath.startswith("gs://"):
         import gcsfs

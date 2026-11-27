@@ -1,31 +1,19 @@
-"""Grid math: integer cell indices, centroids, polygons, bbox-to-range.
+"""Grid math for cell indices, centroids, cell polygons and the cell
+ranges a bbox covers.
 
-A `GridSpec` is the runtime counterpart of `GridConfig`. It exposes the
-index / centroid / polygon conversions both backends rely on, plus a
-prebuilt loader that validates uniform spacing.
-
-Generate mode
--------------
-Cells are addressed by integer (ix, iy). Centroids follow the formula
+`GridSpec` is the runtime form of `GridConfig`. Cells are addressed by
+integer (ix, iy), and their centroids follow the formula
 
     center offset: centroid = (i + 0.5) * res + origin
     edge   offset: centroid =  i        * res + origin
 
-The cell extent is always centroid +- res/2 in both axes.
+A cell spans its centroid plus or minus res/2 on both axes. The latitude
+origin is -90. The longitude origin is -180 under the "[-180,180)"
+convention and 0 under "[0,360)".
 
-Longitude convention is configurable:
-
-    "[-180,180)" : lon_origin = -180
-    "[0,360)"    : lon_origin =    0
-
-Latitude origin is always -90.
-
-Antimeridian rule
------------------
-Cells never wrap. A region whose bbox crosses 0/360 (or -180/180) must be
-split by the caller into two bboxes; querying with such a bbox returns the
-cells inside the global domain only, with no implicit wrap-around. This
-keeps every (ix, iy) globally unique and makes the BigQuery side trivial.
+Cells never wrap across the edge of the longitude domain. A bbox that
+crosses it must be split in two by the caller, and an unsplit one gives
+only the cells inside the domain.
 """
 
 from __future__ import annotations
@@ -62,10 +50,10 @@ def _lon_origin(convention: str) -> float:
 
 @dataclass(frozen=True)
 class GridSpec:
-    """Validated grid description; index math derives from these fields alone.
-
-    Construct via `GridSpec.from_config(grid_config)`. The dataclass is frozen
-    so caching by identity / hashing works for downstream partitioning.
+    """A validated grid, frozen and hashable, from which all the index math
+    follows. Build it with `GridSpec.from_config` or
+    `GridSpec.from_source_version`. A prebuilt grid has a NaN resolution and
+    cell counts of -1.
     """
 
     mode: str
@@ -80,12 +68,10 @@ class GridSpec:
 
     @property
     def source_version(self) -> str:
-        """The grid's identity as a source version string.
-
-        A grid is fully described by its resolution, offset and
-        longitude convention, so those are the version: data built on
-        the same grid states the same string and the application-time
-        version check compares them, exactly as polygon versions do.
+        """The grid's identity as a source version string, such as
+        ``grid-0.25deg-center-[-180,180)``, made of its resolution, offset
+        and longitude convention. Version checks compare these strings
+        exactly, as they do polygon versions.
         """
         return f"grid-{self.resolution}deg-{self.offset}-{self.lon_convention}"
 
@@ -132,7 +118,8 @@ class GridSpec:
         ``grid-0.25deg-center-[-180,180)``. Any other spelling raises,
         including one that names the same grid differently
         (``grid-.25deg-...``), since versions are compared as exact
-        strings.
+        strings. Raises also when the resolution does not tile the globe
+        evenly.
         """
         m = GRID_SOURCE_PATTERN.match(source)
         if m is None:
@@ -172,11 +159,9 @@ class GridSpec:
         return _LAT_ORIGIN, _LAT_ORIGIN + _LAT_SPAN
 
     def centroid(self, ix, iy):
-        """Return (lon, lat) of the cell centroid(s). Vectorised.
-
-        Accepts scalars or arrays. No bounds-checking; passing ix outside
-        [0, n_ix) is the caller's responsibility (the result is still
-        mathematically well-defined).
+        """The (lon, lat) centroid of each cell in degrees, for scalar or
+        array indices. Indices outside the grid are not checked and give
+        centroids beyond the domain.
         """
         ix_a = np.asarray(ix)
         iy_a = np.asarray(iy)
@@ -186,11 +171,10 @@ class GridSpec:
         return lon, lat
 
     def index_of(self, lon, lat):
-        """Return integer (ix, iy) cells containing (lon, lat). Vectorised.
-
-        Uses floor((coord - origin)/res + index_half). At exact cell
-        boundaries the upper cell is chosen, matching the half-open
-        [low, high) extent convention.
+        """The integer (ix, iy) of the cell holding each (lon, lat), for
+        scalars or arrays. A point on a cell boundary goes to the upper
+        cell, since a cell spans [low, high). Points outside the domain are
+        neither wrapped nor checked.
         """
         lon_a = np.asarray(lon, dtype=float)
         lat_a = np.asarray(lat, dtype=float)
@@ -211,7 +195,8 @@ class GridSpec:
         )
 
     def cell_polygons(self, ix, iy) -> np.ndarray:
-        """Vectorised cell polygon construction; returns an object ndarray."""
+        """Shapely polygons for many cells at once, in lon/lat degrees, as an
+        object ndarray."""
         ix_a = np.asarray(ix, dtype=np.int64)
         iy_a = np.asarray(iy, dtype=np.int64)
         lon_c, lat_c = self.centroid(ix_a, iy_a)
@@ -226,11 +211,11 @@ class GridSpec:
         maxx: float,
         maxy: float,
     ) -> Tuple[range, range]:
-        """Inclusive ranges of (ix, iy) covering [minx,maxx] x [miny,maxy].
-
-        Clipped to the global grid domain; never wraps the antimeridian. Some
-        cells touching only the bbox boundary may be included (the downstream
-        intersection test filters zero-overlap cells, so this is harmless).
+        """The ``range`` of ix and of iy covering [minx, maxx] x [miny, maxy],
+        clipped to the grid domain and never wrapped. Cells that only touch
+        the bbox edge may be included. A bbox wholly outside the domain
+        gives two empty ranges. Raises if maxx is below minx or maxy below
+        miny.
         """
         if maxx < minx or maxy < miny:
             raise ValueError(
@@ -262,11 +247,10 @@ class GridSpec:
 
 
 def infer_uniform_resolution(coords: Iterable[float], tol: float = 1e-9) -> float:
-    """Return the constant step size in `coords` (assumed sorted, unique).
-
-    Raises ValueError if the steps are not uniform within `tol`. Used by the
-    prebuilt-grid loader to validate that the user-supplied cell coordinates
-    are on a regular grid.
+    """The constant step between neighbouring values of `coords`, which must
+    be sorted and unique. Raises if there are fewer than two values, if the
+    first step is not positive, or if any step differs from the first by
+    more than `tol`.
     """
     arr = np.asarray(list(coords), dtype=float)
     if arr.size < 2:
@@ -303,17 +287,16 @@ class AmbiguousLongitudeConvention(ValueError):
 
 
 def _spacing(coords: np.ndarray) -> float:
-    """Gap between neighbouring representable values at the largest coordinate."""
+    """The gap between neighbouring values of the coordinates' dtype at the
+    coordinate largest in magnitude."""
     top = coords[np.argmax(np.abs(coords))]
     return float(np.spacing(np.abs(top)))
 
 
 def _shortest_decimal(x: float, tol: float) -> float:
-    """The shortest decimal within ``tol`` of ``x``.
-
-    A float32 file stores 0.1 as 0.10000000149 and its steps wobble by
-    the coordinate spacing, so the step is snapped to the fewest digits
-    that stay inside the tolerance: 0.100006 becomes 0.1, 0.25 stays.
+    """``x`` rounded to the fewest decimal digits that keep it within
+    ``tol``, or ``x`` itself when nine digits are not enough. A float32
+    step of 0.10000000149 becomes 0.1, and 0.25 stays 0.25.
     """
     for digits in range(0, 10):
         r = round(x, digits)
@@ -323,13 +306,12 @@ def _shortest_decimal(x: float, tol: float) -> float:
 
 
 def coordinate_tolerance(coords: np.ndarray, resolution: float) -> float:
-    """How far a stored coordinate may sit from its cell centre.
-
-    1e-6 of a cell, or twice the spacing of the coordinate's own dtype
-    if that is larger: a float32 longitude near 180 cannot be closer to
-    a 0.1 degree centre than about 1e-5. Raises when the dtype is so
-    coarse that the tolerance passes one percent of a cell, since a
-    check that loose no longer separates neighbouring grids.
+    """How far a stored coordinate may sit from its cell centre, in
+    degrees. It is 1e-6 of a cell, or twice the spacing of the coordinates'
+    own dtype at their largest magnitude if that is larger, as it is for
+    float32 longitudes. Raises when the tolerance passes one
+    percent of a cell, since a check that loose no longer tells
+    neighbouring grids apart.
     """
     tol = max(1e-6 * resolution, 2.0 * _spacing(coords))
     if tol > 0.01 * resolution:
@@ -342,25 +324,24 @@ def coordinate_tolerance(coords: np.ndarray, resolution: float) -> float:
 
 
 def infer_grid_version(lat, lon) -> str:
-    """The grid identity a file's 1-D latitudes and longitudes sit on.
+    """The grid identity a file's 1-D latitudes and longitudes sit on,
+    such as ``grid-0.25deg-center-[-180,180)``.
 
-    The resolution is the constant step between neighbours (either
-    direction), snapped so a float32 file
-    gives 0.1, not 0.10000000149 (the shortest decimal within the
-    coordinates' own precision). Centre or edge comes from where the
-    coordinates fall against the -90 and longitude origins, and the two
+    The resolution is the constant step between neighbours in either
+    direction, snapped to the shortest decimal within the coordinates' own
+    precision, so a float32 file gives 0.1 and not 0.10000000149. Latitude
+    and longitude must have the same step. Centre or edge comes from where
+    the coordinates fall against the -90 and longitude origins, and the two
     axes must agree. The longitude convention is [0,360) when any value
-    exceeds 180 and [-180,180) when any is negative. A file with
-    longitudes only in [0,180] fits both, so this raises
-    `AmbiguousLongitudeConvention`, which carries both identities, and
-    the caller must pick one.
+    exceeds 180 and [-180,180) when any is negative. Longitudes only in
+    [0,180] fit both, so this raises `AmbiguousLongitudeConvention`, which
+    carries both identities for the caller to pick from.
 
-    Latitude and longitude steps must be equal. The identity string
-    holds one resolution, so unequal steps raise.
-
-    Raises when the steps are not uniform, there are fewer than two
-    values on an axis, or the coordinates fit no grid. It does not
-    check the result against the coordinates; `cell_indices` does.
+    Raises when an axis has fewer than two values or a value that is not
+    finite, when the steps are not uniform or differ between the axes, when
+    the dtype is too coarse to place the coordinates, or when the
+    coordinates fit no grid. The result is not checked against the
+    coordinates. `cell_indices` does that.
     """
     lat = np.asarray(lat)
     lon = np.asarray(lon)
@@ -436,15 +417,15 @@ def infer_grid_version(lat, lon) -> str:
 
 
 def cell_indices(spec: GridSpec, values, axis: str, *, tol: float | None = None):
-    """Integer cell index along one axis for 1-D cell-centre coordinates.
+    """The integer cell index along one axis of each 1-D cell-centre
+    coordinate. ``axis`` is "lon" or "lat", and longitudes are first
+    wrapped into the grid's convention.
 
-    ``axis`` is "lon" or "lat". Longitudes are wrapped into the grid's
-    convention first. Each index is mapped back to its centroid, and
-    every value must match that centroid within ``tol`` (default 1e-6
-    of a cell) and fall inside the grid; a miss raises with the first
-    offending values. That round trip is what catches coordinates built
-    on another origin, or given as cell edges where the grid has
-    centres.
+    Every value must be finite, fall inside the grid and lie within ``tol``
+    of its cell's centroid, 1e-6 of a cell by default. Raises with the
+    first offending values otherwise, which catches coordinates on another
+    origin and cell edges given where the grid has centres. Raises also on
+    any other ``axis``.
     """
     given = np.asarray(values, dtype="float64")
     if axis == "lon":

@@ -2,6 +2,82 @@
 
 ## Unreleased
 
+The documentation of `quantile_method` says which value estimates a
+quantile. `"inverted_cdf"` is the estimator and returns a value a
+member has. `"linear"` interpolates and can return a number no member
+holds. `"lower_step"` reproduces the historical extraction tool, one
+member below `"inverted_cdf"`, and is biased low.
+
+New: `fetch_model_weights(rcp)` gives the published climate model
+weights of an rcp from their Zenodo record, checked and cached, so
+products stop reading the table from paths of their own. New:
+`regroup` takes a reduced frame to coarser targets, a sum or a mean
+weighted by `target_basis`, before the statistics are pooled, as the
+country files are made from the states.
+
+**Where the statistics carry their counts they carry two, the samples
+behind a row in `n_members` and the climate models among them in
+`n_models`.** A warming level bin of four models over fifteen batches
+holds 60 samples, and the file now says both. `n_models` is the
+distinct values of `model_dims`, which `summarize_samples` and
+`pooled_statistics` take beside `include_n_members` and a pipeline
+config sets as `stats.model_dims`. It has no default and is required
+wherever counts are written, warming levels and a reduce of fewer
+leaves than were aggregated among them.
+
+The mortality paper's temperature table and the Inequality Paper's bins
+are under `data/external/`. The warming level settings of the CMIP5
+models are `examples/warming_levels/ar5_cmip5_smme.toml`, with a README
+that says where each number comes from. The test of the paper's bins
+and the France example both read that file, and `load_warming_levels`
+reads such a file on its own. The example's section 8 reads it unless
+`FRANCE_WARMING` names another, and always runs.
+
+**A run declares which members join a warming level, and nothing in
+the library reads a member's name.** `assign_warming_levels` takes
+`members`, the members that join, with no default, and
+`[stats.warming_levels]` takes `join`, `"declared"` for every member
+the tree declares or a table of member columns to the values that
+join, also with no default. `members_that_join` turns one into the
+other. A member of the table that does not join is at no level, and
+the record lists it under `excluded` with the reason. A value listed
+to join that no member of the tree holds is refused by name, and so
+are a member that joins with no row or short of a year, and a member
+the tree declares with no row. A member of the table with no values
+that does not join no longer stops a run.
+
+**An infinite member value is refused under every quantile method and
+`summation`, and a statistic is refused when it comes out infinite,
+other than the `-inf` of `"lower_step"` at or below its first step,
+which is now written under either sum.** Before, `summation="exact"`
+and `"inverted_cdf"` refused every infinite statistic, the step's
+`-inf` among them, while `"linear"` and `"lower_step"` with the fast
+sum returned infinities that came from the data. `summation` now says
+how a mean is summed and nothing else. `window_means` refuses an
+infinite value in a window, where it passed an infinite mean on.
+
+**Every row `apply_weights` returns carries `weight_share`, the share
+of its target's weight basis behind the value, and the targets the
+weights have that are not in the output are listed with their reason
+in `AppliedResult.targets`.** Before, a target with no weight, such as
+a unit with no crop area for a crop, was absent from the output with
+nothing saying so, and a target short of a source region was averaged
+over what it had with nothing on the row. A pipeline statistics file
+has the column too, and its manifest and the leaves manifest list the
+targets under `target_coverage`. A leaves manifest written before is
+not reduced, and its leaves have to be aggregated again. A target whose
+rows all have a weight of zero is now left out for "no weight", where
+it came out as NaN. An extensive sum over no value is NaN, where it was
+0. The warning for skipped source units said they were recorded in the
+manifest, and `apply_weights` is given none. It now says they are in
+the coverage of the result.
+
+**`stats.model_weights` and `stats.warming_levels.gmst` given as
+relative paths now resolve against the directory of the pipeline
+config, as `weights.dir`, `tree.root` and `output.dir` do.** They
+resolved against the directory the run was started in, so a config
+that relied on that has to give the path from its own directory.
+
 **The rows of a pipeline statistics file, and of the reduced file,
 come in a new order. No value changed.** **`quantile_method` and
 `summation` are new, have no default, and have to be given: in every
@@ -373,8 +449,8 @@ its warming level in a calendar period.
   periods and a statement of how the series was smoothed have no
   default, and a call without one of them fails. A period carries the
   years the temperature is averaged over and the years of the impacts
-  separately. Nothing is smoothed. Names are matched as written, so a
-  surrogate needs its own rows. `WarmingLevels.record` is the manifest
+  separately. Nothing is smoothed. Names are matched as written.
+  `WarmingLevels.record` is the manifest
   entry: the table's hash, every setting, each member's mean and level,
   the count at each declared level and the members with none. The
   pipeline does not use any of this yet.

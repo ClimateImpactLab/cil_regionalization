@@ -1,34 +1,23 @@
 """Region loading and geometry preparation.
 
-`RegionSet` carries the regions used in a run. Two modes:
-
-    local : geometries are read into a GeoDataFrame from a shapefile or
-            GeoParquet. Filters and the invalid-geometry policy are applied
-            up front so downstream code sees a clean frame.
-    bigquery : only the table id is held; the BigQuery backend joins
-               against this table in SQL without round-tripping geometries
-               through pandas.
-
-The same `RegionSet` API serves both: `is_local`, `table`, `iter_regions`,
-`__len__`. The BQ-only constructor refuses iteration since it has no
-geometries to hand out.
-
-One version's id regularities, recorded, not relied on
-------------------------------------------------------
-Region ids are opaque join keys; nothing in the package parses their
-structure, and a test enforces that. What follows is a measured profile
-of the world-combo-201710 impact region version, kept for humans who
-need to reason about that version's names, with no conclusions encoded
-in code. Its ids mix three shapes: bare ISO3 codes for countries
-carried as a single region (Aruba is one), dotted hierarchical codes
-for admin subdivisions, and R-suffixed clustering remainders (Andorra's
-single region is one) that already break clean hierarchy semantics.
-Measured on the BigQuery geometries table for that version: no country
-prefix has both a bare-country row and child rows, which is the one
-fact that made prefix-level rollups safe there. That regularity is a
-property of one version, never a contract; the next version may break
-it silently, which is exactly why the package treats ids as opaque.
+A `RegionSet` holds the regions of a run in one of two modes. In local
+mode the geometries are read from a shapefile or GeoParquet into a
+GeoDataFrame, with the filters and the invalid-geometry policy applied
+up front. In BigQuery mode only the table id is held, and the BigQuery
+backend joins against the table in SQL. Both have `is_local`, `table`,
+`iter_regions` and `len`, and the last two raise in BigQuery mode.
+Region ids are opaque join keys, and nothing in the package parses
+them.
 """
+
+# A profile of the world-combo-201710 impact region ids, for people
+# reasoning about that version's names. Nothing in code relies on it.
+# The ids mix bare ISO3 codes for countries carried as a single region
+# (Aruba), dotted codes for admin subdivisions and R-suffixed clustering
+# remainders (Andorra). On that version's BigQuery geometries table no
+# country prefix has both a bare-country row and child rows, which made
+# prefix rollups safe there. That is a property of one version that the
+# next may break silently, which is why ids are treated as opaque.
 
 from __future__ import annotations
 
@@ -127,11 +116,14 @@ class RegionSet:
 def _read_regions(source: str | Path) -> gpd.GeoDataFrame:
     """Read regions from a local path or a `gs://` URI.
 
-    Local: pyogrio reads shapefiles in place; `gpd.read_parquet` for
-    parquet. Remote: shapefile companions are streamed via gcsfs into a
-    temp dir and read locally (GDAL/`/vsigs/` needs explicit credentials
-    which pyogrio's default config doesn't pick up from ADC).
+    A ``.parquet`` or ``.geoparquet`` file is read with `gpd.read_parquet`
+    and anything else with `gpd.read_file`. A remote shapefile and its
+    companions are copied to a temporary directory and read there. Raises
+    `FileNotFoundError` if a local path does not exist.
     """
+    # A remote shapefile is staged locally because GDAL's `/vsigs/` needs
+    # explicit credentials, which pyogrio's default config does not pick
+    # up from ADC.
     source_str = str(source)
     if source_str.startswith("gs://"):
         return _read_remote_regions(source_str)
@@ -184,9 +176,10 @@ def _apply_filters(
     keep: dict[str, list[Any]] | None,
     drop: dict[str, list[Any]] | None,
 ) -> tuple[gpd.GeoDataFrame, dict[str, list[str]], dict[str, list[str]]]:
-    """Apply keep, then drop. Returns ``(gdf, unknown_keep, unknown_drop)``:
-    per filter column, the listed values that match no row of ``gdf`` as
-    passed in. Columns with no such value are left out."""
+    """Apply keep, then drop. Returns ``(gdf, unknown_keep, unknown_drop)``,
+    the filtered frame and, per filter column, the listed values that
+    match no row of ``gdf`` as passed in. Columns with no such value are
+    left out. Raises if a filter names a column ``gdf`` does not have."""
     full = gdf
     unknown_keep: dict[str, list[str]] = {}
     unknown_drop: dict[str, list[str]] = {}
@@ -221,7 +214,9 @@ def _handle_invalid_geometries(
     policy: InvalidGeomPolicy,
     id_fields: list[str],
 ) -> tuple[gpd.GeoDataFrame, list[dict[str, Any]]]:
-    """Apply the invalid-geometry policy. Returns ``(gdf, repaired_ids)``."""
+    """Apply the invalid-geometry policy. Returns ``(gdf, bad_ids)``, the
+    ids of the invalid geometries whether they were repaired or skipped.
+    Raises under "error" if any geometry is invalid."""
     invalid_mask = ~gdf.geometry.is_valid
     n_invalid = int(invalid_mask.sum())
     if n_invalid == 0:

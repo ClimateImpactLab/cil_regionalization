@@ -1,10 +1,11 @@
 """Writes a small synthetic stand-in for data/, laid out as
 prepare_data.py lays out the real one, and a synthetic temperature
-table beside it. The test suite runs the notebook on it, and so can a
-reader without the cluster.
+table beside it with the warming level settings over it. The test suite
+runs the notebook on it, and so can a reader without the cluster.
 
     python examples/france/synthetic_data.py <directory>
-    FRANCE_DATA=<directory>/data FRANCE_GMST=<directory>/gmst.csv \\
+    FRANCE_DATA=<directory>/data \\
+        FRANCE_WARMING=<directory>/warming_levels.toml \\
         python examples/france/france.py
 
 Nothing in it is real. Twenty four impact regions cover two regions
@@ -15,6 +16,7 @@ in two.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -28,7 +30,11 @@ from shapely.geometry import box
 # more batches than the real sample, so that a 5th percentile has more
 # than twenty draws under it
 BATCHES = [f"batch{i}" for i in range(6)]
-GCMS = ["CCSM4", "GFDL-CM3", "MIROC5", "surrogate_GFDL-CM3_89"]
+# the models that join a warming level, and a surrogate that does not
+MODELS = ["CCSM4", "GFDL-CM3", "MIROC5"]
+GCMS = [*MODELS, "surrogate_GFDL-CM3_89"]
+# the settings the synthetic ones take theirs from
+AR5 = Path(__file__).resolve().parents[1] / "warming_levels" / "ar5_cmip5_smme.toml"
 # as in the real tree, one surrogate exists under rcp85 alone
 MISSING = {("rcp45", "surrogate_GFDL-CM3_89")}
 YEARS = range(2020, 2100)
@@ -245,9 +251,41 @@ def _write_gmst(path: Path) -> None:
     pd.DataFrame(rows, columns=["gcm", "rcp", "year", "temp"]).to_csv(path, index=False)
 
 
+def _write_warming_levels(path: Path, gmst: Path) -> None:
+    """The settings of ``AR5`` over the synthetic table, which only
+    ``MODELS`` join."""
+    from cil_regionalization.pipelines.montecarlo import load_warming_levels
+
+    ar5 = load_warming_levels(AR5)
+    lines = [
+        "[stats.warming_levels]",
+        f"gmst = {json.dumps(gmst.name)}",
+        f"member = {json.dumps(ar5.member)}",
+        f"time_col = {json.dumps(ar5.time_col)}",
+        f"value_col = {json.dumps(ar5.value_col)}",
+        'smoothing = "synthetic, not smoothed"',
+        f"reference_period = {json.dumps(list(ar5.reference_period))}",
+        f"offset = {ar5.offset!r}",
+        f"levels = {json.dumps(ar5.levels)}",
+        f"half_width = {ar5.half_width!r}",
+        "",
+        "[stats.warming_levels.join]",
+        f"gcm = {json.dumps(MODELS)}",
+    ]
+    for period in ar5.periods:
+        lines += [
+            "",
+            "[[stats.warming_levels.periods]]",
+            f"gmst_span = {json.dumps(list(period.gmst_span))}",
+            f"impact_span = {json.dumps(list(period.impact_span))}",
+        ]
+    path.write_text("\n".join(lines) + "\n")
+
+
 def write(directory: str | Path) -> tuple[Path, Path]:
-    """Write ``directory/data`` and ``directory/gmst.csv`` and return
-    the two paths."""
+    """Write ``directory/data``, ``directory/gmst.csv`` and
+    ``directory/warming_levels.toml``, and return the data directory and
+    the settings."""
     directory = Path(directory)
     data = directory / "data"
     work = directory / "work"
@@ -259,9 +297,10 @@ def write(directory: str | Path) -> tuple[Path, Path]:
     _write_smme(data)
     _write_published(data, work)
     _write_gmst(directory / "gmst.csv")
-    return data, directory / "gmst.csv"
+    _write_warming_levels(directory / "warming_levels.toml", directory / "gmst.csv")
+    return data, directory / "warming_levels.toml"
 
 
 if __name__ == "__main__":
-    data, gmst = write(sys.argv[1])
-    print(f"wrote {data} and {gmst}")
+    data, warming = write(sys.argv[1])
+    print(f"wrote {data} and {warming}")

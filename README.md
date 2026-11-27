@@ -154,6 +154,29 @@ to hit its worst draw together. The pipeline aggregates each Monte
 Carlo draw separately, takes quantiles at the end, and rejects input
 that already contains quantiles.
 
+## What the output says about its targets
+
+Every row `apply_weights` returns carries `weight_share`, the share of
+its target's weight basis behind the value. The basis is the raw column
+of the weight in the file, the population or the crop area of each
+piece of the target. A row is 1.0 when every piece with basis had a
+value, and below 1.0 when a source region was missing from the data or
+had no value there. A piece with no crop area carries no basis, so a
+unit whose corn is all in some of its regions is whole. A filter on the
+column keeps the partial targets out.
+
+A target the weights have and the output lacks is listed in
+`AppliedResult.targets` with its reason. "no weight" is a target none of
+whose pieces has a weight, a unit with no crop area for that crop.
+"no data" is one whose weighted regions are none of them in the data.
+`apply_weights` logs how many of each it found.
+
+A pipeline run writes `weight_share` on every row of its statistics,
+the smallest share any pooled leaf gave the target. Its manifest lists
+under `target_coverage` the targets left out of every pooled leaf, by
+reason, and the partial ones with their shares. The leaves manifest
+records the same for each leaf.
+
 ## Choosing the right type of weights
 
 Ask one question: does adding your variable across regions produce a
@@ -198,18 +221,15 @@ results from these projections.
 
 The weight files are published as their own Zenodo record
 (doi:10.5281/zenodo.22003542), one per RCP (`rcp45_SMME_weights.tsv`,
-`rcp85_SMME_weights.tsv`; columns `quantile`, `model`, `weight`). To
-apply them, normalize the model names and merge the weight onto every
-draw of each model, so the weight repeats across batches:
+`rcp85_SMME_weights.tsv`; columns `quantile`, `model`, `weight`).
+`fetch_model_weights` downloads the table of an rcp from that record,
+checks it against the md5 the record declares, and caches it, so every
+product reads the same table. `attach` gives every draw the weight of
+its model, so the weight repeats across batches:
 
 ```python
-w = pd.read_csv(
-    "https://zenodo.org/records/22003542/files/rcp85_SMME_weights.tsv?download=1",
-    sep="\t",
-)[["model", "weight"]]
-w["key"] = w["model"].str.replace("*", "", regex=False).str.lower()
-draws["key"] = draws["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-draws = draws.merge(w[["key", "weight"]], on="key").drop(columns="key")
+weights = cilreg.fetch_model_weights("rcp85")
+draws["weight"] = weights.attach(draws["gcm"])
 stats = cilreg.summarize_samples(
     draws,
     sample_dims=["batch", "gcm"],
@@ -256,27 +276,30 @@ dimension named `gcm` without weights warns once; filter
 `quantile_method` says how a quantile is computed, by the name of
 the computation:
 
-- `"linear"` interpolates between members. It is computed by numpy,
-  so it is `numpy.quantile(method="linear")` and xarray's `.quantile`
-  to the last bit. It has no weighted form and is refused with
-  weights. Where numpy's interpolation meets an infinite member it
-  gives NaN, even for a median of 1, 2 and an infinity, and such a
-  quantile is refused rather than written as a group with no value.
-- `"lower_step"` is the step of the historical extraction tool: the
-  member one below the one whose cumulative weight share reaches q.
-  Without weights every member counts the same, which is what that
-  tool did when it was told to use no model weights. A quantile below
-  the first step is `-inf`, and the value of a member with weight zero
+- `"inverted_cdf"` is the estimator of a quantile, the standard
+  inverse of the empirical distribution (Hyndman and Fan type 1), the
+  smallest member value whose cumulative weight share reaches q. It is
+  the same with or without weights, always returns the value of a
+  member, and never that of a member whose weight is zero.
+- `"linear"` interpolates between two members, so it can return a
+  number no member holds. It is computed by numpy, so it is
+  `numpy.quantile(method="linear")` and xarray's `.quantile` to the
+  last bit. It has no weighted form and is refused with weights.
+- `"lower_step"` is for reproducing the historical extraction tool,
+  not for estimating a quantile. It returns the member one below the
+  one `"inverted_cdf"` returns, so it is biased low at every quantile,
+  except the median of members that count equally. Without weights
+  every member counts the same, which is what that tool did when it
+  was told to use no model weights. A quantile at or below the first
+  member's share is `-inf`, and the value of a member with weight zero
   can come back.
-- `"inverted_cdf"` is the standard inverse of the empirical
-  distribution (Hyndman and Fan type 1), the smallest member value
-  whose cumulative weight share reaches q. It is the same with or
-  without weights, never returns `-inf`, and never returns the value
-  of a member whose weight is zero.
+
+The names say what each computes, so pick by that, not by the name.
 
 With four members that count equally the three give three different
-95th percentiles: the third member, a value between the third and the
-fourth, and the fourth.
+95th percentiles. `"inverted_cdf"` gives the fourth member, `"linear"`
+a value between the third and the fourth, and `"lower_step"` the
+third.
 
 `summation` says how a mean is summed:
 
@@ -294,14 +317,58 @@ fourth, and the fourth.
 Neither option has a default. `summarize_samples` and
 `pooled_statistics` take both, `window_means` takes `summation`, and a
 pipeline config sets them under `[stats]`. The manifest records both.
-Under `"inverted_cdf"` or `"exact"` a statistic that comes out
-infinite raises instead of being returned; NaN does not.
+`summation` says how a mean is summed and decides nothing else.
+
+An infinite member value is refused under every quantile method and
+sum, naming where it is, because an infinity in impact data means
+something upstream broke. A value in a year no window covers is not
+looked at. The one infinity a statistic can have is the `-inf` of
+`"lower_step"` at or below its first step, which it is by definition:
+with equal weights a quantile at or below 1/n of the members. It is
+written, and the member count beside it says why. Any other infinite
+statistic is the arithmetic passing the largest float, and is refused.
+A NaN is a group with no value, and is written.
 
 Files made before v0.6.0 had no such options. They are reproduced by
 `"lower_step"` if the run had weights and `"linear"` if it had none,
 with `"fast"`. Those without weights took their quantiles from pandas,
 whose arithmetic for the same interpolation differs from numpy's in
 the last bit of about one quantile in a hundred.
+
+## Country values from state values
+
+A country value is not a statistic of its states' statistics, since a
+95th percentile of a sum is not the sum of 95th percentiles. `regroup`
+takes a reduced frame, one value a target, window and draw, as a
+pipeline run writes it with `output.write_reduced = true`, to coarser
+targets, and the statistics are pooled after.
+
+```python
+reduced = pd.read_parquet("mortality_adm1.reduced.parquet")
+country = cilreg.regroup(
+    reduced,
+    id_fields=["ISO", "ID_1"],
+    by=["ISO"],
+    kind="extensive",
+    value_col="rebased",
+    summation="exact",
+)
+stats = cilreg.pooled_statistics(
+    country.assign(weight=weights.attach(country["gcm"])),
+    sample_dims=["batch", "gcm"],
+    value_col="rebased",
+    quantiles=[0.05, 0.5, 0.95],
+    weight_col="weight",
+    quantile_method="lower_step",
+    summation="exact",
+)
+```
+
+`"extensive"` sums the states. `"intensive"` takes the mean weighted
+by each state's basis, which `target_basis(artifact, "croparea")`
+gives from the weights the states were aggregated with, the crop area
+or the population of each. The regroup is exact when every impact
+region lies in one country, as they do.
 
 ## Warming levels
 
@@ -324,6 +391,9 @@ levels = cilreg.assign_warming_levels(
         cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2099)),
     ],
     smoothing="unknown",
+    members=cilreg.members_that_join(
+        {"gcm": ["CCSM4", "MIROC5"]}, table.members, table.member_cols
+    ),
 )
 levels.windows_of(("MIROC5", "rcp85"))
 levels.record()
@@ -340,7 +410,7 @@ there goes to the level declared first. Bands that overlap are
 refused.
 
 None of `reference_period`, `offset`, `levels`, `half_width`,
-`periods` and `smoothing` has a default. The offset is the warming
+`periods`, `smoothing` and `members` has a default. The offset is the warming
 from a pre-industrial baseline to the reference period, and it is only
 right for that pair: 0.61 goes with 1986 to 2005 in AR5 (WG1 TS.2.2.1),
 and AR6 gives another figure against another period. A call that
@@ -356,19 +426,36 @@ Nothing is smoothed. The series is taken as it is in the table, and
 `smoothing` says in words how it was smoothed before, `"unknown"` if
 nobody knows. It goes into the record as written.
 
-A member's name is matched as it is written. A surrogate model is a
-member of its own and needs its own rows. A member that lacks a year
-of the reference period or of a `gmst_span` is refused by name.
+`members` are the members that join. A member of the table that does
+not join is at no level, and the record lists it under `excluded` with
+the reason. A member that joins and has no row, or lacks a year of the
+reference period or of a `gmst_span`, is refused by name. One that
+does not join is not looked at, so a table may hold a member with no
+values, as the mortality paper's does under rcp45. A name is matched
+as it is written, and nothing reads a name to decide what a member is.
+
+`members_that_join` turns a declaration into the members. `"declared"`
+is every member declared. A mapping of member columns to values takes
+each member whose value in every column named is listed, so a list of
+models joins under each scenario there is. A value listed that no
+member declared holds is refused by name, since it is most likely a
+name written wrong.
 
 In a pipeline config the same settings go under
-`[stats.warming_levels]`, in place of `stats.windows`. The example is
-a physical product as the Inequality Paper makes one: each member's
-window is collapsed to its mean first, over nineteen impact years, and
-the quantile is the extraction tool's step.
+`[stats.warming_levels]`, in place of `stats.windows`, and `join` is
+the declaration, over the members the tree declares. It has no default.
+`examples/warming_levels/ar5_cmip5_smme.toml` is the block for the
+CMIP5 models, which the test of the paper's bins reads too, and its
+README says where each number comes from. `load_warming_levels` reads
+such a file on its own. The example here is a physical product as the
+Inequality Paper makes one: each member's window is collapsed to its
+mean first, over nineteen impact years, and the quantile is the
+extraction tool's step.
 
 ```toml
 [stats]
 sample_dims = ["batch", "rcp", "gcm"]
+model_dims = ["gcm"]
 time_col = "year"
 quantiles = [0.05, 0.5, 0.95]
 quantile_method = "lower_step"
@@ -383,6 +470,9 @@ offset = 0.61
 levels = [1.5, 2, 3, 4, 5]
 half_width = 0.25
 smoothing = "unknown"
+
+[stats.warming_levels.join]
+gcm = ["CCSM4", "MIROC5"]    # or join = "declared", above this table
 
 [[stats.warming_levels.periods]]
 gmst_span = [2040, 2059]
@@ -405,11 +495,13 @@ A leaf's member is read off its level values, here its `gcm` and its
 them. A leaf is pooled under the level its member has in a period and
 left out of the periods in which it has none. The statistics file has
 a `warming_level` column next to `window`, which stays the period, and
-two counts on every row. `n_members` is the draws behind the
-statistic, a batch of a model counting as one. `n_bin_members` is the
-distinct members of the temperature table behind it, which is the
-number to read a 95th percentile over four models by. A level nobody
-is at in a period has no row, and the manifest records it with a zero.
+three counts on every row. `n_members` is the draws behind the
+statistic, a batch of a model counting as one. `n_models` is the
+distinct values of `stats.model_dims` among them, the climate models,
+and `n_bin_members` the distinct members of the temperature table, a
+model under an rcp. Those are the numbers to read a 95th percentile
+over four models by. A level nobody is at in a period has no row, and
+the manifest records it with a zero.
 
 The statistics come from the leaf files under every stage, as when
 the years are pooled, so stage `all` writes the leaves and then
@@ -585,10 +677,11 @@ What pooling changes:
 - A model weight applies to each member-year.
 - `quantile_method` and `summation` work as before. No window mean is
   taken, so `summation` acts on the pooled mean alone.
-- With `include_n_members` the file has two counts. `n_members` is
+- With `include_n_members` the file has three counts. `n_members` is
   what it is without pooling, the members behind a statistic: those
   with a value in the window and, with model weights, a weight above
-  zero. `n_sample` is the member-years behind it.
+  zero. `n_sample` is the member-years behind it, and `n_models` the
+  climate models among them.
 - The manifest records `time_reduction`, next to `quantile_method`
   and `summation`, and `years` for a product per year.
 

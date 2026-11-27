@@ -13,7 +13,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cil_regionalization.stats import mixture_quantile, summarize_samples
+from cil_regionalization.stats import (
+    mixture_quantile,
+    pooled_statistics,
+    summarize_samples,
+)
 
 
 def _frame(rows: list[dict]) -> pd.DataFrame:
@@ -677,10 +681,17 @@ class TestMemberCount:
             sample_dims=["zeppelin"],
             quantiles=[0.5],
             include_n_members=True,
+            model_dims=["zeppelin"],
             quantile_method="linear",
             summation="fast",
         )
-        assert list(out.columns) == ["target", "statistic", "value", "n_members"]
+        assert list(out.columns) == [
+            "target",
+            "statistic",
+            "value",
+            "n_members",
+            "n_models",
+        ]
         assert out["n_members"].dtype == np.int64
         counts = out.set_index(["target", "statistic"])["n_members"].to_dict()
         assert counts == {
@@ -701,10 +712,17 @@ class TestMemberCount:
             sample_dims=["zeppelin"],
             weight_col="tonnage",
             include_n_members=True,
+            model_dims=["zeppelin"],
             quantile_method="lower_step",
             summation="fast",
         )
-        assert list(out.columns) == ["target", "statistic", "value", "n_members"]
+        assert list(out.columns) == [
+            "target",
+            "statistic",
+            "value",
+            "n_members",
+            "n_models",
+        ]
         assert out.set_index("target")["n_members"].to_dict() == {"T1": 1, "T2": 2}
 
     def test_summarize_samples_agrees_with_staged_path(self):
@@ -735,6 +753,7 @@ class TestMemberCount:
             window=(2050, 2051),
             quantiles=[0.5],
             include_n_members=True,
+            model_dims=["zeppelin"],
             quantile_method="linear",
             summation="fast",
         )
@@ -748,10 +767,17 @@ class TestMemberCount:
             sample_dims=["zeppelin"],
             quantiles=[0.5],
             include_n_members=True,
+            model_dims=["zeppelin"],
             quantile_method="linear",
             summation="fast",
         )
-        assert list(single.columns) == ["target", "statistic", "value", "n_members"]
+        assert list(single.columns) == [
+            "target",
+            "statistic",
+            "value",
+            "n_members",
+            "n_models",
+        ]
         key = ["target", "statistic"]
         assert single.set_index(key)["n_members"].to_dict() == {
             ("T1", "mean"): 2,
@@ -776,6 +802,7 @@ class TestMemberCount:
                 df,
                 sample_dims=["zeppelin"],
                 include_n_members=True,
+                model_dims=["zeppelin"],
                 quantile_method="linear",
                 summation="fast",
             )
@@ -786,6 +813,7 @@ class TestMemberCount:
                 time_col="epoch",
                 window=(2050, 2050),
                 include_n_members=True,
+                model_dims=["zeppelin"],
                 quantile_method="linear",
                 summation="fast",
             )
@@ -1534,3 +1562,93 @@ class TestMixtureQuantile:
             mixture_quantile([1.0], [0.0], [-1.0], 0.5)
         with pytest.raises(ValueError, match=r"\[0, 1\]"):
             mixture_quantile([1.0], [0.0], [1.0], 1.5)
+
+
+class TestModelCount:
+    """With the counts asked for, a row carries the samples behind it and
+    the climate models among them, which are not the same number once
+    there are batches."""
+
+    @staticmethod
+    def _draws(weights=None):
+        rows = [
+            {"target": "T1", "batch": f"b{b}", "gcm": gcm, "value": 1.0 + b + 10 * i}
+            for i, gcm in enumerate(["CCSM4", "MIROC5"])
+            for b in range(3)
+        ]
+        frame = pd.DataFrame(rows)
+        if weights is not None:
+            frame["w"] = frame["gcm"].map(weights)
+        return frame
+
+    def _counts(self, frame, **options):
+        out = pooled_statistics(
+            frame,
+            sample_dims=["batch", "gcm"],
+            quantiles=[0.5],
+            include_n_members=True,
+            model_dims=["gcm"],
+            quantile_method=options.pop("quantile_method", "lower_step"),
+            summation="fast",
+            **options,
+        )
+        return out[["n_members", "n_models"]].drop_duplicates().to_dict("records")
+
+    def test_three_batches_of_two_models_are_six_samples_of_two_models(self):
+        """Failed with one count only, the samples."""
+        assert self._counts(self._draws()) == [{"n_members": 6, "n_models": 2}]
+
+    def test_a_model_of_weight_zero_is_counted_in_neither(self):
+        frame = self._draws({"CCSM4": 0.0, "MIROC5": 1.0})
+        assert self._counts(frame, weight_col="w") == [{"n_members": 3, "n_models": 1}]
+
+    def test_a_model_with_no_value_is_not_counted(self):
+        frame = self._draws()
+        frame.loc[frame["gcm"] == "MIROC5", "value"] = np.nan
+        assert self._counts(frame) == [{"n_members": 3, "n_models": 1}]
+
+    def test_summarize_samples_counts_the_same(self):
+        frame = pd.concat([self._draws().assign(year=y) for y in (2050, 2051)])
+        out = summarize_samples(
+            frame,
+            sample_dims=["batch", "gcm"],
+            time_col="year",
+            window=(2050, 2051),
+            quantiles=[0.5],
+            include_n_members=True,
+            model_dims=["gcm"],
+            quantile_method="lower_step",
+            summation="fast",
+        )
+        assert set(out["n_models"]) == {2} and set(out["n_members"]) == {6}
+
+    def test_counts_without_the_model_columns_are_refused(self):
+        with pytest.raises(ValueError, match="model_dims has to name"):
+            pooled_statistics(
+                self._draws(),
+                sample_dims=["batch", "gcm"],
+                include_n_members=True,
+                quantile_method="lower_step",
+                summation="fast",
+            )
+
+    def test_model_columns_without_the_counts_are_refused(self):
+        with pytest.raises(ValueError, match="only include_n_members writes"):
+            pooled_statistics(
+                self._draws(),
+                sample_dims=["batch", "gcm"],
+                model_dims=["gcm"],
+                quantile_method="lower_step",
+                summation="fast",
+            )
+
+    def test_model_columns_that_are_not_pooled_are_refused(self):
+        with pytest.raises(ValueError, match=r"model_dims \['target'\] are not among"):
+            pooled_statistics(
+                self._draws(),
+                sample_dims=["batch", "gcm"],
+                include_n_members=True,
+                model_dims=["target"],
+                quantile_method="lower_step",
+                summation="fast",
+            )

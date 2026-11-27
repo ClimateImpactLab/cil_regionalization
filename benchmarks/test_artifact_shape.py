@@ -158,9 +158,10 @@ def test_default_policy_stops_at_the_empty_regions():
 
 
 def test_skip_reports_regions_and_drops_targets(result, targets, caplog):
-    """The library reports the skipped regions on the result and in one
-    warning. The targets left with nothing are not counted anywhere and
-    are missing from the frame."""
+    """The library reports the skipped regions on the result and in a
+    warning, and the targets left with nothing in the result's targets
+    and in a second warning. Those targets are missing from the frame.
+    Failed with the targets counted nowhere."""
     assert result.coverage.counts == {
         "unmatched": 0,
         "zero_weight": N_EMPTY_REGIONS,
@@ -173,13 +174,17 @@ def test_skip_reports_regions_and_drops_targets(result, targets, caplog):
     assert len(in_output) == N_IN_OUTPUT
     assert not targets.index[targets["count"] == 0].isin(in_output).any()
     assert targets.index[targets["count"] > 0].isin(in_output).all()
+    assert result.targets.counts["left_out"] == {
+        "no weight": N_WITHOUT_AREA,
+        "no data": 0,
+    }
 
     with caplog.at_level("WARNING", logger="cil_regionalization.validate"):
         apply(artifact(64), source_leaf(64))
     messages = [r.getMessage() for r in caplog.records]
-    assert len(messages) == 1
+    assert len(messages) == 2
     assert "zero_weight source units" in messages[0]
-    assert "target" not in messages[0]
+    assert "targets are left out (no weight:" in messages[1]
 
 
 def test_applied_leaf_is_what_apply_returns(result):

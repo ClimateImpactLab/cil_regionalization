@@ -1,10 +1,11 @@
 """The request for statistics, the backend interface and its config.
 
 A request says which leaves to pool and which statistics to take. It
-holds nothing about how: no block sizes and no engine options. A second
-backend adds a module, a branch in `get_backend`, a name in the ``kind``
-of `ReduceConfig` and an options field there.
+holds no block sizes and no engine options, which are the backend's.
 """
+
+# A second backend adds a module, a branch in `get_backend`, a name in
+# the ``kind`` of `ReduceConfig` and an options field there.
 
 from __future__ import annotations
 
@@ -44,8 +45,8 @@ class LeafRequest:
     with the first and last time value it covers. Two leaves may give
     one label different spans, and a leaf may lack a label another has.
     ``profile`` is the rows at each value of the time column.
-    ``bin_member`` names what the leaf counts as one of in
-    'n_bin_members', such as its climate model and scenario. Many
+    ``bin_member`` is the member the leaf is counted under in
+    'n_bin_members', such as its climate model and scenario, and many
     leaves share one."""
 
     file: str
@@ -96,6 +97,7 @@ class ReduceRequest:
     quantiles: tuple[float, ...]
     include_mean: bool = True
     include_n_members: bool = False
+    model_dims: tuple[str, ...] = ()
     quantile_method: str = field(kw_only=True)
     summation: str = field(kw_only=True)
     time_reduction: str = field(kw_only=True)
@@ -113,7 +115,9 @@ class ReduceRequest:
 
     @property
     def dimensions(self) -> list[str]:
-        """The leaf's own columns that stay in the statistics."""
+        """The leaf's own columns besides the target ordinal, the ids,
+        the time and the value. Those that are not sample dimensions
+        stay in the statistics."""
         from cil_regionalization.leaves import ORDINAL_COLUMN
 
         skipped = {ORDINAL_COLUMN, self.time_col, self.value_col, *self.id_fields}
@@ -136,6 +140,7 @@ class ReduceRequest:
                 if self.include_n_members and self.time_reduction == "pooled"
                 else []
             )
+            + (["n_models"] if self.include_n_members else [])
             + (["n_bin_members"] if self.include_n_bin_members else [])
         )
 
@@ -157,8 +162,8 @@ class ReduceBackend(ABC):
     @abstractmethod
     def describe(self, request: ReduceRequest) -> dict:
         """What `run` would do, without doing it. ``engine`` holds the
-        versions of what computes, and ``text`` the lines a dry run
-        prints."""
+        versions of the packages that compute the statistics, and
+        ``text`` the lines a dry run prints."""
 
     @abstractmethod
     def run(self, request: ReduceRequest) -> tuple[pd.DataFrame, dict]:

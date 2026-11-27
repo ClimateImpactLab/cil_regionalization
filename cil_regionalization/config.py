@@ -1,13 +1,11 @@
 """Configuration models for cil_regionalization.
 
-A run is described by a single TOML file. The schema below validates that file
-up front and raises errors whose messages name the offending config key, so the
-user can fix the file without reading source. Error messages are part of the
-public interface: tests pin their content.
-
-The same Config drives both the local and the BigQuery backends. Cross-field
-rules (a non-area weight needs a raster on local but a table on bigquery, etc.)
-live on the top-level Config so they can see both `backend.kind` and `weights`.
+A run is described by a single TOML file, which the same `Config` reads
+for the local and the BigQuery backends. The file is validated up front,
+and every error message names the config key at fault. Tests pin the
+text of those messages. Rules that span sections, such as a non-area
+weight needing a raster on the local backend and a table on BigQuery,
+are checked on `Config`.
 """
 
 from __future__ import annotations
@@ -58,7 +56,8 @@ WeightKind = Literal["point_sum", "area_weighted_sum"]
 
 
 class _Strict(BaseModel):
-    """Reject unknown keys so typos in TOML surface as errors, not silent drift."""
+    """A config model that raises on any key it does not declare, so a
+    misspelt key in the TOML is an error."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -153,23 +152,21 @@ class GridConfig(_Strict):
 
 
 class SourceConfig(_Strict):
-    """Polygon source units: the geometry the weighted data lives on.
+    """The polygons the weighted data lives on, as the source units of a
+    polygon-mode run.
 
-    Declaring ``[source]`` instead of ``[grid]`` switches a run to polygon
-    mode: rows pair one region from ``[regions]`` (the side the weights
-    are built for, e.g. administrative units) with one source polygon from
-    here (e.g. impact regions keyed by hierid). Any shapefile or
-    GeoParquet with id columns works; nothing here is specific to one
-    geometry family.
+    Declaring ``[source]`` instead of ``[grid]`` puts a run in polygon
+    mode. Each row of the weights then pairs a region from ``[regions]``,
+    the side the weights are built for such as administrative units, with
+    a polygon from this file such as an impact region keyed by hierid.
+    Any shapefile or GeoParquet with id columns will do. ``version`` is
+    the label the manifest records for this source.
 
-    ``version`` is required: it is the version label recorded in the
-    manifest so a weight file states which source set produced it.
-
-    ``on_zero_overlap`` handles source units whose intersection with every
-    region has zero geodesic area: "error" (default) aborts naming them;
-    "skip" excludes them and records them in the manifest under
-    ``zero_overlap_source_units``. Runs against a regional subset of
-    targets should expect zero-overlap sources and set "skip" explicitly.
+    ``on_zero_overlap`` says what to do with source units whose
+    intersection with every region has zero geodesic area. "error" raises
+    naming them, and "skip" leaves them out and lists them in the
+    manifest's ``extra`` under ``zero_overlap_source_units``. A run over a
+    regional subset of targets should expect such units and set "skip".
     """
 
     path: str = Field(min_length=1)
@@ -303,27 +300,18 @@ class ValidationConfig(_Strict):
 
 
 class SourceUnitPolicies(_Strict):
-    """What to do with source units that cannot flow through an application run.
+    """What to do with source units that cannot take part in applying the
+    weights, the ``[policies]`` of a pipeline config and the ``policies``
+    of `apply_weights`.
 
-    Mirrors the null-geometry and unknown-id pattern on `RegionsConfig`:
-    "error" (default) aborts and names the offending units; "skip" excludes
-    them, records them in the manifest under `source_coverage`, and logs a
-    warning. Nothing is ever dropped without one or the other.
-
-    The three cases, detected by `validate.check_source_coverage`:
-
-        on_unmatched       : units present in the data being aggregated but
-                             absent from the weight file. Their values
-                             cannot reach any target.
-        on_zero_weight     : units present in the weight file whose weights
-                             are all zero or NaN. Rows exist but carry no
-                             mass to any target.
-        on_absent_from_data: units present in the weight file but missing
-                             from the data. Their targets silently lose the
-                             contribution the weights promised.
-
-    Consumed by the application layer and the polygon weight builder; not
-    referenced from the run `Config` yet.
+    Each key is "error" or "skip". "error" raises naming the units.
+    "skip" leaves them out with a warning, and the result lists them in
+    its ``coverage``. ``on_unmatched`` is for units in the data that are
+    not in the weight file, whose values cannot reach any target.
+    ``on_zero_weight`` is for units in the weight file whose weights are
+    all zero or NaN. ``on_absent_from_data`` is for units in the weight
+    file that the data does not have, whose targets lose what the
+    weights gave them.
     """
 
     on_unmatched: Literal["error", "skip"] = "error"
@@ -424,15 +412,14 @@ class Config(_Strict):
 
 
 def load_config(path: str | Path) -> Config:
-    """Load and validate a cil_regionalization config from a TOML file.
+    """The validated `Config` of the TOML file at ``path``.
 
-    Relative paths in `regions.path`, `source.path`, `weights[].raster`,
-    and `output.dir` are resolved against the config file's directory so the same config
-    works regardless of the caller's working directory. Absolute paths,
-    `gs://` URIs, and BigQuery `table` references pass through unchanged.
-
-    Validation errors are raised as pydantic ValidationError; their messages
-    name the offending key so the user can fix the TOML without reading source.
+    Relative paths in `regions.path`, `source.path`, `weights[].raster`
+    and `output.dir` are resolved against the config file's directory,
+    not the working directory. Absolute paths, `gs://` URIs and BigQuery
+    `table` references pass through unchanged. Raises
+    `FileNotFoundError` if the file does not exist, and a pydantic
+    `ValidationError` naming the offending key if the config is invalid.
     """
     p = Path(path).resolve()
     if not p.exists():

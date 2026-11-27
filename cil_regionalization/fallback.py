@@ -1,49 +1,23 @@
-"""Apply per-weight fallback policy to per-(region, source unit) raw totals.
+"""Weights from the raw totals of one weight per (region, source unit),
+with a fallback for groups whose raw total is zero.
 
-Pure pandas. Given the raw weighting totals a backend has computed for one
-non-area weight, plus the area-weight frame (which is always available),
-this module returns the normalized weights and a per-group method label
-that tells callers and validators what happened.
+Source units are grid cells unless a `SourceUnits` layout says otherwise.
+Under ``per_destination`` normalization the raw totals are summed within
+each region (the ``id_fields``), so weights sum to 1 within each region.
+Under ``per_source`` they are summed within each source unit across the
+regions it overlaps, so weights sum to 1 within each source unit.
 
-Source units and normalization direction
-----------------------------------------
-Both functions accept a `SourceUnits` layout (grid cells by default) and a
-normalization direction. The direction selects the columns raw totals are
-summed within before dividing:
+A group whose raw total is zero follows the weight's fallback policy.
+``"area"`` gives its rows their area weight ``areawt`` and the method
+``"area_fallback"``. ``"zero"`` gives them weight 0 and the method
+``"zero"``, and the sum-to-one check flags the group. ``"nan"`` gives
+them weight NaN and the method ``"nan"``, and the sum-to-one check
+passes the group over. ``"error"`` raises, naming the groups. A group
+whose total area is zero raises under every policy.
 
-    per_destination : totals per region (the ``id_fields``). Weights sum
-        to 1 within each region. The grid-to-IR case.
-    per_source : totals per source unit, across the regions it overlaps.
-        Weights sum to 1 within each source unit. The allocation case.
-
-The math is the same division either way; only the grouping transposes.
-Fallback policy applies to the groups of the chosen direction: a group
-whose total raw weight is zero is routed through the policy below.
-
-Policy semantics
-----------------
-For a group whose total raw weight is zero:
-    "area"  : take the rows from the area frame and reuse `areawt` as the
-              normalized weight; method = "area_fallback".
-    "zero"  : keep the area frame's rows, weight = 0; method = "zero".
-              The sum-to-1 validator will flag this group.
-    "nan"   : keep the area frame's rows, weight = NaN; method = "nan".
-              The sum-to-1 validator IGNORES NaN groups (no false flag).
-              Matches the legacy crop weights convention: empty regions
-              carry NaN; the legacy consumer backfills per-pixel with
-              `areawt` at aggregation time so NaN in the file is not NaN
-              in final outputs.
-    "error" : raise, naming the group ids.
-In every fallback branch, if the group's total area is also zero we
-raise unconditionally: no rule can rescue an empty group.
-
-Implicit-default warning
-------------------------
-When the fallback fires for >= max(5, 5% of groups) AND the policy was
-NOT set explicitly in the TOML, `apply_fallback` emits a WARN-level
-log naming the applied default and the alternatives. The threshold is
-deliberate: a single fallback group is rarely worth interrupting for;
-a dozen is.
+When the policy was not set in the config and the fallback fires for at
+least max(5, 5% of the groups), `apply_fallback` logs a warning naming the
+default and the alternatives.
 """
 
 from __future__ import annotations
@@ -74,7 +48,9 @@ def _group_fields(
     source_units: SourceUnits,
     normalization: Normalization,
 ) -> list[str]:
-    """Columns raw totals are summed within, per the direction."""
+    """The columns raw totals are summed within, the ``id_fields`` under
+    ``per_destination`` and the source unit keys under ``per_source``.
+    Raises on any other direction."""
     if normalization == "per_destination":
         return list(id_fields)
     if normalization == "per_source":
@@ -91,10 +67,10 @@ def compute_native_weights(
     source_units: SourceUnits = GRID_CELLS,
     normalization: Normalization = "per_destination",
 ) -> pd.DataFrame:
-    """Normalize raw values to sum-to-1 weights per group. No fallback path.
-
-    Used for the area weight, whose zero-total case is always degenerate and
-    raises here regardless of any configured policy.
+    """Each row's ``raw_col`` divided by its group's total, as the weight,
+    raw and method columns of ``weight_name``, with every method
+    ``"native"``. Used for the area weight, and has no fallback. Raises if
+    a column is missing or a group's total is not positive.
     """
     keys = list(id_fields)
     source_cols = list(source_units.columns)
@@ -142,13 +118,17 @@ def apply_fallback(
     source_units: SourceUnits = GRID_CELLS,
     normalization: Normalization = "per_destination",
 ) -> pd.DataFrame:
-    """Normalize raw values per group; route zero-total groups through policy.
+    """Weights for ``weight_name``, each raw value divided by its group's
+    total, with the groups whose total is zero handled by ``policy``.
 
-    raw_per_cell : id_fields + source key columns + raw_col. May omit rows
-        whose raw is zero; missing rows are treated as raw = 0.
-    area_weights : id_fields + source columns + areawt + area_raw. The spine
-        of "source units overlapping each region"; the output covers exactly
-        the union of rows in this frame.
+    The output has one row per row of ``area_weights``, which holds the id
+    fields, the source columns, ``areawt`` and ``area_raw``.
+    ``raw_per_cell`` holds the id fields, the source key columns and
+    ``raw_col``, and a row it leaves out counts as raw 0.
+    ``policy_explicit`` says whether the config set the policy. Only an
+    unset policy logs the warning. Raises if a column is missing, if
+    ``raw_per_cell`` has a group that ``area_weights`` lacks, if a group's
+    total area is zero, or if a group falls back under ``"error"``.
     """
     keys = list(id_fields)
     source_cols = list(source_units.columns)
@@ -279,11 +259,14 @@ def count_methods(
     weight_name: str,
     id_fields: list[str] | None = None,
 ) -> dict[str, int]:
-    """Return a method label -> region count for one weight in the output frame.
+    """The number of groups of ``id_fields`` under each method label of
+    ``weight_name``, taken from each group's first row. Returns an empty
+    dict when the frame has no method column for the weight.
 
-    Pass ``id_fields`` explicitly whenever the frame may contain other
-    weights' columns (their `_raw` / `_method` columns would otherwise be
-    treated as identifiers and inflate the region count).
+    Without ``id_fields`` every column counts as an id except the four cell
+    columns and those ending in ``wt``, ``_raw`` or ``_method``. That is
+    wrong for a frame with any other column, such as the source ids of
+    polygon mode, so pass ``id_fields`` for such a frame.
     """
     col = method_column(weight_name)
     if col not in weights_frame.columns:
@@ -295,9 +278,10 @@ def count_methods(
 
 
 def _infer_id_columns(weights_frame: pd.DataFrame, weight_name: str) -> list[str]:
-    """Best-effort: drop cell metadata and any column that looks like weight
-    output (`{name}wt`, `{name}_raw`, `{name}_method`). Safe for frames that
-    contain only one weight's columns alongside the id fields.
+    """A guess at the id columns of a weights frame, every column except
+    ``cell_ix``, ``cell_iy``, ``cell_lon``, ``cell_lat`` and those ending in
+    ``wt``, ``_raw`` or ``_method``, whichever weight they belong to. Right
+    only for a frame holding nothing else. ``weight_name`` is not used.
     """
     output_cols = {"cell_ix", "cell_iy", "cell_lon", "cell_lat"}
     for c in weights_frame.columns:

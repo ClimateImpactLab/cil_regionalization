@@ -1,13 +1,9 @@
 """Weight generation as a function call.
 
 `generate_weights` is what `cilreg run` does, minus the printing and the
-test-mode and legacy-csv options. Both go through `compute_and_write`,
-so a config gives the same weights file and manifest either way.
-
-A run whose weights fail their own sum-to-one check raises
-`SumToOneError` before anything is written. The check is the only
-thing standing between a bad file and someone applying it later, so a
-file that failed it must not exist.
+test-mode and legacy-csv options, and a config gives the same weights
+file and manifest either way. A run whose weights fail their own
+sum-to-one check raises `SumToOneError` before anything is written.
 """
 
 from __future__ import annotations
@@ -24,10 +20,11 @@ from cil_regionalization.weights import from_config_list
 
 
 class SumToOneError(ValueError):
-    """The generated weights failed the sum-to-one check.
+    """The generated weights failed the sum-to-one check, and nothing was
+    written.
 
     ``report`` is the full `SumToOneReport`, failures included.
-    ``result`` is the computed `WeightsResult`; nothing was written.
+    ``result`` is the computed `WeightsResult`.
     """
 
     def __init__(self, report: SumToOneReport, result: WeightsResult):
@@ -37,7 +34,9 @@ class SumToOneError(ValueError):
 
 
 def check_inputs_exist(cfg: Config) -> list[str]:
-    """Cheap precheck: regions.path and each weight raster must exist."""
+    """A message for each input of ``cfg`` that is not on the local disk.
+    The inputs checked are regions.path, source.path unless it is a
+    ``gs://`` URI, and each weight raster on the local backend."""
     problems: list[str] = []
     if cfg.regions.path is not None and not Path(cfg.regions.path).exists():
         problems.append(f"regions.path does not exist: {cfg.regions.path}")
@@ -86,11 +85,12 @@ def compute_and_write(
 def generate_weights(config: Config | str | Path) -> WeightsResult:
     """Generate a weights file and its manifest from a config.
 
-    ``config`` is a `Config` or the path to a TOML file. The weights
-    parquet and the manifest are written to ``config.output.dir``, as
-    `cilreg run` does, and the result is returned. Geometries are read
-    from the paths in the config; to use polygons held in memory, write
-    them to a GeoParquet file first so the manifest can record its hash.
+    ``config`` is a `Config` or the path to a TOML file. The weights file,
+    in the configured ``output.format``, and the manifest are written to
+    ``config.output.dir``, as `cilreg run` does, and the result is
+    returned. Geometries are read from the paths in the config, so
+    polygons held in memory have to be written to a GeoParquet file
+    first, which lets the manifest record its hash.
 
     Raises `FileNotFoundError` naming any input that is missing, and
     `SumToOneError` when the weights fail their sum-to-one check, in
