@@ -14,22 +14,17 @@ TABLE = ROOT / "examples" / "france" / "data" / "GMTanom_all_temp_2001_2010_smoo
 BINS = ROOT / "tests" / "data" / "external" / "inequality_gwl_bins.csv"
 
 
-def test_the_models_at_each_level_are_the_papers():
-    """Over the 21 models, since the paper's lists name no surrogate.
-    The periods are the twenty years from 2040 and from 2080, as
-    finding_gwl_bins.R filters them, and the member with no temperature
-    is left out, as that script leaves it out.
+def test_the_members_at_each_level_are_the_papers():
+    """From the whole table, with the surrogates excluded as the paper's
+    reported outputs exclude them. The periods are the twenty years from
+    2040 and from 2080, as finding_gwl_bins.R filters them. The member
+    with no temperature, surrogate_GFDL-ESM2G_06 under rcp45, is a
+    surrogate and so never assessed.
 
-    It tests code that was already there, so it cannot go red by
-    reverting. It went red with the period means taken over nineteen
-    years and with the offset left out."""
-    frame = pd.read_csv(TABLE)
-    reference = frame[frame["year"].between(1986, 2005)]
-    empty = reference.groupby(["gcm", "rcp"])["temp"].apply(lambda t: t.isna().any())
-    assert list(empty[empty].index) == [("surrogate_GFDL-ESM2G_06", "rcp45")]
-    frame = frame.set_index(["gcm", "rcp"]).drop(index=empty[empty].index).reset_index()
+    It went red with the period means taken over nineteen years, with
+    the offset left out, and with the surrogates included."""
     levels = cilreg.assign_warming_levels(
-        cilreg.GMSTTable.from_frame(frame, member_cols=["gcm", "rcp"]),
+        cilreg.read_gmst(TABLE, member_cols=["gcm", "rcp"]),
         reference_period=(1986, 2005),
         offset=0.61,
         levels=[1.5, 2, 3, 4, 5],
@@ -39,13 +34,14 @@ def test_the_models_at_each_level_are_the_papers():
             cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2099)),
         ],
         smoothing="recorded nowhere",
+        surrogates="exclude",
     )
     derived = {
         (period.label, level, rcp, gcm)
         for (gcm, rcp), assigned in levels.levels.items()
-        if not gcm.startswith("surrogate_")
         for period, level in zip(levels.periods, assigned)
         if level is not None
     }
     paper = pd.read_csv(BINS, comment="#", dtype={"level": float})
     assert derived == set(paper.itertuples(index=False, name=None))
+    assert len(levels.levels) == 42 and len(levels.excluded) == 24

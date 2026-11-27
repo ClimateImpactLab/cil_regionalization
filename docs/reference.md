@@ -710,6 +710,8 @@ assign_warming_levels(
     half_width: float,
     periods: Sequence[Period],
     smoothing: str,
+    surrogates: str,
+    members: Optional[Iterable[Sequence[str]]] = None,
 ) -> WarmingLevels
 ```
 
@@ -724,8 +726,13 @@ on a shared end goes to the level declared first.
 
 ``smoothing`` says how the series in the table was smoothed, in
 words, and goes into the record as it is. Nothing is smoothed
-here. Raises if a member lacks a value for a year of the reference
-period or of a ``gmst_span``.
+here. ``surrogates`` is "exclude" or "include" and has no default.
+Excluded, a surrogate model is at no level, since its series was
+built to span the distribution of warming under weights that a
+warming level does not use. ``members`` are the members assessed,
+every member of the table if it is left out. Raises if one of them
+has no row, or lacks a value for a year of the reference period or
+of a ``gmst_span``.
 
 ### `Period`
 
@@ -762,12 +769,16 @@ class WarmingLevels:
     smoothing: str
     means: dict[tuple[str, ...], tuple[float, ...]]
     levels: dict[tuple[str, ...], tuple[Optional[float], ...]]
+    surrogates: str = 'include'
+    excluded: tuple[tuple[str, ...], ...] = ()
 ```
 
-The level of every member of a temperature table in every
-period, and what decided it. ``means`` and ``levels`` hold one
-value a period for each member, in the order of ``periods``. A
-level is None where the member's mean lies in no band.
+The level of each assessed member of a temperature table in
+every period, and what decided it. ``means`` and ``levels`` hold
+one value a period for each assessed member, in the order of
+``periods``. A level is None where the member's mean lies in no
+band. ``excluded`` are the surrogates left out, which are at no
+level.
 
 #### `WarmingLevels.member_cols`
 
@@ -802,7 +813,8 @@ WarmingLevels.windows_of(member: Sequence[str]) -> tuple[LevelWindow, ...]
 ```
 
 The periods in which a member has a level, in the order of
-``periods``. Raises if the member has no row in the table.
+``periods``, none for an excluded surrogate. Raises if the member
+was not assessed.
 
 #### `WarmingLevels.record`
 
@@ -811,9 +823,10 @@ WarmingLevels.record(members: Optional[Iterable[Sequence[str]]] = None) -> dict
 ```
 
 What a manifest says of a run, as plain values. ``members``
-are those the run used, and every member of the table if it is
-left out. The rest of the table is listed under
-``unused_members``. Raises if a member has no row.
+are those the run used, and every member assessed or excluded if
+it is left out. The excluded surrogates are listed under
+``excluded_surrogates`` and the rest of the table under
+``unused_members``. Raises if a member was not assessed.
 
 ### `LevelWindow`
 
@@ -1296,7 +1309,9 @@ name a series, each of them also a tree level. Nothing that decides
 a level has a default. ``reference_period`` and ``offset`` go
 together, since the offset is the warming up to that period.
 ``smoothing`` says in words how the series in the table was
-smoothed, and "unknown" is an answer.
+smoothed, and "unknown" is an answer. ``surrogates`` is "exclude"
+or "include", and a surrogate model excluded is pooled at no level.
+Only the members the tree declares are assessed.
 
 | key | type | default |
 | --- | --- | --- |
@@ -1310,6 +1325,7 @@ smoothed, and "unknown" is an answer.
 | `levels` | list[float], not empty | required |
 | `half_width` | float, above 0 | required |
 | `smoothing` | str, not empty | required |
+| `surrogates` | "exclude" or "include" | required |
 
 ### `[[stats.warming_levels.periods]]`
 

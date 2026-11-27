@@ -57,6 +57,7 @@ def _assign(table, **changes):
         half_width=0.25,
         periods=[MID, LATE],
         smoothing="unknown",
+        surrogates="exclude",
     )
     settings.update(changes)
     return assign_warming_levels(table, **settings)
@@ -100,7 +101,15 @@ class TestRebasing:
 
     @pytest.mark.parametrize(
         "left_out",
-        ["reference_period", "offset", "levels", "half_width", "periods", "smoothing"],
+        [
+            "reference_period",
+            "offset",
+            "levels",
+            "half_width",
+            "periods",
+            "smoothing",
+            "surrogates",
+        ],
     )
     def test_nothing_that_decides_a_level_has_a_default(self, left_out):
         table = _table({("a", "rcp45"): _series(0.25, 1.25, 2.75)})
@@ -111,6 +120,7 @@ class TestRebasing:
             half_width=0.25,
             periods=[MID],
             smoothing="unknown",
+            surrogates="exclude",
         )
         del settings[left_out]
         with pytest.raises(TypeError, match=left_out):
@@ -326,7 +336,7 @@ class TestMembers:
                 ("surrogate_GFDL-ESM2G_06", "rcp85"): _series(0.25, 1.75, 4.75),
             }
         )
-        got = _assign(table)
+        got = _assign(table, surrogates="include")
         assert got.levels[("GFDL-ESM2G", "rcp85")] == (1.5, 3.0)
         assert got.levels[("surrogate_GFDL-ESM2G_06", "rcp85")] == (2.0, None)
         assert got.missing(
@@ -489,3 +499,63 @@ class TestRead:
             sep="\t",
         )
         assert _assign(table).levels[("a", "ssp245")] == (1.5, 3.0)
+
+
+class TestSurrogatesAndMembers:
+    """Surrogates are excluded or included by a setting with no default,
+    and only the members asked for are assessed."""
+
+    @staticmethod
+    def _table():
+        series = _series(0.25, 1.25, 2.75)
+        empty = {year: float("nan") for year in series}
+        return _table(
+            {
+                ("GFDL-ESM2G", "rcp45"): series,
+                ("surrogate_GFDL-ESM2G_06", "rcp45"): empty,
+                ("surrogate_GFDL-ESM2G_06", "rcp85"): _series(0.25, 1.75, 4.75),
+            }
+        )
+
+    def test_an_excluded_surrogate_is_at_no_level_and_is_recorded(self):
+        """Failed when every member of the table was assessed, on the
+        surrogate under rcp45 that has no temperature."""
+        got = _assign(self._table(), surrogates="exclude")
+        assert list(got.levels) == [("GFDL-ESM2G", "rcp45")]
+        assert got.windows_of(("surrogate_GFDL-ESM2G_06", "rcp85")) == ()
+        record = got.record()
+        assert record["surrogates"] == "exclude"
+        assert record["excluded_surrogates"] == [
+            {"gcm": "surrogate_GFDL-ESM2G_06", "rcp": "rcp45"},
+            {"gcm": "surrogate_GFDL-ESM2G_06", "rcp": "rcp85"},
+        ]
+
+    def test_an_included_surrogate_is_assessed_like_any_member(self):
+        with pytest.raises(ValueError, match="has no temperature for 20 of the 20"):
+            _assign(self._table(), surrogates="include")
+        got = _assign(
+            self._table(),
+            surrogates="include",
+            members=[("surrogate_GFDL-ESM2G_06", "rcp85")],
+        )
+        assert got.levels == {("surrogate_GFDL-ESM2G_06", "rcp85"): (2.0, None)}
+
+    def test_only_the_members_asked_for_are_assessed(self):
+        got = _assign(
+            self._table(), surrogates="include", members=[("GFDL-ESM2G", "rcp45")]
+        )
+        assert list(got.levels) == [("GFDL-ESM2G", "rcp45")]
+        assert got.record()["unused_members"] == [
+            {"gcm": "surrogate_GFDL-ESM2G_06", "rcp": "rcp45"},
+            {"gcm": "surrogate_GFDL-ESM2G_06", "rcp": "rcp85"},
+        ]
+        with pytest.raises(ValueError, match="was not assessed"):
+            got.windows_of(("surrogate_GFDL-ESM2G_06", "rcp85"))
+
+    def test_a_member_asked_for_without_a_row_is_refused(self):
+        with pytest.raises(ValueError, match="1 members have no row"):
+            _assign(self._table(), members=[("CCSM4", "rcp45")])
+
+    def test_an_unknown_setting_of_surrogates_is_refused(self):
+        with pytest.raises(ValueError, match="'exclude' or 'include'"):
+            _assign(self._table(), surrogates="drop")

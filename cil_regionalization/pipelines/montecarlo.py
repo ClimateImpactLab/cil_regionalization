@@ -296,7 +296,9 @@ class WarmingLevelsConfig(_Strict):
     a level has a default. ``reference_period`` and ``offset`` go
     together, since the offset is the warming up to that period.
     ``smoothing`` says in words how the series in the table was
-    smoothed, and "unknown" is an answer.
+    smoothed, and "unknown" is an answer. ``surrogates`` is "exclude"
+    or "include", and a surrogate model excluded is pooled at no level.
+    Only the members the tree declares are assessed.
     """
 
     gmst: str = Field(min_length=1)
@@ -309,6 +311,7 @@ class WarmingLevelsConfig(_Strict):
     levels: list[float] = Field(min_length=1)
     half_width: float = Field(gt=0)
     smoothing: str = Field(min_length=1)
+    surrogates: Literal["exclude", "include"]
     periods: list[WarmingPeriod] = Field(min_length=1)
 
 
@@ -1751,6 +1754,19 @@ def _warming_levels(
         value_col=warming.value_col,
         sep=warming.sep,
     )
+    members = list(dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves))
+    known = set(table.members)
+    absent = [member for member in members if member not in known]
+    if absent:
+        raise ValueError(
+            f"{len(absent)} of the {len(members)} members the tree declares "
+            f"have no row in the temperature table {warming.gmst} (first: "
+            f"{dict(zip(warming.member, absent[0]))}). A name is matched as "
+            f"it is written, so a surrogate needs rows of its own."
+        )
+    # The members the tree does not declare are not assessed, so a
+    # member of the table with no values that no leaf belongs to does
+    # not stop the run.
     levels = assign_warming_levels(
         table,
         reference_period=tuple(warming.reference_period),
@@ -1762,16 +1778,9 @@ def _warming_levels(
             for period in warming.periods
         ],
         smoothing=warming.smoothing,
+        surrogates=warming.surrogates,
+        members=members,
     )
-    members = list(dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves))
-    absent = levels.missing(members)
-    if absent:
-        raise ValueError(
-            f"{len(absent)} of the {len(members)} members the tree declares "
-            f"have no row in the temperature table {warming.gmst} (first: "
-            f"{dict(zip(warming.member, absent[0]))}). A name is matched as "
-            f"it is written, so a surrogate needs rows of its own."
-        )
     if not any(levels.windows_of(member) for member in members):
         raise ValueError(
             f"none of the {len(members)} members the tree declares is at "

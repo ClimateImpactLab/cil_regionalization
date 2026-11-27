@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**`assign_warming_levels` takes `surrogates`, `"exclude"` or
+`"include"`, with no default, and so does `[stats.warming_levels]`.**
+Excluded, a surrogate model is at no level and the record lists it
+under `excluded_surrogates`. `assign_warming_levels` also takes
+`members`, and assesses only those. A pipeline run assesses only the
+members its tree declares, so a member of the table with no values
+that no leaf belongs to no longer stops it. A declared member that
+lacks a year is refused by name, as before.
+
 **An infinite member value is refused under every quantile method and
 `summation`, and a statistic is refused when it comes out infinite,
 other than the `-inf` of `"lower_step"` at or below its first step,

@@ -444,6 +444,7 @@ def test_warming_levels_pooled_are_xarrays_statistics(weights_dir, tmp_path, met
             "member": ["gcm", "rcp"],
             "reference_period": [1986, 2005],
             "smoothing": "unknown",
+            "surrogates": "include",
             "periods": [
                 {"gmst_span": list(p), "impact_span": list(p)} for p in PERIODS
             ],

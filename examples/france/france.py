@@ -1152,6 +1152,7 @@ def _(GMST, cilreg, mo):
         levels=[1.5, 2.0, 3.0, 4.0, 5.0],
         half_width=0.25,
         smoothing="smoothed before it reached the table, how is not recorded",
+        surrogates="exclude",
     )
     gmst_table = cilreg.read_gmst(GMST, member_cols=["gcm", "rcp"])
     warming_levels = cilreg.assign_warming_levels(
@@ -1244,6 +1245,7 @@ def _(
             f"levels = {WARMING['levels']}",
             f"half_width = {WARMING['half_width']}",
             f'smoothing = "{WARMING["smoothing"]}"',
+            f'surrogates = "{WARMING["surrogates"]}"',
         ]
         for _period in PERIODS[family]:
             lines += [

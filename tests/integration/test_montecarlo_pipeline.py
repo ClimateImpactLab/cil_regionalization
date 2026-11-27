@@ -1061,7 +1061,7 @@ dir = "out_rel"
             "[stats.warming_levels]\n"
             'gmst = "tables/gmst.csv"\nmember = ["zeppelin"]\n'
             "reference_period = [1986, 2005]\noffset = 0.61\nlevels = [2.0]\n"
-            'half_width = 0.25\nsmoothing = "unknown"\n'
+            'half_width = 0.25\nsmoothing = "unknown"\nsurrogates = "exclude"\n'
             "[[stats.warming_levels.periods]]\n"
             "gmst_span = [2040, 2059]\nimpact_span = [2040, 2059]\n"
         )
@@ -4138,6 +4138,8 @@ class TestWarmingLevels:
                 "levels": [1.5, 2.0, 3.0, 4.0],
                 "half_width": 0.25,
                 "smoothing": "unknown",
+                # the fixture's surrogate is binned like any member here
+                "surrogates": "include",
                 "periods": [
                     {"gmst_span": [2040, 2043], "impact_span": [2040, 2042]},
                     {"gmst_span": [2080, 2083], "impact_span": [2080, 2083]},
@@ -4314,6 +4316,61 @@ class TestWarmingLevels:
             assert row["n_members"].item() == 4 and row["n_bin_members"].item() == 2
             got[method] = row["value"].item()
         assert got["lower_step"] < got["linear"] < got["inverted_cdf"]
+
+    def test_an_excluded_surrogate_is_pooled_at_no_level(
+        self, weights_dir, tmp_path, recwarn
+    ):
+        """Failed with the setting unknown. Its leaves are aggregated and
+        go under no level, and the manifest names it."""
+        raw, out = self._raw(weights_dir, tmp_path)
+        raw["stats"]["warming_levels"]["surrogates"] = "exclude"
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        mid = result.stats[result.stats["window"] == "2040-2042"]
+        # without the surrogate 1.5 holds m0/r45 and m1/r45, and 2 holds
+        # m0/r85, where with it they hold three and two
+        assert mid.groupby("warming_level")["n_bin_members"].max().to_dict() == {
+            1.5: 2,
+            2.0: 1,
+        }
+        record = json.loads((out / "statistics.manifest.json").read_text())[
+            "warming_levels"
+        ]
+        assert record["surrogates"] == "exclude"
+        assert record["excluded_surrogates"] == [
+            {"gcm": "surrogate_m0_06", "rcp": "r45"},
+            {"gcm": "surrogate_m0_06", "rcp": "r85"},
+        ]
+
+    def test_a_member_of_the_table_no_leaf_belongs_to_is_not_assessed(
+        self, weights_dir, tmp_path, recwarn
+    ):
+        """It has no temperature in any year. Failed with it refused by
+        name, although no leaf is of it."""
+        raw, out = self._raw(weights_dir, tmp_path)
+        gmst = tmp_path / "gmst.csv"
+        lines = gmst.read_text().splitlines()
+        empty = [f"m9,r45,{year}," for year in [*range(1986, 2006), *_GWL_YEARS]]
+        gmst.write_text("\n".join(lines + empty) + "\n")
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        record = json.loads((out / "statistics.manifest.json").read_text())[
+            "warming_levels"
+        ]
+        assert record["unused_members"] == [{"gcm": "m9", "rcp": "r45"}]
+
+    def test_a_declared_member_short_of_a_year_is_refused_by_name(
+        self, weights_dir, tmp_path
+    ):
+        """Only the members a run uses are assessed, and those still have
+        to have every year. It guards what was there, so it cannot go red
+        by reverting. It went red with the check of the years removed."""
+        raw, _ = self._raw(weights_dir, tmp_path)
+        gmst = tmp_path / "gmst.csv"
+        lines = [
+            line for line in gmst.read_text().splitlines() if line != "m0,r45,1990,0.0"
+        ]
+        gmst.write_text("\n".join(lines) + "\n")
+        with pytest.raises(ValueError, match=r"\{'gcm': 'm0', 'rcp': 'r45'\} has no"):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
 
     def test_the_manifest_says_what_decided_the_levels(
         self, weights_dir, tmp_path, recwarn

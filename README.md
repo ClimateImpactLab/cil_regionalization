@@ -354,6 +354,7 @@ levels = cilreg.assign_warming_levels(
         cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2099)),
     ],
     smoothing="unknown",
+    surrogates="exclude",
 )
 levels.windows_of(("MIROC5", "rcp85"))
 levels.record()
@@ -387,8 +388,19 @@ Nothing is smoothed. The series is taken as it is in the table, and
 nobody knows. It goes into the record as written.
 
 A member's name is matched as it is written. A surrogate model is a
-member of its own and needs its own rows. A member that lacks a year
-of the reference period or of a `gmst_span` is refused by name.
+member of its own and needs its own rows. `surrogates` is `"exclude"`
+or `"include"` and has no default. The surrogates are built so that the
+ensemble with its model weights spans the distribution of warming, and
+a warming level throws the weights away, so excluded they are at no
+level and the record lists them. A surrogate is a member any of whose
+names begins with `surrogate_`.
+
+`members` names the members to assess, every member of the table if it
+is left out, and a pipeline run passes the members its tree declares.
+A member that is assessed and lacks a year of the reference period or
+of a `gmst_span` is refused by name. One that no run uses is not looked
+at, so a table may hold a member with no values, as the mortality
+paper's does for a surrogate under rcp45.
 
 In a pipeline config the same settings go under
 `[stats.warming_levels]`, in place of `stats.windows`. The example is
@@ -413,6 +425,7 @@ offset = 0.61
 levels = [1.5, 2, 3, 4, 5]
 half_width = 0.25
 smoothing = "unknown"
+surrogates = "exclude"
 
 [[stats.warming_levels.periods]]
 gmst_span = [2040, 2059]

@@ -74,6 +74,7 @@ include_mean = true
 # levels = [1.5, 2, 3, 4, 5]
 # half_width = 0.25
 # smoothing = "unknown"
+# surrogates = "exclude"
 # [[stats.warming_levels.periods]]
 # gmst_span = [2040, 2059]
 # impact_span = [2040, 2058]

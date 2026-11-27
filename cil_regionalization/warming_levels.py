@@ -29,6 +29,14 @@ from cil_regionalization.stats import _window_label
 
 _YEAR, _VALUE = "year", "value"
 _TIE_RULE = "the first level declared whose band holds the mean"
+# what a surrogate model's name begins with, in the trees and the tables
+SURROGATE_PREFIX = "surrogate_"
+SURROGATES = ("exclude", "include")
+
+
+def is_surrogate(member: Sequence[str]) -> bool:
+    """Whether a member is a surrogate model, by any of its names."""
+    return any(str(name).startswith(SURROGATE_PREFIX) for name in member)
 
 
 class LevelWindow(NamedTuple):
@@ -181,10 +189,12 @@ def _span(name: str, span) -> tuple[int, int]:
 
 @dataclass(frozen=True)
 class WarmingLevels:
-    """The level of every member of a temperature table in every
-    period, and what decided it. ``means`` and ``levels`` hold one
-    value a period for each member, in the order of ``periods``. A
-    level is None where the member's mean lies in no band."""
+    """The level of each assessed member of a temperature table in
+    every period, and what decided it. ``means`` and ``levels`` hold
+    one value a period for each assessed member, in the order of
+    ``periods``. A level is None where the member's mean lies in no
+    band. ``excluded`` are the surrogates left out, which are at no
+    level."""
 
     table: GMSTTable
     reference_period: tuple[int, int]
@@ -195,6 +205,8 @@ class WarmingLevels:
     smoothing: str
     means: dict[tuple[str, ...], tuple[float, ...]]
     levels: dict[tuple[str, ...], tuple[Optional[float], ...]]
+    surrogates: str = "include"
+    excluded: tuple[tuple[str, ...], ...] = ()
 
     @property
     def member_cols(self) -> tuple[str, ...]:
@@ -218,22 +230,27 @@ class WarmingLevels:
 
     def _known(self, member: Sequence[str]) -> tuple[str, ...]:
         member = tuple(member)
-        if member not in self.levels:
-            raise ValueError(
-                f"{dict(zip(self.member_cols, member))} has no row in the "
-                f"temperature table"
-                + (f" {self.table.path}" if self.table.path else "")
-            )
-        return member
+        if member in self.levels or member in self.excluded:
+            return member
+        named = dict(zip(self.member_cols, member))
+        if member in set(self.table.members):
+            raise ValueError(f"{named} was not assessed")
+        raise ValueError(
+            f"{named} has no row in the temperature table"
+            + (f" {self.table.path}" if self.table.path else "")
+        )
 
     def missing(self, members: Iterable[Sequence[str]]) -> list[tuple[str, ...]]:
         """The members that have no row in the table, sorted."""
-        return sorted({tuple(m) for m in members} - set(self.levels))
+        return sorted({tuple(m) for m in members} - set(self.table.members))
 
     def windows_of(self, member: Sequence[str]) -> tuple[LevelWindow, ...]:
         """The periods in which a member has a level, in the order of
-        ``periods``. Raises if the member has no row in the table."""
+        ``periods``, none for an excluded surrogate. Raises if the member
+        was not assessed."""
         member = self._known(member)
+        if member in self.excluded:
+            return ()
         return tuple(
             LevelWindow(level, period.label, *period.impact_span)
             for period, level in zip(self.periods, self.levels[member])
@@ -242,15 +259,18 @@ class WarmingLevels:
 
     def record(self, members: Optional[Iterable[Sequence[str]]] = None) -> dict:
         """What a manifest says of a run, as plain values. ``members``
-        are those the run used, and every member of the table if it is
-        left out. The rest of the table is listed under
-        ``unused_members``. Raises if a member has no row."""
+        are those the run used, and every member assessed or excluded if
+        it is left out. The excluded surrogates are listed under
+        ``excluded_surrogates`` and the rest of the table under
+        ``unused_members``. Raises if a member was not assessed."""
         used = (
-            list(self.levels)
+            list(self.levels) + list(self.excluded)
             if members is None
             else list(dict.fromkeys(self._known(m) for m in members))
         )
-        in_run = set(used)
+        excluded = [m for m in used if m in self.excluded]
+        used = [m for m in used if m not in self.excluded]
+        in_run = set(used) | set(excluded)
         labels = [period.label for period in self.periods]
 
         def named(member: tuple[str, ...]) -> dict:
@@ -285,6 +305,7 @@ class WarmingLevels:
             "half_width": self.half_width,
             "levels": list(self.levels_declared),
             "tie": _TIE_RULE,
+            "surrogates": self.surrogates,
             "periods": [
                 {
                     "window": period.label,
@@ -301,8 +322,9 @@ class WarmingLevels:
                 for member in used
                 if all(level is None for level in self.levels[member])
             ],
+            "excluded_surrogates": [named(member) for member in excluded],
             "unused_members": [
-                named(member) for member in self.levels if member not in in_run
+                named(member) for member in self.table.members if member not in in_run
             ],
         }
 
@@ -316,6 +338,8 @@ def assign_warming_levels(
     half_width: float,
     periods: Sequence[Period],
     smoothing: str,
+    surrogates: str,
+    members: Optional[Iterable[Sequence[str]]] = None,
 ) -> WarmingLevels:
     """The level of every member in every period.
 
@@ -328,9 +352,18 @@ def assign_warming_levels(
 
     ``smoothing`` says how the series in the table was smoothed, in
     words, and goes into the record as it is. Nothing is smoothed
-    here. Raises if a member lacks a value for a year of the reference
-    period or of a ``gmst_span``.
+    here. ``surrogates`` is "exclude" or "include" and has no default.
+    Excluded, a surrogate model is at no level, since its series was
+    built to span the distribution of warming under weights that a
+    warming level does not use. ``members`` are the members assessed,
+    every member of the table if it is left out. Raises if one of them
+    has no row, or lacks a value for a year of the reference period or
+    of a ``gmst_span``.
     """
+    if surrogates not in SURROGATES:
+        raise ValueError(
+            f"surrogates has to be 'exclude' or 'include'; got {surrogates!r}"
+        )
     reference_period = _span("reference_period", reference_period)
     offset = float(offset)
     half_width = float(half_width)
@@ -382,9 +415,23 @@ def assign_warming_levels(
             )
         return [series[y] for y in years]
 
+    every = table.series()
+    asked = (
+        list(every)
+        if members is None
+        else list(dict.fromkeys(tuple(str(name) for name in m) for m in members))
+    )
+    absent = [m for m in asked if m not in every]
+    if absent:
+        raise ValueError(
+            f"{len(absent)} members have no row in the temperature table "
+            f"(first: {dict(zip(table.member_cols, absent[0]))})"
+        )
+    excluded = tuple(m for m in asked if surrogates == "exclude" and is_surrogate(m))
     means: dict[tuple[str, ...], tuple[float, ...]] = {}
     assigned: dict[tuple[str, ...], tuple[Optional[float], ...]] = {}
-    for member, series in table.series().items():
+    for member in (m for m in asked if m not in excluded):
+        series = every[member]
         base = values(member, series, reference_period, "the reference period")
         reference = math.fsum(base) / len(base)
         member_means, member_levels = [], []
@@ -416,4 +463,6 @@ def assign_warming_levels(
         smoothing=smoothing,
         means=means,
         levels=assigned,
+        surrogates=surrogates,
+        excluded=excluded,
     )
