@@ -107,11 +107,3 @@ real run reads it from its path on the cluster through `FRANCE_GMST`.
 - Published weights: Climate Impact Lab, GADM 2.0 weights,
   doi:10.5281/zenodo.21934155.
 - Mortality projections and SSP3 population: Climate Impact Lab.
-
-## A note on two paths
-
-The pipeline resolves `weights.dir`, `tree.root` and `output.dir`
-against the directory of its config, and `stats.model_weights` and
-`stats.warming_levels.gmst` against the directory it runs in. So the
-notebook writes those two whole, and shows them with the machine's
-directories taken out.

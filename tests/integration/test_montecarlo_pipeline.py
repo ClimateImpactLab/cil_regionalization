@@ -1039,6 +1039,62 @@ dir = "out_rel"
         assert cfg.tree.root == str(tree)
         assert cfg.output.dir == str(tmp_path / "out_rel")
 
+    @pytest.mark.parametrize("table", ["model_weights", "gmst"])
+    def test_the_tables_of_stats_resolve_against_config(self, tmp_path, table):
+        """As the other paths do. They resolved against the directory the
+        run was started in."""
+        stats = (
+            'model_weights = "tables/weights.tsv"\nmodel_weight_level = "zeppelin"\n'
+            'quantile_method = "lower_step"\nwindows = [[2050, 2051]]\n'
+            if table == "model_weights"
+            else 'quantile_method = "linear"\n'
+            "[stats.warming_levels]\n"
+            'gmst = "tables/gmst.csv"\nmember = ["zeppelin"]\n'
+            "reference_period = [1986, 2005]\noffset = 0.61\nlevels = [2.0]\n"
+            'half_width = 0.25\nsmoothing = "unknown"\n'
+            "[[stats.warming_levels.periods]]\n"
+            "gmst_span = [2040, 2059]\nimpact_span = [2040, 2059]\n"
+        )
+        cfg_path = tmp_path / "configs" / "rel.toml"
+        cfg_path.parent.mkdir()
+        cfg_path.write_text(
+            f"""
+[weights]
+dir = "weights"
+weight = "area"
+
+[tree]
+root = "tree"
+levels = ["kumquat", "zeppelin"]
+filename = "damages.parquet"
+
+[tree.expect]
+kumquat = ["k0", "k1"]
+zeppelin = ["z0", "z1", "z2"]
+
+[data]
+kind = "extensive"
+version = "{SOURCE_VERSION}"
+
+[output]
+dir = "out"
+
+[stats]
+sample_dims = ["kumquat", "zeppelin"]
+time_col = "year"
+summation = "fast"
+time_reduction = "window_mean"
+{stats}"""
+        )
+        cfg = load_pipeline_config(cfg_path)
+        found = (
+            cfg.stats.model_weights
+            if table == "model_weights"
+            else cfg.stats.warming_levels.gmst
+        )
+        name = "weights.tsv" if table == "model_weights" else "gmst.csv"
+        assert found == str(tmp_path / "configs" / "tables" / name)
+
 
 class TestNoSiteFactsInCode:
     def test_pipeline_code_carries_no_absolute_paths_or_environments(self):

@@ -585,8 +585,9 @@ class MonteCarloPipelineConfig(_Strict):
 def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
     """Load and validate a pipeline TOML; resolve relative paths.
 
-    ``weights.dir``, ``tree.root``, and ``output.dir`` given as relative
-    paths resolve against the config file's directory, matching
+    ``weights.dir``, ``tree.root``, ``output.dir``,
+    ``stats.model_weights`` and ``stats.warming_levels.gmst`` given as
+    relative paths resolve against the config file's directory, matching
     `config.load_config`.
     """
     p = Path(path).resolve()
@@ -600,8 +601,16 @@ def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
             return value
         return str((p.parent / value).resolve())
 
-    for section, key in (("weights", "dir"), ("tree", "root"), ("output", "dir")):
-        block = data.get(section)
+    for *sections, key in (
+        ("weights", "dir"),
+        ("tree", "root"),
+        ("output", "dir"),
+        ("stats", "model_weights"),
+        ("stats", "warming_levels", "gmst"),
+    ):
+        block = data
+        for section in sections:
+            block = block.get(section) if isinstance(block, dict) else None
         if isinstance(block, dict) and isinstance(block.get(key), str):
             block[key] = _resolve(block[key])
     return MonteCarloPipelineConfig.model_validate(data)

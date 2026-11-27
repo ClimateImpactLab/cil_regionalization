@@ -997,10 +997,8 @@ def _(DATA, OUT, cilreg_cli, mo, pipeline_config, relative, shown, tree_section)
         'sample_dims = ["batch", "gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\n'
         'quantile_method = "lower_step"\nsummation = "fast"\n'
     )
-    # the pipeline resolves this path against the directory it runs in,
-    # not the config's, so it is written whole
     _weights = (
-        f'model_weights = "{DATA / "smme" / "rcp85_SMME_weights.tsv"}"\n'
+        f'model_weights = "{relative(DATA / "smme" / "rcp85_SMME_weights.tsv", OUT / "configs")}"\n'
         'model_weight_level = "gcm"\n'
     )
     aggregate_deaths = pipeline_config(
@@ -1222,11 +1220,11 @@ def _(
     GMST,
     OUT,
     PERIODS,
-    Path,
     WARMING,
     cilreg_cli,
     mo,
     pipeline_config,
+    relative,
     shown,
     tree_section,
 ):
@@ -1237,9 +1235,7 @@ def _(
         lines = [
             "",
             "[stats.warming_levels]",
-            # resolved against the directory the pipeline runs in, like
-            # the model weights, so written whole
-            f'gmst = "{Path(GMST).resolve()}"',
+            f'gmst = "{relative(GMST, _configs)}"',
             'member = ["gcm", "rcp"]',
             f"reference_period = {list(WARMING['reference_period'])}",
             f"offset = {WARMING['offset']}",

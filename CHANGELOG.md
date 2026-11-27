@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`stats.model_weights` and `stats.warming_levels.gmst` given as
+relative paths now resolve against the directory of the pipeline
+config, as `weights.dir`, `tree.root` and `output.dir` do.** They
+resolved against the directory the run was started in, so a config
+that relied on that has to give the path from its own directory.
+
 **The rows of a pipeline statistics file, and of the reduced file,
 come in a new order. No value changed.** **`quantile_method` and
 `summation` are new, have no default, and have to be given: in every
