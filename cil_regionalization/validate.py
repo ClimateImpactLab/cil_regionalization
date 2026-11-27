@@ -595,7 +595,11 @@ def enforce_source_policies(
         )
         if policy == "error":
             errors.append(message + "; " + hints[case])
-        else:
+        elif manifest is not None:
             logger.warning("%s; recorded in the manifest and skipped", message)
+        else:
+            logger.warning(
+                "%s; skipped, and listed in the coverage of the result", message
+            )
     if errors:
         raise ValueError("; ".join(errors))

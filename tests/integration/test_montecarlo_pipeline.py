@@ -170,7 +170,13 @@ class TestEndToEnd:
 
         # Statistics: 2 targets x 2 windows x 3 statistics.
         stats = result.stats
-        assert set(stats.columns) == {"target_id", "statistic", "value", "window"}
+        assert set(stats.columns) == {
+            "target_id",
+            "statistic",
+            "value",
+            "window",
+            "weight_share",
+        }
         assert len(stats) == 12
         assert set(stats["window"]) == {"2050-2051", "2080-2081"}
 
@@ -206,6 +212,7 @@ class TestEndToEnd:
             "value",
             "window",
             "n_members",
+            "weight_share",
         }
         # 2 kumquat x 3 zeppelin leaves, one member each.
         written = pd.read_parquet(result.paths["statistics"])
@@ -635,7 +642,7 @@ class TestLabelPlacement:
                 weight="area",
                 data_version=SOURCE_VERSION,
                 value_col="value",
-            ).frame
+            ).frame.drop(columns=["weight_share"])
             reduced.append(
                 window_means(
                     applied,
@@ -665,6 +672,7 @@ class TestLabelPlacement:
             ),
             cfg,
         )
+        statistics["weight_share"] = 1.0
         assert list(statistics.columns) == [
             "target_id",
             "band",
@@ -672,6 +680,7 @@ class TestLabelPlacement:
             "window",
             "statistic",
             "value",
+            "weight_share",
         ]
 
         pd.testing.assert_frame_equal(result.stats, statistics, check_exact=True)
@@ -877,6 +886,7 @@ class TestConfigurableTree:
             "statistic",
             "value",
             "window",
+            "weight_share",
         }
         assert set(stats["flavor"]) == {"sweet", "sour"}
 
@@ -1877,6 +1887,7 @@ class TestLeafFiles:
             "rows_per_group",
             "schema",
             "stem",
+            "target_coverage",
             "targets",
             "targets_per_group",
         ]
@@ -1911,6 +1922,10 @@ class TestLeafFiles:
                 "rows_in": 8,
                 "rows_out": 8,
                 "coverage": entry["coverage"],
+                "target_coverage": {
+                    "left_out": {"no weight": [], "no data": []},
+                    "partial": [],
+                },
                 "mass_balance_rel_error": entry["mass_balance_rel_error"],
                 "size": path.stat().st_size,
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -2580,6 +2595,117 @@ def _same_frames(one: pd.DataFrame, two: pd.DataFrame) -> None:
     assert one["value"].to_numpy().tobytes() == two["value"].to_numpy().tobytes()
 
 
+class TestTargetCoverage:
+    """The statistics carry the share of each target's weight basis,
+    the smallest any pooled leaf gave it, and the manifests list the
+    targets left out and those that are partial."""
+
+    @staticmethod
+    def _raw(weights_dir, tmp_path) -> tuple[dict, Path]:
+        """Leaf k0/z1 lacks u2, a share of T1 and the whole of T2."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        path = tree / "k0" / "z1" / "damages.parquet"
+        leaf = pd.read_parquet(path)
+        leaf[leaf["unit_id"] != "u2"].to_parquet(path, index=False)
+        raw = _pipeline_cfg(weights_dir, tree, out, levels=_LEVELS).model_dump()
+        raw["policies"] = {"on_absent_from_data": "skip"}
+        raw["output"]["write_leaves"] = True
+        return raw, out
+
+    @staticmethod
+    def _t1_share(weights_dir) -> float:
+        from cil_regionalization.apply import WeightsArtifact
+
+        frame = WeightsArtifact.load(weights_dir).frame
+        basis = frame[frame["target_id"] == "T1"].set_index("unit_id")["area_raw"]
+        return float(basis["u1"] / basis.sum())
+
+    def test_a_target_short_of_a_unit_in_one_leaf_carries_its_share(
+        self, weights_dir, tmp_path
+    ):
+        """Failed with no such column, and T1 averaged as if whole."""
+        raw, out = self._raw(weights_dir, tmp_path)
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        share = self._t1_share(weights_dir)
+        assert 0 < share < 1
+        shares = result.stats.groupby("target_id")["weight_share"].unique()
+        assert shares["T1"].tolist() == [share]
+        assert shares["T2"].tolist() == [1.0]
+
+        manifest = json.loads((out / "statistics.manifest.json").read_text())
+        assert manifest["target_coverage"] == {
+            "basis": "area_raw",
+            "left_out": {
+                "no weight": {"count": 0, "ids": []},
+                "no data": {"count": 0, "ids": []},
+            },
+            "partial": {"count": 1, "smallest": share, "targets": [["T1", share]]},
+        }
+        leaves = _leaves_manifest(out)
+        assert leaves["target_coverage"] == {
+            "basis": "area_raw",
+            "left_out": {"no weight": [], "no data": []},
+        }
+        by_leaf = {tuple(e["leaf"]): e["target_coverage"] for e in leaves["leaves"]}
+        assert by_leaf["k0", "z1"] == {
+            "left_out": {"no weight": [], "no data": [["T2"]]},
+            "partial": [[["T1"], share]],
+        }
+        assert by_leaf["k1", "z2"] == {
+            "left_out": {"no weight": [], "no data": []},
+            "partial": [],
+        }
+
+    def test_a_reduce_gives_the_shares_of_the_leaves_it_pools(
+        self, weights_dir, tmp_path
+    ):
+        """All of them as stage all does, and without the short leaf a
+        share of one."""
+        raw, out = self._raw(weights_dir, tmp_path)
+        whole = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        again = TestReduce._reduce(raw)
+        pd.testing.assert_series_equal(
+            again.stats["weight_share"], whole.stats["weight_share"]
+        )
+        fewer = json.loads(json.dumps(raw))
+        fewer["tree"]["exclude"] = [["k0", "z1"]]
+        assert set(TestReduce._reduce(fewer, stem="fewer").stats["weight_share"]) == {
+            1.0
+        }
+
+    def test_a_target_left_out_of_every_leaf_is_named_in_the_manifest(
+        self, weights_dir, tmp_path
+    ):
+        raw, out = self._raw(weights_dir, tmp_path)
+        tree = Path(raw["tree"]["root"])
+        for path in tree.rglob("damages.parquet"):
+            leaf = pd.read_parquet(path)
+            leaf[leaf["unit_id"] != "u2"].to_parquet(path, index=False)
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert set(result.stats["target_id"]) == {"T1"}
+        manifest = json.loads((out / "statistics.manifest.json").read_text())
+        assert manifest["target_coverage"]["left_out"]["no data"] == {
+            "count": 1,
+            "ids": [["T2"]],
+        }
+        assert _leaves_manifest(out)["target_coverage"]["left_out"]["no data"] == [
+            ["T2"]
+        ]
+
+    def test_a_leaves_manifest_without_the_targets_is_not_reduced(
+        self, weights_dir, tmp_path
+    ):
+        raw, out = self._raw(weights_dir, tmp_path)
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        path = out / "leaves" / "statistics.leaves.manifest.json"
+        document = json.loads(path.read_text())
+        del document["target_coverage"]
+        path.write_text(json.dumps(document))
+        with pytest.raises(ValueError, match="before each leaf recorded its targets"):
+            TestReduce._reduce(raw)
+
+
 @pytest.mark.usefixtures("one_target_a_group")
 class TestReduce:
     """`--stage reduce` takes the statistics from the leaf files."""
@@ -2648,6 +2774,7 @@ class TestReduce:
             "statistic",
             "value",
             "n_members",
+            "weight_share",
         ]
         for stem, memory_gb, blocks in (("one", 1.0, 1), ("two", _ONE_GROUP_GB, 2)):
             got = self._reduce(raw, stem=stem, memory_gb=memory_gb)
@@ -3192,7 +3319,7 @@ class TestPooledYears:
             )
         ]
         columns = [c for c in stats.columns if c != "n_sample"] + ["n_sample"]
-        return _ordered(stats[columns], cfg)
+        return _ordered(stats[columns], cfg).assign(weight_share=1.0)
 
     @_METHODS_AND_WEIGHTS
     def test_stage_all_writes_the_leaves_and_pools_their_years(
@@ -3216,6 +3343,7 @@ class TestPooledYears:
             "value",
             "n_members",
             "n_sample",
+            "weight_share",
         ]
         assert _leaves_manifest(out)["complete"] is True
         _same_frames(result.stats, self._by_hand(cfg, out))
@@ -3235,6 +3363,7 @@ class TestPooledYears:
             "window",
             "statistic",
             "value",
+            "weight_share",
         ]
 
     def test_the_mean_stays_and_the_quantiles_move(self, weights_dir, tmp_path):
@@ -3718,7 +3847,7 @@ class TestPerYear:
             quantile_method=cfg.stats.quantile_method,
             summation=cfg.stats.summation,
         )
-        return _ordered(stats, cfg)
+        return _ordered(stats, cfg).assign(weight_share=1.0)
 
     @_METHODS_AND_WEIGHTS
     def test_stage_all_writes_the_leaves_and_keeps_every_year(
@@ -3741,6 +3870,7 @@ class TestPerYear:
             "statistic",
             "value",
             "n_members",
+            "weight_share",
         ]
         assert result.stats["year"].dtype == np.int64
         assert sorted(result.stats["year"].unique()) == [2050, 2051, 2080, 2081]
@@ -4116,7 +4246,7 @@ class TestWarmingLevels:
                 counted["draw"].nunique().reindex(index).to_numpy(),
             )
         stats["n_bin_members"] = counted["model"].nunique().reindex(index).to_numpy()
-        return _ordered(stats, cfg)
+        return _ordered(stats, cfg).assign(weight_share=1.0)
 
     @pytest.mark.parametrize(
         "quantile_method", ["lower_step", "inverted_cdf", "linear"]
@@ -4138,7 +4268,7 @@ class TestWarmingLevels:
         assert list(result.stats.columns) == (
             ["target_id", "warming_level", "window", "statistic", "value", "n_members"]
             + (["n_sample"] if pooled else [])
-            + ["n_bin_members"]
+            + ["n_bin_members", "weight_share"]
         )
         assert result.stats["warming_level"].dtype == "float64"
         _same_frames(result.stats, self._by_hand(cfg, out))

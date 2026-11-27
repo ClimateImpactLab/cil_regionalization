@@ -208,6 +208,16 @@ per group (typically the country) as well as globally.
 universe for subset runs; the coverage checks stay fully strict within
 that universe.
 
+Every row of the output carries ``weight_share``, the share of its
+target's weight basis behind the value, exactly 1 when every unit of
+the target that carries basis contributed. The basis is the
+artifact's raw column of the weight, its population or crop area, so
+a unit with no crop area takes nothing from a target's share, and a
+target with no basis at all, fed by the area fallback alone, is
+measured by its weights. ``AppliedResult.targets`` lists the targets
+the weights have that are not in the output, with the reason, and
+the partial ones. A sum over no value is NaN, not zero.
+
 ### `SourceUnitPolicies`
 
 ```python

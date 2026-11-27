@@ -61,6 +61,7 @@ increment notes for the reasoning.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,7 @@ from cil_regionalization.schema import (
     GRID_CELLS,
     OutputSchema,
     SourceUnits,
+    raw_column,
     require_normalization,
     weight_column,
 )
@@ -88,6 +90,15 @@ from cil_regionalization.validate import (
     check_sum_to_one,
     enforce_source_policies,
 )
+
+logger = logging.getLogger(__name__)
+
+# The column `apply_weights` writes on every row, the share of the
+# target's weight basis behind the value.
+SHARE_COLUMN = "weight_share"
+# why a target the weights know is not in the output
+NO_WEIGHT = "no weight"
+NO_DATA = "no data"
 
 # column spellings accepted for cell centroids in external tables,
 # including the pix_cent_x / pix_cent_y of CIL segment weight files
@@ -503,6 +514,7 @@ class AppliedResult:
     dimension of the input data. ``mass_balance`` is None for intensive
     aggregations, whose weighted means are not conserved quantities;
     ``mass_balance_denominator`` is set only for ratio aggregations.
+    ``targets`` is what `apply_weights` found of the targets.
     """
 
     frame: pd.DataFrame
@@ -511,6 +523,31 @@ class AppliedResult:
     coverage: SourceCoverageReport
     mass_balance: MassBalanceReport | None
     mass_balance_denominator: MassBalanceReport | None = None
+    targets: "TargetReport | None" = None
+
+
+@dataclass(frozen=True)
+class TargetReport:
+    """The targets an application was asked for that are not in its
+    output, by reason, and those whose value rests on part of their
+    weight basis, each with the smallest share a row of it has.
+    ``basis`` is the column the shares are taken against.
+
+    A target is asked for when the weights, restricted to the sources
+    asked for, have a row of it. It is left out for "no weight" when
+    none of those rows has a weight, and for "no data" when none of its
+    weighted sources is in the data."""
+
+    basis: str
+    left_out: Mapping[str, tuple[tuple, ...]]
+    partial: tuple[tuple[tuple, float], ...]
+
+    @property
+    def counts(self) -> dict:
+        return {
+            "left_out": {reason: len(ids) for reason, ids in self.left_out.items()},
+            "partial": len(self.partial),
+        }
 
 
 def apply_weights(
@@ -546,6 +583,16 @@ def apply_weights(
     ``restrict_to_sources`` limits the weight frame to an explicit source
     universe for subset runs; the coverage checks stay fully strict within
     that universe.
+
+    Every row of the output carries ``weight_share``, the share of its
+    target's weight basis behind the value, exactly 1 when every unit of
+    the target that carries basis contributed. The basis is the
+    artifact's raw column of the weight, its population or crop area, so
+    a unit with no crop area takes nothing from a target's share, and a
+    target with no basis at all, fed by the area fallback alone, is
+    measured by its weights. ``AppliedResult.targets`` lists the targets
+    the weights have that are not in the output, with the reason, and
+    the partial ones. A sum over no value is NaN, not zero.
     """
     if kind not in _KIND_TO_DIRECTION:
         raise ValueError(
@@ -580,6 +627,11 @@ def apply_weights(
     if group_col is not None and group_col not in data.columns:
         raise ValueError(f"data is missing group column {group_col!r}")
 
+    if SHARE_COLUMN in data.columns:
+        raise ValueError(
+            f"data has a column named {SHARE_COLUMN!r}, which apply_weights "
+            f"writes on every row of its output"
+        )
     dim_cols = [c for c in data.columns if c not in source_keys + value_cols]
     dup_key = source_keys + dim_cols
     # Each key column is hashed once: the source codes serve both the
@@ -595,7 +647,16 @@ def apply_weights(
             f"{dup_key}; duplicated rows would double count"
         )
 
-    weights_frame = artifact.frame[id_fields + source_keys + [wcol]]
+    raw = raw_column(weight)
+    basis_col = raw if raw in artifact.frame.columns else wcol
+    weights_frame = _with_basis(
+        artifact.frame[
+            id_fields + source_keys + list(dict.fromkeys([wcol, basis_col]))
+        ],
+        id_fields,
+        wcol,
+        basis_col,
+    )
     if restrict_to_sources is not None:
         allowed = {tuple(t) for t in restrict_to_sources}
         mask = weights_frame[source_keys].apply(tuple, axis=1).isin(allowed)
@@ -612,24 +673,72 @@ def apply_weights(
     )
     enforce_source_policies(coverage, policies or SourceUnitPolicies())
 
-    # NaN weights (the marked 'nan' fallback) carry no mass; the coverage
-    # check above has already classified all-NaN source units, so the
-    # remaining rows drop cleanly here.
-    weights_frame = weights_frame.dropna(subset=[wcol])
-    merged = weights_frame.merge(data, on=source_keys, how="inner")
+    requested = _ids(weights_frame, id_fields)
+    # A row with no weight, NaN as the marked 'nan' fallback leaves it or
+    # zero, carries no mass. The coverage check above has classified the
+    # source units all of whose rows are such.
+    weighted = weights_frame[weights_frame[wcol].notna() & (weights_frame[wcol] != 0)]
+    merged = weighted.merge(data, on=source_keys, how="inner")
 
     out_keys = id_fields + dim_cols
-    if kind == "extensive":
-        out = _aggregate_extensive(merged, out_keys, wcol, value_col)
-    elif kind == "intensive":
-        out = _aggregate_intensive(merged, out_keys, wcol, value_col)
+    contributing = merged[value_col].notna()
+    if denominator_col is not None:
+        contributing &= merged[denominator_col].notna()
+    columns = {
+        "_bc": merged["_basis"].where(contributing, 0.0),
+        "_cc": (contributing & (merged["_basis"] > 0)).astype(np.int64),
+    }
+    if kind == "intensive":
+        columns["_wx"] = merged[wcol] * merged[value_col]
+        columns["_w"] = merged[wcol].where(merged[value_col].notna(), 0.0)
     else:
-        num = _aggregate_extensive(merged, out_keys, wcol, value_col)
-        den = _aggregate_extensive(merged, out_keys, wcol, denominator_col)
-        out = num.merge(den, on=out_keys, how="outer")
-        out[value_col] = out[value_col] / out[denominator_col].where(
-            out[denominator_col] != 0.0
-        )
+        columns["_num"] = merged[wcol] * merged[value_col]
+        if kind == "ratio":
+            columns["_den"] = merged[wcol] * merged[denominator_col]
+    grouped = (
+        merged[out_keys + ["_total", "_rows"]]
+        .assign(**columns)
+        .groupby(out_keys, sort=False)
+    )
+    sums = grouped[list(columns)].sum(min_count=1)
+    sums[["_total", "_rows"]] = grouped[["_total", "_rows"]].first()
+    sums = sums.reset_index()
+    if kind == "intensive":
+        sums[value_col] = sums["_wx"] / sums["_w"].where(sums["_w"] != 0.0)
+    elif kind == "extensive":
+        sums[value_col] = sums["_num"]
+    else:
+        sums[value_col] = sums["_num"] / sums["_den"].where(sums["_den"] != 0.0)
+    # every row of the target that carries basis contributed, so exactly 1
+    sums[SHARE_COLUMN] = np.where(
+        sums["_cc"].fillna(0).to_numpy() == sums["_rows"].to_numpy(),
+        1.0,
+        sums["_bc"].fillna(0.0) / sums["_total"],
+    )
+    out = sums[out_keys + [value_col, SHARE_COLUMN]]
+    if kind != "intensive":
+        num = sums[out_keys + ["_num"]].rename(columns={"_num": value_col})
+    if kind == "ratio":
+        den = sums[out_keys + ["_den"]].rename(columns={"_den": denominator_col})
+
+    present = _ids(out, id_fields)
+    weighted_ids = _ids(weighted, id_fields)
+    shares = out.groupby(id_fields, sort=False)[SHARE_COLUMN].min()
+    partial = shares[shares < 1.0]
+    targets = TargetReport(
+        basis=basis_col,
+        left_out={
+            NO_WEIGHT: tuple(sorted(requested - weighted_ids)),
+            NO_DATA: tuple(sorted(weighted_ids - present)),
+        },
+        partial=tuple(
+            sorted(
+                ((key if isinstance(key, tuple) else (key,)), float(share))
+                for key, share in partial.items()
+            )
+        ),
+    )
+    _say_targets(targets, len(requested))
 
     balance: MassBalanceReport | None = None
     balance_den: MassBalanceReport | None = None
@@ -655,7 +764,6 @@ def apply_weights(
             balance_den = _run_mass_balance(
                 applied_data, den, denominator_col, group_col, mass_balance_tolerance
             )
-            out = out.drop(columns=[denominator_col])
 
     return AppliedResult(
         frame=out,
@@ -664,7 +772,51 @@ def apply_weights(
         coverage=coverage,
         mass_balance=balance,
         mass_balance_denominator=balance_den,
+        targets=targets,
     )
+
+
+def _ids(frame: pd.DataFrame, id_fields: list[str]) -> set[tuple]:
+    return set(frame[id_fields].drop_duplicates().itertuples(index=False, name=None))
+
+
+def _with_basis(
+    frame: pd.DataFrame, id_fields: list[str], wcol: str, basis_col: str
+) -> pd.DataFrame:
+    """``frame`` with each row's basis, its target's total basis and the
+    number of its target's rows that carry basis, over every row of the
+    artifact. A target whose rows carry no basis at all, as rows of the
+    area fallback carry none of the raster's, is measured by its
+    weights instead."""
+    basis = frame[basis_col].fillna(0.0).astype("float64")
+    keys = [frame[f] for f in id_fields]
+    total = basis.groupby(keys, sort=False).transform("sum")
+    by_weight = total == 0.0
+    if by_weight.any():
+        basis = basis.where(~by_weight, frame[wcol].fillna(0.0).astype("float64"))
+        total = basis.groupby(keys, sort=False).transform("sum")
+    rows = (basis > 0).groupby(keys, sort=False).transform("sum")
+    return frame.assign(_basis=basis, _total=total, _rows=rows.astype(np.int64))
+
+
+def _say_targets(targets: TargetReport, n_requested: int) -> None:
+    left = {reason: len(ids) for reason, ids in targets.left_out.items() if ids}
+    if not left and not targets.partial:
+        return
+    parts = []
+    if left:
+        parts.append(
+            f"{sum(left.values())} of {n_requested} targets are left out ("
+            + ", ".join(f"{reason}: {n}" for reason, n in left.items())
+            + ")"
+        )
+    if targets.partial:
+        smallest = min(share for _, share in targets.partial)
+        parts.append(
+            f"{len(targets.partial)} rest on part of their {targets.basis} "
+            f"(smallest share {smallest:.3g}, in column {SHARE_COLUMN!r})"
+        )
+    logger.warning("%s; AppliedResult.targets lists them", " and ".join(parts))
 
 
 def _check_coverage_marking(
@@ -796,33 +948,6 @@ def _rows_in(frame: pd.DataFrame, keys: list[str], ids: set[tuple]) -> np.ndarra
     and about 16 GiB.
     """
     return pd.MultiIndex.from_frame(frame[keys]).isin(ids)
-
-
-def _aggregate_extensive(
-    merged: pd.DataFrame, out_keys: list[str], wcol: str, value_col: str
-) -> pd.DataFrame:
-    contrib = merged[wcol] * merged[value_col]
-    out = (
-        merged.assign(_contrib=contrib)
-        .groupby(out_keys, sort=False)["_contrib"]
-        .sum()
-        .reset_index()
-        .rename(columns={"_contrib": value_col})
-    )
-    return out
-
-
-def _aggregate_intensive(
-    merged: pd.DataFrame, out_keys: list[str], wcol: str, value_col: str
-) -> pd.DataFrame:
-    has_value = merged[value_col].notna()
-    frame = merged.assign(
-        _wx=merged[wcol] * merged[value_col],
-        _w=merged[wcol].where(has_value, 0.0),
-    )
-    sums = frame.groupby(out_keys, sort=False)[["_wx", "_w"]].sum().reset_index()
-    sums[value_col] = sums["_wx"] / sums["_w"].where(sums["_w"] != 0.0)
-    return sums.drop(columns=["_wx", "_w"])
 
 
 def _run_mass_balance(

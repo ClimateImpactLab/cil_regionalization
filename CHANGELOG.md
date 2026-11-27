@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+**Every row `apply_weights` returns carries `weight_share`, the share
+of its target's weight basis behind the value, and the targets the
+weights have that are not in the output are listed with their reason
+in `AppliedResult.targets`.** Before, a target with no weight, such as
+a unit with no crop area for a crop, was absent from the output with
+nothing saying so, and a target short of a source region was averaged
+over what it had with nothing on the row. A pipeline statistics file
+has the column too, and its manifest and the leaves manifest list the
+targets under `target_coverage`. A leaves manifest written before is
+not reduced, and its leaves have to be aggregated again. A target whose
+rows all have a weight of zero is now left out for "no weight", where
+it came out as NaN. An extensive sum over no value is NaN, where it was
+0. The warning for skipped source units said they were recorded in the
+manifest, and `apply_weights` is given none. It now says they are in
+the coverage of the result.
+
 **`stats.model_weights` and `stats.warming_levels.gmst` given as
 relative paths now resolve against the directory of the pipeline
 config, as `weights.dir`, `tree.root` and `output.dir` do.** They

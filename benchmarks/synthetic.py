@@ -249,7 +249,7 @@ def artifact(scale: int = SCALE) -> WeightsArtifact:
 def apply_result(art: WeightsArtifact, leaf: pd.DataFrame) -> AppliedResult:
     """Weight a leaf onto the targets, skipping the regions with no crop
     area. A target whose regions all have none is missing from the
-    frame, and the library reports the regions but not that target."""
+    frame and listed in the result's targets."""
     return cilreg.apply_weights(
         art,
         leaf,
@@ -262,7 +262,9 @@ def apply_result(art: WeightsArtifact, leaf: pd.DataFrame) -> AppliedResult:
 
 
 def apply(art: WeightsArtifact, leaf: pd.DataFrame) -> pd.DataFrame:
-    return apply_result(art, leaf).frame
+    """The frame of `apply_result` without its share column, as the
+    pipeline reduces it."""
+    return apply_result(art, leaf).frame.drop(columns=["weight_share"])
 
 
 def best(fn, repeat: int = 3):

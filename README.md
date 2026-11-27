@@ -154,6 +154,29 @@ to hit its worst draw together. The pipeline aggregates each Monte
 Carlo draw separately, takes quantiles at the end, and rejects input
 that already contains quantiles.
 
+## What the output says about its targets
+
+Every row `apply_weights` returns carries `weight_share`, the share of
+its target's weight basis behind the value. The basis is the raw column
+of the weight in the file, the population or the crop area of each
+piece of the target. A row is 1.0 when every piece with basis had a
+value, and below 1.0 when a source region was missing from the data or
+had no value there. A piece with no crop area carries no basis, so a
+unit whose corn is all in some of its regions is whole. A filter on the
+column keeps the partial targets out.
+
+A target the weights have and the output lacks is listed in
+`AppliedResult.targets` with its reason. "no weight" is a target none of
+whose pieces has a weight, a unit with no crop area for that crop.
+"no data" is one whose weighted regions are none of them in the data.
+`apply_weights` logs how many of each it found.
+
+A pipeline run writes `weight_share` on every row of its statistics,
+the smallest share any pooled leaf gave the target. Its manifest lists
+under `target_coverage` the targets left out of every pooled leaf, by
+reason, and the partial ones with their shares. The leaves manifest
+records the same for each leaf.
+
 ## Choosing the right type of weights
 
 Ask one question: does adding your variable across regions produce a

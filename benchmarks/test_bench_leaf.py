@@ -48,7 +48,8 @@ def test_label_placement_gives_the_same_leaf():
     art, leaf = artifact(), source_leaf()
 
     apply_s, result = best(lambda: apply_result(art, leaf))
-    applied = result.frame
+    # the pipeline takes the share off before the window means
+    applied = result.frame.drop(columns=["weight_share"])
     labelled = applied.assign(**LABELS)
     before_s, before = best(lambda: window_means(labelled, **_KW))
     after_s, after = best(
@@ -62,10 +63,9 @@ def test_label_placement_gives_the_same_leaf():
     pd.testing.assert_frame_equal(after, before, check_exact=True)
     pd.testing.assert_frame_equal(first, before, check_exact=True)
 
-    # The library reports the regions it skipped, not the targets that
-    # were left with nothing, so those are counted here.
     n_targets = len(art.frame[ID_FIELDS].drop_duplicates())
-    n_absent = n_targets - len(applied) // len(YEARS)
+    n_absent = len(result.targets.left_out["no weight"])
+    assert n_absent == n_targets - len(applied) // len(YEARS)
     report(
         f"leaf: {len(leaf):,} rows read, {len(applied):,} after "
         f"apply_weights, {len(before):,} reduced"

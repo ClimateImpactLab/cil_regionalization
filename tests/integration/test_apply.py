@@ -162,6 +162,7 @@ class TestExtensiveNestedLevels:
             "t",
             "country",
             "value",
+            "weight_share",
         }
         assert set(result.frame["banana_dim"]) == {"scn_a", "scn_b"}
         assert set(result.frame["t"]) == {2050, 2051}
@@ -759,3 +760,149 @@ class TestPartialCoverageGuard:
             data_version=SOURCE_VERSION,
         )
         assert result.coverage.clean
+
+
+class TestTargetsAccounted:
+    """Every target the weights know is either in the output with the
+    share of its weight basis behind its value, or listed with the
+    reason it is not."""
+
+    @staticmethod
+    def _crop() -> WeightsArtifact:
+        """Per destination, as crop area weights are. T1 has two units
+        with crop area, T2 one with and one without, T3 none."""
+        frame = pd.DataFrame(
+            {
+                "adm": ["T1", "T1", "T2", "T2", "T3"],
+                "unit_id": ["s1", "s2", "s3", "s4", "s5"],
+                "cropwt": [0.25, 0.75, 1.0, np.nan, np.nan],
+                "crop_raw": [10.0, 30.0, 5.0, np.nan, np.nan],
+            }
+        )
+        return _artifact(
+            frame,
+            id_fields=["adm"],
+            normalization="per_destination",
+            weight_names=["crop"],
+        )
+
+    @staticmethod
+    def _data(units, value=1.0):
+        return pd.DataFrame({"unit_id": list(units), "value": value})
+
+    def _apply(self, artifact, data, **kwargs):
+        return apply_weights(
+            artifact,
+            data,
+            kind="intensive",
+            weight="crop",
+            data_version=SOURCE_VERSION,
+            policies=SourceUnitPolicies(
+                on_zero_weight="skip", on_absent_from_data="skip"
+            ),
+            **kwargs,
+        )
+
+    def test_a_target_with_no_weight_is_left_out_by_name(self):
+        """Failed with T3 absent from the output and nothing saying so."""
+        result = self._apply(self._crop(), self._data(["s1", "s2", "s3", "s4", "s5"]))
+        assert list(result.frame["adm"]) == ["T1", "T2"]
+        assert result.targets.left_out == {"no weight": (("T3",),), "no data": ()}
+
+    def test_a_target_whose_units_are_not_in_the_data_is_left_out_by_name(self):
+        result = self._apply(self._crop(), self._data(["s1", "s2"]))
+        assert list(result.frame["adm"]) == ["T1"]
+        assert result.targets.left_out == {
+            "no weight": (("T3",),),
+            "no data": (("T2",),),
+        }
+
+    def test_every_row_carries_the_share_of_its_basis_behind_it(self):
+        """T1 lacks s2, three quarters of its crop area. T2's unit
+        without crop area carries no basis, so T2 is whole."""
+        result = self._apply(self._crop(), self._data(["s1", "s3", "s4"]))
+        shares = dict(zip(result.frame["adm"], result.frame["weight_share"]))
+        assert shares == {"T1": 0.25, "T2": 1.0}
+        assert result.targets.partial == ((("T1",), 0.25),)
+        assert result.targets.basis == "crop_raw"
+
+    def test_a_whole_target_has_a_share_of_exactly_one(self):
+        """Not a sum of shares that rounds to a bit below one."""
+        frame = pd.DataFrame(
+            {
+                "adm": ["T1"] * 10,
+                "unit_id": [f"s{i}" for i in range(10)],
+                "cropwt": [0.1] * 10,
+                "crop_raw": [0.1] * 10,
+            }
+        )
+        artifact = _artifact(
+            frame,
+            id_fields=["adm"],
+            normalization="per_destination",
+            weight_names=["crop"],
+        )
+        result = self._apply(artifact, self._data([f"s{i}" for i in range(10)]))
+        assert result.frame["weight_share"].tolist() == [1.0]
+        assert result.targets.partial == ()
+
+    def test_a_row_with_no_value_behind_it_has_no_value_and_a_share_of_zero(self):
+        """Extensive. Failed with 0.0 for a sum over no value."""
+        frame = pd.DataFrame(
+            {
+                "adm": ["T1", "T1"],
+                "unit_id": ["s1", "s2"],
+                "popwt": [1.0, 1.0],
+                "pop_raw": [3.0, 1.0],
+            }
+        )
+        artifact = _artifact(frame, id_fields=["adm"], normalization="per_source")
+        data = pd.DataFrame(
+            {
+                "unit_id": ["s1", "s2", "s1", "s2"],
+                "year": [2050, 2050, 2051, 2051],
+                "value": [1.0, 2.0, np.nan, np.nan],
+            }
+        )
+        out = apply_weights(
+            artifact, data, kind="extensive", weight="pop", data_version=SOURCE_VERSION
+        ).frame.set_index("year")
+        assert out.loc[2050, "value"] == 3.0 and out.loc[2050, "weight_share"] == 1.0
+        assert np.isnan(out.loc[2051, "value"]) and out.loc[2051, "weight_share"] == 0.0
+
+    def test_a_target_measured_by_its_weights_when_it_has_no_basis(self):
+        """Its rows took the area fallback, which carries none of the
+        raster's basis."""
+        frame = pd.DataFrame(
+            {
+                "adm": ["T1", "T1"],
+                "unit_id": ["s1", "s2"],
+                "popwt": [1.0, 1.0],
+                "pop_raw": [0.0, 0.0],
+            }
+        )
+        artifact = _artifact(frame, id_fields=["adm"], normalization="per_source")
+        result = apply_weights(
+            artifact,
+            self._data(["s1"]),
+            kind="extensive",
+            weight="pop",
+            data_version=SOURCE_VERSION,
+            policies=SourceUnitPolicies(on_absent_from_data="skip"),
+        )
+        assert result.frame["weight_share"].tolist() == [0.5]
+
+    def test_a_skipped_unit_is_said_to_be_in_the_result_not_in_a_manifest(self, caplog):
+        """apply_weights is given no manifest. Failed with "recorded in
+        the manifest"."""
+        with caplog.at_level("WARNING"):
+            self._apply(self._crop(), self._data(["s1", "s2", "s3", "s4", "s5"]))
+        said = " ".join(record.getMessage() for record in caplog.records)
+        assert "manifest" not in said
+        assert "listed in the coverage of the result" in said
+        assert "1 of 3 targets are left out (no weight: 1)" in said
+
+    def test_data_with_a_column_of_the_share_is_refused(self):
+        data = self._data(["s1"]).assign(weight_share=1.0)
+        with pytest.raises(ValueError, match="column named 'weight_share'"):
+            self._apply(self._crop(), data)

@@ -138,7 +138,7 @@ else:  # pragma: no cover
     import tomli as tomllib
 
 from cil_regionalization import leaves as leaf_format
-from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.apply import SHARE_COLUMN, WeightsArtifact, apply_weights
 from cil_regionalization.config import SourceUnitPolicies, _Strict
 from cil_regionalization.manifest import collect_package_versions
 from cil_regionalization.model_weights import ModelWeights, read_model_weights
@@ -917,8 +917,9 @@ def run_pipeline(
         )
 
     files = {tuple(o["leaf"]): o.pop("leaf_file") for o in outcomes}
+    common = _split_targets(outcomes)
     if leaves_document is not None:
-        _finish_leaves(plan, leaves_document, outcomes, files)
+        _finish_leaves(plan, leaves_document, outcomes, files, common)
         if not by_blocks:
             # the second pass prints it
             print(_unlisted_report(plan.leaves_manifest_path.parent), flush=True)
@@ -976,6 +977,14 @@ def run_pipeline(
     for col in stats.columns:
         if isinstance(stats[col].dtype, pd.CategoricalDtype):
             stats[col] = stats[col].astype(str)
+    targets = None
+    if artifact is not None:
+        stats, targets = _with_shares(
+            stats,
+            list(artifact.schema.id_fields),
+            common,
+            [o["target_coverage"] for o in outcomes],
+        )
     stats = _ordered(stats, cfg)
     _log_memory("after pooled statistics")
 
@@ -1021,6 +1030,7 @@ def run_pipeline(
         "time_reduction": cfg.stats.time_reduction,
         "years": None,
         "warming_levels": None,
+        "target_coverage": targets,
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
@@ -1046,6 +1056,106 @@ def run_pipeline(
             ),
         },
     )
+
+
+def _leaf_targets(report) -> dict:
+    """What `apply_weights` reported of one leaf's targets, as plain
+    values."""
+    return {
+        "basis": report.basis,
+        "left_out": {
+            reason: [list(key) for key in ids]
+            for reason, ids in report.left_out.items()
+        },
+        "partial": [[list(key), share] for key, share in report.partial],
+    }
+
+
+def _split_targets(outcomes: list[dict]) -> Optional[dict]:
+    """The targets every leaf leaves out, by reason, with the basis the
+    shares are taken against, or None if no leaf was weighted. Each
+    outcome keeps only the targets it leaves out besides, and its
+    partial ones."""
+    reports = [
+        o["target_coverage"] for o in outcomes if o.get("target_coverage") is not None
+    ]
+    if not reports:
+        return None
+    reasons = list(reports[0]["left_out"])
+    every = {
+        reason: set.intersection(
+            *({tuple(key) for key in report["left_out"][reason]} for report in reports)
+        )
+        for reason in reasons
+    }
+    for outcome in outcomes:
+        report = outcome.get("target_coverage")
+        if report is None:
+            continue
+        outcome["target_coverage"] = {
+            "left_out": {
+                reason: [
+                    list(key)
+                    for key in sorted(
+                        {tuple(k) for k in report["left_out"][reason]} - every[reason]
+                    )
+                ]
+                for reason in reasons
+            },
+            "partial": report["partial"],
+        }
+    return {
+        "basis": reports[0]["basis"],
+        "left_out": {
+            reason: [list(key) for key in sorted(every[reason])] for reason in reasons
+        },
+    }
+
+
+def _with_shares(
+    stats: pd.DataFrame, id_fields: list[str], common: dict, leaves: list[dict]
+) -> tuple[pd.DataFrame, dict]:
+    """``stats`` with the column of the share of each target's weight
+    basis, the smallest any pooled leaf gave it, 1 where none was
+    partial. Also what the manifest says of the targets, those left out
+    of every pooled leaf by reason and the partial ones."""
+    left_out = {}
+    for reason, ids in common["left_out"].items():
+        extra = [{tuple(key) for key in leaf["left_out"][reason]} for leaf in leaves]
+        keys = {tuple(key) for key in ids} | (
+            set.intersection(*extra) if extra else set()
+        )
+        left_out[reason] = {
+            "count": len(keys),
+            "ids": [list(key) for key in sorted(keys)],
+        }
+    smallest: dict[tuple, float] = {}
+    for leaf in leaves:
+        for key, share in leaf["partial"]:
+            key = tuple(key)
+            smallest[key] = min(share, smallest.get(key, share))
+    shares = pd.Series(1.0, index=stats.index, dtype="float64")
+    if smallest:
+        table = pd.DataFrame(
+            [list(key) + [share] for key, share in smallest.items()],
+            columns=id_fields + ["_share"],
+        )
+        for field in id_fields:
+            table[field] = table[field].astype(stats[field].dtype)
+        found = stats[id_fields].merge(table, on=id_fields, how="left")["_share"]
+        shares = pd.Series(found.fillna(1.0).to_numpy(), index=stats.index)
+    stats = stats.copy()
+    stats[SHARE_COLUMN] = shares
+    partial = sorted(smallest.items())
+    return stats, {
+        "basis": common["basis"],
+        "left_out": left_out,
+        "partial": {
+            "count": len(partial),
+            "smallest": min((share for _, share in partial), default=None),
+            "targets": [list(key) + [share] for key, share in partial],
+        },
+    }
 
 
 def _model_weights(cfg: MonteCarloPipelineConfig) -> Optional[ModelWeights]:
@@ -1294,10 +1404,15 @@ def _begin_leaves(
 
 
 def _finish_leaves(
-    plan: PipelinePlan, document: dict, outcomes: list[dict], files: dict
+    plan: PipelinePlan,
+    document: dict,
+    outcomes: list[dict],
+    files: dict,
+    common: Optional[dict],
 ) -> None:
     """Write the leaves manifest again, complete, with the accounting
-    of every leaf in plan order."""
+    of every leaf in plan order. ``common`` is what `_split_targets`
+    found every leaf shares, and ``outcomes`` hold what each adds."""
     by_leaf = {tuple(o["leaf"]): o for o in outcomes}
     schema = files[plan.leaves[0].values]["schema"]
     profiles: list[dict] = []
@@ -1318,6 +1433,7 @@ def _finish_leaves(
                 "rows_in": outcome["rows_in"],
                 "rows_out": outcome["rows_out"],
                 "coverage": outcome["coverage"],
+                "target_coverage": outcome["target_coverage"],
                 "mass_balance_rel_error": outcome["mass_balance_rel_error"],
                 "size": written["size"],
                 "sha256": written["sha256"],
@@ -1329,6 +1445,7 @@ def _finish_leaves(
         {
             **document,
             "complete": True,
+            "target_coverage": common,
             "leaves": entries,
             "schema": schema,
             "rows_per_group": rows_per_group.tolist(),
@@ -1758,6 +1875,13 @@ def _run_reduce(
     records."""
     leaves_dir = plan.leaves_manifest_path.parent
     document, document_sha256 = _load_leaves_document(plan.leaves_manifest_path)
+    if "target_coverage" not in document:
+        raise ValueError(
+            f"the leaves manifest {plan.leaves_manifest_path} was written "
+            f"before each leaf recorded its targets left out and the shares "
+            f"of its partial ones, so the statistics could not say which "
+            f"rest on part of a target. Aggregate the leaves again."
+        )
     notes = _check_identity(cfg, document)
     _check_level_names(cfg.tree.levels, document["targets"]["id_fields"])
     if model_weights is _UNREAD:
@@ -1825,6 +1949,12 @@ def _run_reduce(
         # what the same ids are in a frame of the pipeline's own
         wanted = "string" if column["pandas"] == "string" else pd.Series(["a"]).dtype
         stats[id_field] = stats[id_field].astype(wanted)
+    stats, targets = _with_shares(
+        stats,
+        list(request.id_fields),
+        document["target_coverage"],
+        [entry["target_coverage"] for entry in entries],
+    )
     stats = _ordered(stats, cfg)
     _log_memory("after reduce")
 
@@ -1869,6 +1999,7 @@ def _run_reduce(
         "summation": cfg.stats.summation,
         "time_reduction": cfg.stats.time_reduction,
         "years": list(cfg.stats.years) if cfg.stats.years else None,
+        "target_coverage": targets,
         "warming_levels": (
             warming.record(
                 dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves)
@@ -1936,6 +2067,7 @@ def _check_level_names(levels: list[str], id_fields: list[str]) -> None:
         "n_sample": "the column of pooled rows stats.time_reduction writes",
         "warming_level": "the column of levels [stats.warming_levels] writes",
         "n_bin_members": "the column of members [stats.warming_levels] writes",
+        SHARE_COLUMN: "the column of the share of each target's weight basis",
         "model_weight": "the column the model weights travel in",
         leaf_format.ORDINAL_COLUMN: "the ordinal column of a leaf file",
     }
@@ -2006,6 +2138,7 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
             "n_members",
             "n_sample",
             "n_bin_members",
+            SHARE_COLUMN,
             "model_weight",
         ):
             continue
@@ -2189,6 +2322,7 @@ def _process_leaf(task: tuple) -> dict:
             # weights were applied
             out_frame = frame
             coverage = None
+            targets = None
             rel_error = None
         else:
             applied = apply_weights(
@@ -2202,7 +2336,11 @@ def _process_leaf(task: tuple) -> dict:
                 policies=policies,
                 group_col=data_cfg.group_col,
             )
-            out_frame = applied.frame
+            # The shares go on the statistics rows, by target, from what
+            # each leaf reports here. On the leaf they would be one more
+            # column to group by.
+            out_frame = applied.frame.drop(columns=[SHARE_COLUMN])
+            targets = _leaf_targets(applied.targets)
             coverage = applied.coverage.counts
             balance = applied.mass_balance
             rel_error = balance.rel_error if balance is not None else None
@@ -2237,6 +2375,7 @@ def _process_leaf(task: tuple) -> dict:
                 "rows_out": int(len(out_frame)),
                 "rows_reduced": None,
                 "coverage": coverage,
+                "target_coverage": targets,
                 "mass_balance_rel_error": rel_error,
                 "output": str(leaf.output_path),
                 "worker_peak_gb": round(_peak_rss_gb(), 2),
@@ -2289,6 +2428,7 @@ def _process_leaf(task: tuple) -> dict:
             "rows_out": int(len(out_frame)),
             "rows_reduced": int(len(reduced)),
             "coverage": coverage,
+            "target_coverage": targets,
             "mass_balance_rel_error": rel_error,
             "output": str(leaf.output_path) if leaf.output_path else None,
             "worker_peak_gb": round(_peak_rss_gb(), 2),
