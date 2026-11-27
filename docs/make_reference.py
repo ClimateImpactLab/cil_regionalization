@@ -58,6 +58,7 @@ GROUPS = {
         "read_gmst",
         "GMSTTable",
         "assign_warming_levels",
+        "members_that_join",
         "Period",
         "WarmingLevels",
         "LevelWindow",

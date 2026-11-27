@@ -1,5 +1,5 @@
-"""`assign_warming_levels` on the mortality paper's temperature table
-gives the models the Inequality Paper extracted at each warming level."""
+"""The settings of examples/warming_levels/ar5_cmip5_smme.toml give the
+models the Inequality Paper extracted at each warming level."""
 
 from __future__ import annotations
 
@@ -7,35 +7,24 @@ from pathlib import Path
 
 import pandas as pd
 
-import cil_regionalization as cilreg
+from cil_regionalization.pipelines.montecarlo import load_warming_levels
 
 ROOT = Path(__file__).resolve().parents[2]
-TABLE = ROOT / "data" / "external" / "GMTanom_all_temp_2001_2010_smooth.csv"
+CONFIG = ROOT / "examples" / "warming_levels" / "ar5_cmip5_smme.toml"
 BINS = ROOT / "data" / "external" / "inequality_gwl_bins.csv"
 
 
 def test_the_members_at_each_level_are_the_papers():
-    """From the whole table, with the surrogates excluded as the paper's
-    reported outputs exclude them. The periods are the twenty years from
-    2040 and from 2080, as finding_gwl_bins.R filters them. The member
-    with no temperature, surrogate_GFDL-ESM2G_06 under rcp45, is a
-    surrogate and so never assessed.
+    """Every member of the table is declared, as every one was in the
+    paper's tree, and the config says which join. The member with no
+    temperature, surrogate_GFDL-ESM2G_06 under rcp45, does not join and
+    so is never assessed.
 
-    It went red with the period means taken over nineteen years, with
-    the offset left out, and with the surrogates included."""
-    levels = cilreg.assign_warming_levels(
-        cilreg.read_gmst(TABLE, member_cols=["gcm", "rcp"]),
-        reference_period=(1986, 2005),
-        offset=0.61,
-        levels=[1.5, 2, 3, 4, 5],
-        half_width=0.25,
-        periods=[
-            cilreg.Period(gmst_span=(2040, 2059), impact_span=(2040, 2059)),
-            cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2099)),
-        ],
-        smoothing="recorded nowhere",
-        surrogates="exclude",
-    )
+    It went red with the config's temperature years cut to nineteen,
+    with its offset set to 0, and with join set to "declared"."""
+    warming = load_warming_levels(CONFIG)
+    table = warming.read_table()
+    levels = warming.assign(table, table.members)
     derived = {
         (period.label, level, rcp, gcm)
         for (gcm, rcp), assigned in levels.levels.items()

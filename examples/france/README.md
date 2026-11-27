@@ -60,8 +60,9 @@ it reads and writes.
 - `FRANCE_DATA` is the data directory, `examples/france/data` unless set.
 - `FRANCE_OUT` is where the weights, the configs and the pipeline
   outputs go, `examples/france/out` unless set.
-- `FRANCE_GMST` is the temperature table of section 8, the mortality
-  paper's under `data/external/` unless set.
+- `FRANCE_WARMING` is the warming level settings of section 8, with the
+  temperature table they name, `examples/warming_levels/ar5_cmip5_smme.toml`
+  unless set.
 - `FRANCE_OFFLINE=1` reads the committed France rows of the published
   weights instead of fetching them in section 3.
 
@@ -70,7 +71,7 @@ layout, which the test suite does too.
 
 ```
 python examples/france/synthetic_data.py /tmp/france
-FRANCE_DATA=/tmp/france/data FRANCE_GMST=/tmp/france/gmst.csv \
+FRANCE_DATA=/tmp/france/data FRANCE_WARMING=/tmp/france/warming_levels.toml \
     FRANCE_OFFLINE=1 FRANCE_OUT=/tmp/france/out python examples/france/france.py
 ```
 

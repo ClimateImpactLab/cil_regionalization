@@ -31,7 +31,9 @@ from cil_regionalization.io import write_result
 from cil_regionalization.pipelines.montecarlo import (
     MonteCarloPipelineConfig,
     PipelinePlan,
+    WarmingLevelsConfig,
     load_pipeline_config,
+    load_warming_levels,
     run_pipeline,
 )
 from cil_regionalization.regions import RegionSet
@@ -1065,7 +1067,7 @@ dir = "out_rel"
             "[stats.warming_levels]\n"
             'gmst = "tables/gmst.csv"\nmember = ["zeppelin"]\n'
             "reference_period = [1986, 2005]\noffset = 0.61\nlevels = [2.0]\n"
-            'half_width = 0.25\nsmoothing = "unknown"\nsurrogates = "exclude"\n'
+            'half_width = 0.25\nsmoothing = "unknown"\njoin = "declared"\n'
             "[[stats.warming_levels.periods]]\n"
             "gmst_span = [2040, 2059]\nimpact_span = [2040, 2059]\n"
         )
@@ -2640,7 +2642,7 @@ class TestModelCount:
                 "levels": [2.0],
                 "half_width": 0.25,
                 "smoothing": "unknown",
-                "surrogates": "exclude",
+                "join": "declared",
                 "periods": [{"gmst_span": [2040, 2059], "impact_span": [2040, 2059]}],
             }
         with pytest.raises(ValueError, match="stats.model_dims has to name"):
@@ -4212,8 +4214,8 @@ class TestWarmingLevels:
                 "levels": [1.5, 2.0, 3.0, 4.0],
                 "half_width": 0.25,
                 "smoothing": "unknown",
-                # the fixture's surrogate is binned like any member here
-                "surrogates": "include",
+                # surrogate_m0_06 too, since a name decides nothing
+                "join": "declared",
                 "periods": [
                     {"gmst_span": [2040, 2043], "impact_span": [2040, 2042]},
                     {"gmst_span": [2080, 2083], "impact_span": [2080, 2083]},
@@ -4392,17 +4394,17 @@ class TestWarmingLevels:
             got[method] = row["value"].item()
         assert got["lower_step"] < got["linear"] < got["inverted_cdf"]
 
-    def test_an_excluded_surrogate_is_pooled_at_no_level(
+    def test_a_member_that_does_not_join_is_pooled_at_no_level(
         self, weights_dir, tmp_path, recwarn
     ):
-        """Failed with the setting unknown. Its leaves are aggregated and
-        go under no level, and the manifest names it."""
+        """Its leaves are aggregated and go under no level, and the
+        manifest names it with the reason and says what joined."""
         raw, out = self._raw(weights_dir, tmp_path)
-        raw["stats"]["warming_levels"]["surrogates"] = "exclude"
+        raw["stats"]["warming_levels"]["join"] = {"gcm": ["m0", "m1"]}
         result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
         mid = result.stats[result.stats["window"] == "2040-2042"]
-        # without the surrogate 1.5 holds m0/r45 and m1/r45, and 2 holds
-        # m0/r85, where with it they hold three and two
+        # without surrogate_m0_06 1.5 holds m0/r45 and m1/r45, and 2
+        # holds m0/r85, where with it they hold three and two
         assert mid.groupby("warming_level")["n_bin_members"].max().to_dict() == {
             1.5: 2,
             2.0: 1,
@@ -4410,11 +4412,77 @@ class TestWarmingLevels:
         record = json.loads((out / "statistics.manifest.json").read_text())[
             "warming_levels"
         ]
-        assert record["surrogates"] == "exclude"
-        assert record["excluded_surrogates"] == [
-            {"gcm": "surrogate_m0_06", "rcp": "r45"},
-            {"gcm": "surrogate_m0_06", "rcp": "r85"},
+        assert record["join"] == {"gcm": ["m0", "m1"]}
+        assert record["excluded"] == [
+            {
+                "member": {"gcm": "surrogate_m0_06", "rcp": rcp},
+                "reason": "in the run and not among the members that join",
+            }
+            for rcp in ("r45", "r85")
         ]
+        assert [entry["member"] for entry in record["members"]] == [
+            {"gcm": gcm, "rcp": rcp} for rcp in ("r45", "r85") for gcm in ("m0", "m1")
+        ]
+
+    @pytest.mark.parametrize(
+        "join, message",
+        [
+            (
+                {"batch": ["b0"]},
+                r"stats.warming_levels.join names \['batch'\], which are not "
+                r"among the member columns \['gcm', 'rcp'\]",
+            ),
+            ({"gcm": []}, "stats.warming_levels.join.gcm lists no value"),
+            ({"gcm": ["m0", "m0"]}, r"join.gcm lists \['m0'\] more than once"),
+            ("all", "warming_levels.join"),
+        ],
+    )
+    def test_a_join_that_is_not_precise_is_refused_with_the_config(
+        self, weights_dir, tmp_path, join, message
+    ):
+        raw, _ = self._raw(weights_dir, tmp_path)
+        raw["stats"]["warming_levels"]["join"] = join
+        with pytest.raises(ValueError, match=message):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_a_model_listed_to_join_that_the_tree_lacks_is_refused_by_name(
+        self, weights_dir, tmp_path
+    ):
+        """It may be a name written wrong, and the run would pool one
+        model fewer than it says. Nothing was written."""
+        raw, out = self._raw(weights_dir, tmp_path)
+        raw["stats"]["warming_levels"]["join"] = {"gcm": ["m0", "m7", "M1"]}
+        with pytest.raises(
+            ValueError,
+            match=r"2 values listed to join are held by no member declared: "
+            r"\[\"gcm = 'm7'\", \"gcm = 'M1'\"\]",
+        ):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert not out.exists()
+
+    def test_a_file_of_its_own_holds_the_same_settings(self, weights_dir, tmp_path):
+        """`load_warming_levels` reads the table a run config holds from
+        a file that has nothing else, and resolves gmst against it."""
+        raw, _ = self._raw(weights_dir, tmp_path)
+        path = tmp_path / "settings" / "levels.toml"
+        path.parent.mkdir()
+        path.write_text(
+            "[stats.warming_levels]\n"
+            'gmst = "../gmst.csv"\nmember = ["gcm", "rcp"]\n'
+            "reference_period = [1986, 2005]\noffset = 0.5\n"
+            "levels = [1.5, 2.0, 3.0, 4.0]\nhalf_width = 0.25\n"
+            'smoothing = "unknown"\njoin = "declared"\n'
+            "[[stats.warming_levels.periods]]\n"
+            "gmst_span = [2040, 2043]\nimpact_span = [2040, 2042]\n"
+            "[[stats.warming_levels.periods]]\n"
+            "gmst_span = [2080, 2083]\nimpact_span = [2080, 2083]\n"
+        )
+        assert load_warming_levels(path) == WarmingLevelsConfig.model_validate(
+            raw["stats"]["warming_levels"]
+        )
+        path.write_text("[stats]\nsample_dims = ['gcm']\n")
+        with pytest.raises(ValueError, match=r"has no \[stats.warming_levels\] table"):
+            load_warming_levels(path)
 
     def test_a_member_of_the_table_no_leaf_belongs_to_is_not_assessed(
         self, weights_dir, tmp_path, recwarn
@@ -4430,7 +4498,12 @@ class TestWarmingLevels:
         record = json.loads((out / "statistics.manifest.json").read_text())[
             "warming_levels"
         ]
-        assert record["unused_members"] == [{"gcm": "m9", "rcp": "r45"}]
+        assert record["excluded"] == [
+            {
+                "member": {"gcm": "m9", "rcp": "r45"},
+                "reason": "in the temperature table and not in the run",
+            }
+        ]
 
     def test_a_declared_member_short_of_a_year_is_refused_by_name(
         self, weights_dir, tmp_path
@@ -4492,7 +4565,13 @@ class TestWarmingLevels:
             {"gcm": "m1", "rcp": "r45"},
             {"gcm": "m1", "rcp": "r85"},
         ]
-        assert record["unused_members"] == [{"gcm": "m9", "rcp": "r45"}]
+        assert record["join"] == "declared"
+        assert record["excluded"] == [
+            {
+                "member": {"gcm": "m9", "rcp": "r45"},
+                "reason": "in the temperature table and not in the run",
+            }
+        ]
         assert len(record["members"]) == 6
         assert record["members"][0] == {
             "member": {"gcm": "m0", "rcp": "r45"},
@@ -4546,6 +4625,7 @@ class TestWarmingLevels:
             "periods",
             "gmst",
             "member",
+            "join",
         ],
     )
     def test_a_config_that_leaves_out_what_decides_a_level_is_refused(
@@ -4635,15 +4715,24 @@ class TestWarmingLevels:
         refused(
             "Set \\[reduce.pandas\\] memory_gb", reduce={"pandas": {"memory_gb": None}}
         )
-        # a surrogate is not the model it was made from
+        refused(
+            "1 values listed to join are held by no member declared",
+            stats={
+                "warming_levels": {
+                    **raw["stats"]["warming_levels"],
+                    "join": {"gcm": ["m0", "m7"]},
+                }
+            },
+        )
+        # m0's rows are not those of a member named after it
         only_m0 = {
-            k: v for k, v in _GWL_TEMPERATURES.items() if "surrogate" not in k[0]
+            k: v for k, v in _GWL_TEMPERATURES.items() if k[0] != "surrogate_m0_06"
         }
         _write_gmst(tmp_path / "gmst.csv", temperatures=only_m0)
         refused(
             "2 of the 6 members the tree declares have no row in the temperature "
-            "table .*first: \\{'gcm': 'surrogate_m0_06', 'rcp': 'r45'\\}.*a "
-            "surrogate needs rows of its own"
+            "table .*first: \\{'gcm': 'surrogate_m0_06', 'rcp': 'r45'\\}\\). A "
+            "name is matched as it is written."
         )
         _write_gmst(
             tmp_path / "gmst.csv",

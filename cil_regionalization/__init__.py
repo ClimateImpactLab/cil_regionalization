@@ -25,8 +25,10 @@ is the quantile of a weighted mixture of normal distributions.
 
 `read_gmst` reads a table of global mean temperature by member as a
 `GMSTTable`. `assign_warming_levels` gives the warming level of each
-member in each `Period`, as `WarmingLevels`, and its `windows_of` gives
-a member's levels as `LevelWindow`.
+member that joins in each `Period`, as `WarmingLevels`, and its
+`windows_of` gives a member's levels as `LevelWindow`.
+`members_that_join` turns a declaration of the members that join into
+the members.
 
 `read_gradient_leaf`, `aggregate_gradient`, `window_gradient` and
 `delta_method` carry delta-method gradients from a leaf to a mean and
@@ -113,6 +115,7 @@ from cil_regionalization.warming_levels import (
     Period,
     WarmingLevels,
     assign_warming_levels,
+    members_that_join,
     read_gmst,
 )
 
@@ -141,6 +144,7 @@ __all__ = [
     "generate_weights",
     "list_cached",
     "load_config",
+    "members_that_join",
     "mixture_quantile",
     "pooled_statistics",
     "read_gmst",

@@ -391,7 +391,9 @@ levels = cilreg.assign_warming_levels(
         cilreg.Period(gmst_span=(2080, 2099), impact_span=(2080, 2099)),
     ],
     smoothing="unknown",
-    surrogates="exclude",
+    members=cilreg.members_that_join(
+        {"gcm": ["CCSM4", "MIROC5"]}, table.members, table.member_cols
+    ),
 )
 levels.windows_of(("MIROC5", "rcp85"))
 levels.record()
@@ -408,7 +410,7 @@ there goes to the level declared first. Bands that overlap are
 refused.
 
 None of `reference_period`, `offset`, `levels`, `half_width`,
-`periods` and `smoothing` has a default. The offset is the warming
+`periods`, `smoothing` and `members` has a default. The offset is the warming
 from a pre-industrial baseline to the reference period, and it is only
 right for that pair: 0.61 goes with 1986 to 2005 in AR5 (WG1 TS.2.2.1),
 and AR6 gives another figure against another period. A call that
@@ -424,26 +426,31 @@ Nothing is smoothed. The series is taken as it is in the table, and
 `smoothing` says in words how it was smoothed before, `"unknown"` if
 nobody knows. It goes into the record as written.
 
-A member's name is matched as it is written. A surrogate model is a
-member of its own and needs its own rows. `surrogates` is `"exclude"`
-or `"include"` and has no default. The surrogates are built so that the
-ensemble with its model weights spans the distribution of warming, and
-a warming level throws the weights away, so excluded they are at no
-level and the record lists them. A surrogate is a member any of whose
-names begins with `surrogate_`.
+`members` are the members that join. A member of the table that does
+not join is at no level, and the record lists it under `excluded` with
+the reason. A member that joins and has no row, or lacks a year of the
+reference period or of a `gmst_span`, is refused by name. One that
+does not join is not looked at, so a table may hold a member with no
+values, as the mortality paper's does under rcp45. A name is matched
+as it is written, and nothing reads a name to decide what a member is.
 
-`members` names the members to assess, every member of the table if it
-is left out, and a pipeline run passes the members its tree declares.
-A member that is assessed and lacks a year of the reference period or
-of a `gmst_span` is refused by name. One that no run uses is not looked
-at, so a table may hold a member with no values, as the mortality
-paper's does for a surrogate under rcp45.
+`members_that_join` turns a declaration into the members. `"declared"`
+is every member declared. A mapping of member columns to values takes
+each member whose value in every column named is listed, so a list of
+models joins under each scenario there is. A value listed that no
+member declared holds is refused by name, since it is most likely a
+name written wrong.
 
 In a pipeline config the same settings go under
-`[stats.warming_levels]`, in place of `stats.windows`. The example is
-a physical product as the Inequality Paper makes one: each member's
-window is collapsed to its mean first, over nineteen impact years, and
-the quantile is the extraction tool's step.
+`[stats.warming_levels]`, in place of `stats.windows`, and `join` is
+the declaration, over the members the tree declares. It has no default.
+`examples/warming_levels/ar5_cmip5_smme.toml` is the block for the
+CMIP5 models, which the test of the paper's bins reads too, and its
+README says where each number comes from. `load_warming_levels` reads
+such a file on its own. The example here is a physical product as the
+Inequality Paper makes one: each member's window is collapsed to its
+mean first, over nineteen impact years, and the quantile is the
+extraction tool's step.
 
 ```toml
 [stats]
@@ -463,7 +470,9 @@ offset = 0.61
 levels = [1.5, 2, 3, 4, 5]
 half_width = 0.25
 smoothing = "unknown"
-surrogates = "exclude"
+
+[stats.warming_levels.join]
+gcm = ["CCSM4", "MIROC5"]    # or join = "declared", above this table
 
 [[stats.warming_levels.periods]]
 gmst_span = [2040, 2059]

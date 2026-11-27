@@ -100,7 +100,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Iterable, Literal, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -132,9 +132,12 @@ from cil_regionalization.stats import (
     window_means,
 )
 from cil_regionalization.warming_levels import (
+    GMSTTable,
     Period,
     WarmingLevels,
+    _listed,
     assign_warming_levels,
+    members_that_join,
     read_gmst,
 )
 
@@ -274,9 +277,10 @@ class WarmingLevelsConfig(_Strict):
     a level has a default. ``reference_period`` and ``offset`` go
     together, since the offset is the warming up to that period.
     ``smoothing`` says in words how the series in the table was
-    smoothed, and "unknown" is an answer. ``surrogates`` is "exclude"
-    or "include", and a surrogate model excluded is pooled at no level.
-    Only the members the tree declares are assessed.
+    smoothed, and "unknown" is an answer. ``join`` names the members
+    that join, "declared" for every member the tree declares, or a table
+    of member columns to the values that join. A member of the tree
+    that does not join is pooled at no level, and the record lists it.
     """
 
     gmst: str = Field(min_length=1)
@@ -289,8 +293,57 @@ class WarmingLevelsConfig(_Strict):
     levels: list[float] = Field(min_length=1)
     half_width: float = Field(gt=0)
     smoothing: str = Field(min_length=1)
-    surrogates: Literal["exclude", "include"]
+    join: Union[Literal["declared"], dict[str, list[str]]]
     periods: list[WarmingPeriod] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _join_names_member_columns(self) -> "WarmingLevelsConfig":
+        try:
+            _listed(self.join, self.member)
+        except ValueError as error:
+            raise ValueError(f"stats.warming_levels.{error}") from None
+        return self
+
+    def read_table(self) -> GMSTTable:
+        """The temperature table, read with the columns named here."""
+        return read_gmst(
+            self.gmst,
+            member_cols=self.member,
+            time_col=self.time_col,
+            value_col=self.value_col,
+            sep=self.sep,
+        )
+
+    def assign(
+        self, table: GMSTTable, declared: Iterable[Sequence[str]]
+    ) -> WarmingLevels:
+        """The levels of the members of ``declared`` that join, with the
+        settings here. Raises if a member of ``declared`` has no row in
+        ``table``, even one that does not join, and as
+        `members_that_join` and `assign_warming_levels` raise."""
+        declared = list(dict.fromkeys(tuple(member) for member in declared))
+        known = set(table.members)
+        absent = [member for member in declared if member not in known]
+        if absent:
+            raise ValueError(
+                f"{len(absent)} of the {len(declared)} members the tree "
+                f"declares have no row in the temperature table {self.gmst} "
+                f"(first: {dict(zip(self.member, absent[0]))}). A name is "
+                f"matched as it is written."
+            )
+        return assign_warming_levels(
+            table,
+            reference_period=tuple(self.reference_period),
+            offset=self.offset,
+            levels=self.levels,
+            half_width=self.half_width,
+            periods=[
+                Period(tuple(period.gmst_span), tuple(period.impact_span))
+                for period in self.periods
+            ],
+            smoothing=self.smoothing,
+            members=members_that_join(self.join, declared, self.member),
+        )
 
 
 class StatsConfig(_Strict):
@@ -608,9 +661,7 @@ def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
         data = tomllib.load(f)
 
     def _resolve(value: str) -> str:
-        if "://" in value or value.startswith("/"):
-            return value
-        return str((p.parent / value).resolve())
+        return _resolved(value, p.parent)
 
     for *sections, key in (
         ("weights", "dir"),
@@ -625,6 +676,28 @@ def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
         if isinstance(block, dict) and isinstance(block.get(key), str):
             block[key] = _resolve(block[key])
     return MonteCarloPipelineConfig.model_validate(data)
+
+
+def _resolved(value: str, base: Path) -> str:
+    if "://" in value or value.startswith("/"):
+        return value
+    return str((base / value).resolve())
+
+
+def load_warming_levels(path: str | Path) -> WarmingLevelsConfig:
+    """The ``[stats.warming_levels]`` table of a TOML file, validated,
+    so that a run and a test can read the same settings. A relative
+    ``gmst`` resolves against the file's directory, as in
+    `load_pipeline_config`. Raises if the file has no such table."""
+    p = Path(path).resolve()
+    with p.open("rb") as f:
+        data = tomllib.load(f)
+    warming = data.get("stats", {}).get("warming_levels")
+    if not isinstance(warming, dict):
+        raise ValueError(f"{p} has no [stats.warming_levels] table")
+    if isinstance(warming.get("gmst"), str):
+        warming["gmst"] = _resolved(warming["gmst"], p.parent)
+    return WarmingLevelsConfig.model_validate(warming)
 
 
 @dataclass(frozen=True)
@@ -1779,47 +1852,15 @@ def _level_windows(cfg: MonteCarloPipelineConfig) -> dict[str, tuple[float, str]
 def _warming_levels(
     cfg: MonteCarloPipelineConfig, plan: PipelinePlan
 ) -> Optional[WarmingLevels]:
-    """The warming level of every member of the temperature table, or
-    None if the config has no warming levels. The table is read here
-    and nowhere else. Raises if a member the tree declares has no row
-    in it, or if no declared member is at any level."""
+    """The warming levels of the members of the tree that join, or None
+    if the config has no warming levels. The table is read here and
+    nowhere else. Raises if a member the tree declares has no row in
+    it, or if no declared member is at any level."""
     warming = cfg.stats.warming_levels
     if warming is None:
         return None
-    table = read_gmst(
-        warming.gmst,
-        member_cols=warming.member,
-        time_col=warming.time_col,
-        value_col=warming.value_col,
-        sep=warming.sep,
-    )
     members = list(dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves))
-    known = set(table.members)
-    absent = [member for member in members if member not in known]
-    if absent:
-        raise ValueError(
-            f"{len(absent)} of the {len(members)} members the tree declares "
-            f"have no row in the temperature table {warming.gmst} (first: "
-            f"{dict(zip(warming.member, absent[0]))}). A name is matched as "
-            f"it is written, so a surrogate needs rows of its own."
-        )
-    # The members the tree does not declare are not assessed, so a
-    # member of the table with no values that no leaf belongs to does
-    # not stop the run.
-    levels = assign_warming_levels(
-        table,
-        reference_period=tuple(warming.reference_period),
-        offset=warming.offset,
-        levels=warming.levels,
-        half_width=warming.half_width,
-        periods=[
-            Period(tuple(period.gmst_span), tuple(period.impact_span))
-            for period in warming.periods
-        ],
-        smoothing=warming.smoothing,
-        surrogates=warming.surrogates,
-        members=members,
-    )
+    levels = warming.assign(warming.read_table(), members)
     if not any(levels.windows_of(member) for member in members):
         raise ValueError(
             f"none of the {len(members)} members the tree declares is at "
@@ -2049,9 +2090,12 @@ def _run_reduce(
         "years": list(cfg.stats.years) if cfg.stats.years else None,
         "target_coverage": targets,
         "warming_levels": (
-            warming.record(
-                dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves)
-            )
+            {
+                **warming.record(
+                    dict.fromkeys(_bin_member(cfg, leaf.values) for leaf in plan.leaves)
+                ),
+                "join": cfg.stats.warming_levels.join,
+            }
             if warming is not None
             else None
         ),

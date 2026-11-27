@@ -26,18 +26,25 @@ wherever counts are written, warming levels and a reduce of fewer
 leaves than were aggregated among them.
 
 The mortality paper's temperature table and the Inequality Paper's bins
-are under `data/external/`, where the test suite and the France example
-read them. The example's section 8 reads the table unless
-`FRANCE_GMST` names another, and always runs.
+are under `data/external/`. The warming level settings of the CMIP5
+models are `examples/warming_levels/ar5_cmip5_smme.toml`, with a README
+that says where each number comes from. The test of the paper's bins
+and the France example both read that file, and `load_warming_levels`
+reads such a file on its own. The example's section 8 reads it unless
+`FRANCE_WARMING` names another, and always runs.
 
-**`assign_warming_levels` takes `surrogates`, `"exclude"` or
-`"include"`, with no default, and so does `[stats.warming_levels]`.**
-Excluded, a surrogate model is at no level and the record lists it
-under `excluded_surrogates`. `assign_warming_levels` also takes
-`members`, and assesses only those. A pipeline run assesses only the
-members its tree declares, so a member of the table with no values
-that no leaf belongs to no longer stops it. A declared member that
-lacks a year is refused by name, as before.
+**A run declares which members join a warming level, and nothing in
+the library reads a member's name.** `assign_warming_levels` takes
+`members`, the members that join, with no default, and
+`[stats.warming_levels]` takes `join`, `"declared"` for every member
+the tree declares or a table of member columns to the values that
+join, also with no default. `members_that_join` turns one into the
+other. A member of the table that does not join is at no level, and
+the record lists it under `excluded` with the reason. A value listed
+to join that no member of the tree holds is refused by name, and so
+are a member that joins with no row or short of a year, and a member
+the tree declares with no row. A member of the table with no values
+that does not join no longer stops a run.
 
 **An infinite member value is refused under every quantile method and
 `summation`, and a statistic is refused when it comes out infinite,
@@ -442,8 +449,8 @@ its warming level in a calendar period.
   periods and a statement of how the series was smoothed have no
   default, and a call without one of them fails. A period carries the
   years the temperature is averaged over and the years of the impacts
-  separately. Nothing is smoothed. Names are matched as written, so a
-  surrogate needs its own rows. `WarmingLevels.record` is the manifest
+  separately. Nothing is smoothed. Names are matched as written.
+  `WarmingLevels.record` is the manifest
   entry: the table's hash, every setting, each member's mean and level,
   the count at each declared level and the members with none. The
   pipeline does not use any of this yet.

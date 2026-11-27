@@ -27,7 +27,7 @@ def _synthetic(directory: Path) -> tuple[Path, Path]:
 def test_the_notebook_runs_on_synthetic_data(tmp_path):
     pytest.importorskip("marimo")
     pytest.importorskip("matplotlib")
-    data, gmst = _synthetic(tmp_path / "synthetic")
+    data, warming = _synthetic(tmp_path / "synthetic")
     out = tmp_path / "out"
     done = subprocess.run(
         [sys.executable, str(EXAMPLE / "france.py")],
@@ -35,7 +35,7 @@ def test_the_notebook_runs_on_synthetic_data(tmp_path):
             **os.environ,
             "FRANCE_DATA": str(data),
             "FRANCE_OUT": str(out),
-            "FRANCE_GMST": str(gmst),
+            "FRANCE_WARMING": str(warming),
             "FRANCE_OFFLINE": "1",
             "MPLBACKEND": "Agg",
         },
