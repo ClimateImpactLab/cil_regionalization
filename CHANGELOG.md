@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+`window_means` takes the rows of each window once, looks for an
+infinite value without copying the rows of the windows, and builds the
+frame of the group keys once, where it did all three for every window.
+On the benchmark leaf of 4.26 million rows it takes 11% less as the
+pipeline calls it, and up to 29% less with the level labels on the
+frame. No number moves. Every call the test suite and the benchmarks
+make gives what the former code gave, to the bit, with the same row
+order and dtypes, and every refusal the same text.
+
 **The first block of a reduce is measured, and a run sized by the
 estimate is refused when the measurement is more than twice it.** The
 blocks are sized from an estimate of the bytes a kept row takes, 240 and

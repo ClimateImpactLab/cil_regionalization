@@ -843,10 +843,15 @@ def _refuse_infinite_statistics(
     )
 
 
-def _refuse_infinite_values(data: pd.DataFrame, value_col: str) -> None:
+def _refuse_infinite_values(
+    data: pd.DataFrame, value_col: str, rows: np.ndarray | None = None
+) -> None:
     """Raise if a member value is infinite, under every quantile method
-    and summation, naming the first such row by its other columns."""
+    and summation, naming the first such row by its other columns.
+    ``rows`` is a mask of the rows to look at, every row if it is None."""
     infinite = np.isinf(_float_values(data[value_col]))
+    if rows is not None:
+        infinite &= rows
     if not infinite.any():
         return
     first = data.loc[infinite].iloc[0].drop(value_col).to_dict()
@@ -1079,12 +1084,10 @@ def window_means(
     if len(set(labels)) != len(labels):
         raise ValueError(f"duplicate window labels in request: {labels}")
 
-    _refuse_infinite_values(
-        data.loc[
-            np.logical_or.reduce([data[time_col].between(lo, hi) for lo, hi in windows])
-        ],
-        value_col,
-    )
+    # the rows of each window, worked out once for the check of the
+    # values and for the means
+    in_window = [data[time_col].between(lo, hi).to_numpy() for lo, hi in windows]
+    _refuse_infinite_values(data, value_col, rows=np.logical_or.reduce(in_window))
     group = [c for c in data.columns if c not in (time_col, value_col)]
     full_key = group + [time_col]
     # The group codes are worked out once and serve the duplicate check
@@ -1111,9 +1114,13 @@ def window_means(
             # afterwards is a float64 that holds seven digits
             values = pd.Series(_float_values(values), index=values.index)
         floats = values.to_numpy() if summation == "exact" else None
+        # the key frame a groupby over the columns returns (it infers
+        # key dtypes), one row a group in order of first appearance, for
+        # every window to take its groups from
+        key_frame = None
     pieces: list[pd.DataFrame] = []
-    for (lo, hi), label in zip(windows, labels):
-        mask = data[time_col].between(lo, hi).to_numpy()
+    for (lo, hi), label, rows in zip(windows, labels, in_window):
+        mask = rows
         if not mask.any():
             raise ValueError(
                 f"window ({lo}, {hi}) on {time_col!r} selects no rows "
@@ -1125,7 +1132,7 @@ def window_means(
             # no group columns (groupby raises), or every row in the window
             # misses a key: the groupby over the columns, as it always ran
             piece = (
-                data.loc[data[time_col].between(lo, hi)]
+                data.loc[rows]
                 .groupby(group, sort=False, observed=True)[value_col]
                 .mean()
                 .reset_index()
@@ -1139,15 +1146,14 @@ def window_means(
                 means = pd.Series(exact[ids], index=ids)
             else:
                 means = values[mask].groupby(gid[mask], sort=False).mean()
-            # the key frame a groupby over the columns returns (it infers
-            # key dtypes), from one row per group in this window's order
-            piece = (
-                keys.take(means.index.to_numpy())
-                .assign(**{value_col: 0.0})
-                .groupby(group, sort=False, observed=True)[value_col]
-                .first()
-                .reset_index()
-            )
+            if key_frame is None:
+                key_frame = (
+                    keys.assign(**{value_col: 0.0})
+                    .groupby(group, sort=False, observed=True)[value_col]
+                    .first()
+                    .reset_index()
+                )
+            piece = key_frame.take(means.index.to_numpy()).reset_index(drop=True)
             piece[value_col] = means.reset_index(drop=True)
         piece[window_col] = label
         pieces.append(piece)
