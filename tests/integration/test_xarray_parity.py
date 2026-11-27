@@ -130,6 +130,7 @@ def _raw(
             "quantile_method": methods[0],
             "summation": methods[1],
             "include_n_members": True,
+            "model_dims": POOLED[-1:],
             **stats,
         },
         "output": {"dir": str(out), "write_leaves": True},

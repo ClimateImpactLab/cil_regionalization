@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Where the statistics carry their counts they carry two, the samples
+behind a row in `n_members` and the climate models among them in
+`n_models`.** A warming level bin of four models over fifteen batches
+holds 60 samples, and the file now says both. `n_models` is the
+distinct values of `model_dims`, which `summarize_samples` and
+`pooled_statistics` take beside `include_n_members` and a pipeline
+config sets as `stats.model_dims`. It has no default and is required
+wherever counts are written, warming levels and a reduce of fewer
+leaves than were aggregated among them.
+
 The mortality paper's temperature table and the Inequality Paper's bins
 are under `data/external/`, where the test suite and the France example
 read them. The example's section 8 reads the table unless

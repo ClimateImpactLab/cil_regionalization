@@ -77,6 +77,7 @@ def _warn_if_unweighted_gcm(sample_dims: list[str], weight_col: str | None) -> N
 # the legacy long (monetized_deaths_vsl_epa_scaled_q05) spelling.
 _STATISTIC_COLUMN = "statistic"
 _N_MEMBERS_COLUMN = "n_members"
+_N_MODELS_COLUMN = "n_models"
 
 # The computations of a quantile and of a sum, each under the name of
 # what it does. Neither option has a default.
@@ -157,6 +158,7 @@ def summarize_samples(
     include_mean: bool = True,
     weight_col: str | None = None,
     include_n_members: bool = False,
+    model_dims: Sequence[str] | None = None,
     quantile_method: str,
     summation: str,
 ) -> pd.DataFrame:
@@ -179,11 +181,14 @@ def summarize_samples(
     Returns a long frame: identity columns, 'statistic', ``value_col``.
     Labels are 'mean' and 'qNN' in percent ('q05', 'q95', 'q2.5').
 
-    ``include_n_members`` adds an integer 'n_members' column after
-    ``value_col``: the members of the identity group that entered the
-    statistic, so those with a window mean that is not NaN and, when
-    weighted, a weight above zero. ``data`` must not already have a
-    column of that name.
+    ``include_n_members`` adds two integer columns after ``value_col``.
+    'n_members' is the samples behind a statistic, the members with a
+    window mean that is not NaN and, when weighted, a weight above zero,
+    so a batch of a model counts once a batch. 'n_models' is the
+    climate models among them, the distinct values of ``model_dims``,
+    which it then has to name, such as ``["gcm"]``. Over fifteen batches
+    of four models they are 60 and 4. ``data`` must not already have
+    columns of those names.
 
     ``quantile_method`` is "linear", "lower_step" or "inverted_cdf",
     and has no default. "linear" interpolates between members and is
@@ -214,8 +219,7 @@ def summarize_samples(
     check_quantile_method(quantile_method, weighted=weight_col is not None)
     check_summation(summation)
     _reject_presummarized(data, value_col)
-    if include_n_members:
-        _reject_n_members_column(data)
+    model_dims = _check_counts(data, include_n_members, model_dims, sample_dims)
 
     sample_dims = list(sample_dims)
     if not sample_dims:
@@ -322,6 +326,10 @@ def summarize_samples(
     )
     out = pd.concat(pieces, ignore_index=True)
     out = out[_output_columns(identity, value_col, include_n_members)]
+    if include_n_members:
+        out = _with_model_counts(
+            out, window_mean, identity, value_col, weight_col, model_dims
+        )
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
     _refuse_infinite_statistics(out, value_col, quantile_method)
@@ -905,12 +913,78 @@ def _quantile_label(q: float) -> str:
     return f"q{percent:g}"
 
 
-def _reject_n_members_column(data: pd.DataFrame) -> None:
-    if _N_MEMBERS_COLUMN in data.columns:
+def _check_counts(
+    data: pd.DataFrame,
+    include_n_members: bool,
+    model_dims: Sequence[str] | None,
+    sample_dims: Sequence[str],
+) -> list[str] | None:
+    """``model_dims`` as a list, checked against the request for counts.
+    Raises if counts are asked for without it, or it without them, or
+    it names a column that is not a sample dimension, or ``data``
+    already has a column of a count."""
+    if not include_n_members:
+        if model_dims is not None:
+            raise ValueError(
+                "model_dims names the columns of the climate model for its "
+                "count, which only include_n_members writes"
+            )
+        return None
+    if model_dims is None or not list(model_dims):
         raise ValueError(
-            f"data already has a {_N_MEMBERS_COLUMN!r} column; "
-            f"include_n_members would write a second one. Rename or drop it."
+            "include_n_members counts the samples and the climate models "
+            "behind each statistic, so model_dims has to name the sample "
+            "dimensions of the climate model, such as ['gcm']"
         )
+    model_dims = list(model_dims)
+    stray = [d for d in model_dims if d not in sample_dims]
+    if stray:
+        raise ValueError(
+            f"model_dims {stray} are not among sample_dims {list(sample_dims)}; "
+            f"a climate model is counted among the members it pools"
+        )
+    for column in (_N_MEMBERS_COLUMN, _N_MODELS_COLUMN):
+        if column in data.columns:
+            raise ValueError(
+                f"data already has a {column!r} column; include_n_members "
+                f"would write a second one. Rename or drop it."
+            )
+    return model_dims
+
+
+def _with_model_counts(
+    out: pd.DataFrame,
+    members: pd.DataFrame,
+    identity: list[str],
+    value_col: str,
+    weight_col: str | None,
+    model_dims: list[str],
+) -> pd.DataFrame:
+    """``out`` with 'n_models', the distinct climate models among the
+    members of each identity group that 'n_members' counts."""
+    counted = members[value_col].notna()
+    if weight_col is not None:
+        counted &= members[weight_col] > 0
+    models = (
+        members.loc[counted, identity + model_dims]
+        .drop_duplicates()
+        .groupby(identity, sort=False, observed=True)
+        .size()
+        .rename(_N_MODELS_COLUMN)
+        .reset_index()
+    )
+    keys = out[identity].astype(object)
+    found = keys.merge(
+        models.astype({c: object for c in identity}), on=identity, how="left"
+    )
+    return out.assign(
+        **{
+            _N_MODELS_COLUMN: found[_N_MODELS_COLUMN]
+            .fillna(0)
+            .astype(np.int64)
+            .to_numpy()
+        }
+    )
 
 
 def _reject_presummarized(data: pd.DataFrame, value_col: str) -> None:
@@ -1091,6 +1165,7 @@ def pooled_statistics(
     include_mean: bool = True,
     weight_col: str | None = None,
     include_n_members: bool = False,
+    model_dims: Sequence[str] | None = None,
     quantile_method: str,
     summation: str,
 ) -> pd.DataFrame:
@@ -1098,15 +1173,15 @@ def pooled_statistics(
 
     The second half of `summarize_samples`. The window column is an
     ordinary identity column here. ``weight_col``,
-    ``include_n_members``, ``quantile_method`` and ``summation`` behave
-    the same, and the same input is refused. Returns identity columns,
-    'statistic', ``value_col``, then 'n_members' if asked for.
+    ``include_n_members``, ``model_dims``, ``quantile_method`` and
+    ``summation`` behave the same, and the same input is refused.
+    Returns identity columns, 'statistic', ``value_col``, then
+    'n_members' and 'n_models' if asked for.
     """
     check_quantile_method(quantile_method, weighted=weight_col is not None)
     check_summation(summation)
     _reject_presummarized(data, value_col)
-    if include_n_members:
-        _reject_n_members_column(data)
+    model_dims = _check_counts(data, include_n_members, model_dims, sample_dims)
 
     sample_dims = list(sample_dims)
     if not sample_dims:
@@ -1168,6 +1243,8 @@ def pooled_statistics(
     del groups
     out = pd.concat(pieces, ignore_index=True)
     out = out[_output_columns(identity, value_col, include_n_members)]
+    if include_n_members:
+        out = _with_model_counts(out, work, identity, value_col, weight_col, model_dims)
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
     _refuse_infinite_statistics(out, value_col, quantile_method)

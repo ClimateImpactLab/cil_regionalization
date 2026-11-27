@@ -333,9 +333,12 @@ class StatsConfig(_Strict):
     warming_levels: Optional[WarmingLevelsConfig] = None
     quantiles: list[float] = Field(default_factory=list)
     include_mean: bool = True
-    # Adds an n_members column to the statistics file: the members each
-    # statistic was computed from. Off by default, so the file keeps its
-    # columns unless a recipe asks.
+    # Adds two count columns to the statistics file. n_members is the
+    # samples each statistic was computed from, a batch of a model
+    # counting once a batch, and n_models the climate models among them,
+    # the distinct values of model_dims. Off unless asked for, and on
+    # whatever the config says where a run pools fewer leaves than were
+    # aggregated or takes warming levels.
     include_n_members: bool = False
     # How a quantile is computed. "linear" interpolates between members
     # and has no weighted form, "lower_step" is the extraction tool's
@@ -362,6 +365,10 @@ class StatsConfig(_Strict):
     years: Optional[tuple[int, int]] = None
     model_weights: Optional[str] = None
     model_weight_level: Optional[str] = None
+    # The sample dimensions of the climate model, such as ["gcm"], which
+    # the count of models beside the count of samples is taken over.
+    # Required wherever the statistics carry their counts.
+    model_dims: Optional[list[str]] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -382,6 +389,33 @@ class StatsConfig(_Strict):
             if data.get("summation") == "legacy":
                 check_summation("legacy")
         return data
+
+    @model_validator(mode="after")
+    def _model_dims_are_pooled(self) -> "StatsConfig":
+        if self.model_dims is not None:
+            if not self.model_dims:
+                raise ValueError("stats.model_dims must name at least one column")
+            stray = [d for d in self.model_dims if d not in self.sample_dims]
+            if stray:
+                raise ValueError(
+                    f"stats.model_dims {stray} must be among stats.sample_dims "
+                    f"{self.sample_dims}; a climate model is counted among the "
+                    f"members it pools"
+                )
+        counted = self.include_n_members or self.warming_levels is not None
+        if counted and self.model_dims is None:
+            why = (
+                "stats.include_n_members is set"
+                if self.include_n_members
+                else "a warming level writes its counts"
+            )
+            raise ValueError(
+                f"{why}, and the counts are of the samples and of the "
+                f"climate models behind each statistic, so stats.model_dims "
+                f"has to name the sample dimensions of the climate model, "
+                f'such as ["gcm"]'
+            )
+        return self
 
     @model_validator(mode="after")
     def _weights_come_together(self) -> "StatsConfig":
@@ -970,6 +1004,7 @@ def run_pipeline(
         include_mean=cfg.stats.include_mean,
         weight_col=weight_col,
         include_n_members=cfg.stats.include_n_members,
+        model_dims=cfg.stats.model_dims if cfg.stats.include_n_members else None,
         quantile_method=cfg.stats.quantile_method,
         summation=cfg.stats.summation,
     )
@@ -1037,6 +1072,7 @@ def run_pipeline(
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
+        "model_dims": cfg.stats.model_dims,
         "model_weights_record": _model_weights_record(
             cfg, model_weights, [o["leaf"] for o in outcomes]
         ),
@@ -1159,6 +1195,24 @@ def _with_shares(
             "targets": [list(key) + [share] for key, share in partial],
         },
     }
+
+
+def _model_dims(
+    cfg: MonteCarloPipelineConfig, reasons: list[str], warming
+) -> list[str]:
+    """The columns the climate models are counted over, none if the
+    statistics carry no counts. Raises if they carry them for ``reasons``
+    and the config names none."""
+    if not (cfg.stats.include_n_members or reasons or warming is not None):
+        return []
+    if cfg.stats.model_dims is None:
+        raise ValueError(
+            f"the statistics carry their counts ({'; '.join(reasons)}), and "
+            f"they are of the samples and of the climate models behind each "
+            f"statistic, so stats.model_dims has to name the sample "
+            f'dimensions of the climate model, such as ["gcm"]'
+        )
+    return list(cfg.stats.model_dims)
 
 
 def _model_weights(cfg: MonteCarloPipelineConfig) -> Optional[ModelWeights]:
@@ -1679,6 +1733,7 @@ def _reduce_request(
         include_n_members=(
             cfg.stats.include_n_members or bool(reasons) or warming is not None
         ),
+        model_dims=tuple(_model_dims(cfg, reasons, warming)),
         quantile_method=cfg.stats.quantile_method,
         summation=cfg.stats.summation,
         time_reduction=cfg.stats.time_reduction,
@@ -2019,6 +2074,7 @@ def _run_reduce(
         "reduced": None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
+        "model_dims": cfg.stats.model_dims,
         "model_weights_record": _model_weights_record(
             cfg, model_weights, [entry["leaf"] for entry in entries]
         ),
@@ -2073,6 +2129,7 @@ def _check_level_names(levels: list[str], id_fields: list[str]) -> None:
         "window": "the column of window labels",
         "statistic": "the column of statistic labels",
         "n_members": "the column stats.include_n_members writes",
+        "n_models": "the column of the climate models behind a statistic",
         "n_sample": "the column of pooled rows stats.time_reduction writes",
         "warming_level": "the column of levels [stats.warming_levels] writes",
         "n_bin_members": "the column of members [stats.warming_levels] writes",
@@ -2146,6 +2203,7 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
             cfg.data.value_col,
             "n_members",
             "n_sample",
+            "n_models",
             "n_bin_members",
             SHARE_COLUMN,
             "model_weight",

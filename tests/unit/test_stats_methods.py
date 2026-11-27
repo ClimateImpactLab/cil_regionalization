@@ -324,6 +324,7 @@ class TestInvertedCdf:
             quantiles=[0.5],
             weight_col="w",
             include_n_members=True,
+            model_dims=["draw"],
             quantile_method="inverted_cdf",
             summation="fast",
         )
@@ -502,6 +503,7 @@ class TestLowerStep:
             sample_dims=["draw"],
             quantiles=[0.25, 0.5, 0.75, 0.95],
             include_n_members=True,
+            model_dims=["draw"],
             summation=summation,
             quantile_method="lower_step",
         )
@@ -536,6 +538,7 @@ class TestLowerStep:
             quantiles=[0.5],
             quantile_method="lower_step",
             include_n_members=True,
+            model_dims=["draw"],
             summation="fast",
         )
         empty = got[got["target"] == "b"]
@@ -739,6 +742,7 @@ class TestExactSummation:
             quantiles=[0.0, *QUANTILES, 1.0],
             weight_col="w" if weighted else None,
             include_n_members=True,
+            model_dims=["draw"],
             quantile_method="inverted_cdf",
             summation="exact",
         )
@@ -1064,6 +1068,7 @@ class TestBothHalves:
             quantiles=QUANTILES,
             weight_col=weight_col,
             include_n_members=True,
+            model_dims=["draw"],
             **options,
         )
         reduced = window_means(
@@ -1075,6 +1080,7 @@ class TestBothHalves:
             quantiles=QUANTILES,
             weight_col=weight_col,
             include_n_members=True,
+            model_dims=["draw"],
             **options,
         ).drop(columns="window")
         pd.testing.assert_frame_equal(

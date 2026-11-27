@@ -1004,7 +1004,7 @@ def _(DATA, LEAVES, OUT, relative):
 def _(DATA, OUT, cilreg_cli, mo, pipeline_config, relative, shown, tree_section):
     _deaths = 'format = "parquet"\nvalue_col = "deaths"\nkind = "extensive"\nversion = "world-combo-201710"\n'
     _stats = (
-        'sample_dims = ["batch", "gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\n'
+        'sample_dims = ["batch", "gcm"]\nmodel_dims = ["gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\n'
         'quantile_method = "lower_step"\nsummation = "fast"\n'
     )
     _weights = (
@@ -1260,7 +1260,7 @@ def _(
         return "\n".join(lines) + "\n"
 
     _both = ["rcp45", "rcp85"]
-    _common = 'sample_dims = ["batch", "rcp", "gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\nsummation = "fast"\n'
+    _common = 'sample_dims = ["batch", "rcp", "gcm"]\nmodel_dims = ["gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\nsummation = "fast"\n'
     aggregate_damages = pipeline_config(
         "damages_aggregate",
         tree=tree_section("damages.parquet", _both),

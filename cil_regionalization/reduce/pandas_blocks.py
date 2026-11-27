@@ -390,7 +390,8 @@ def _with_counts(
     identity = [
         c
         for c in stats.columns
-        if c not in ("statistic", request.value_col, "n_members", "n_sample")
+        if c
+        not in ("statistic", request.value_col, "n_members", "n_sample", "n_models")
     ]
     grouped = _plain_labels(pd.concat(members, ignore_index=True)).groupby(
         identity, sort=False, observed=True
@@ -572,6 +573,7 @@ def _pool_block(block: tuple[int, int]) -> dict:
             include_mean=request.include_mean,
             weight_col="model_weight" if weighted else None,
             include_n_members=request.include_n_members,
+            model_dims=list(request.model_dims) if request.include_n_members else None,
             quantile_method=request.quantile_method,
             summation=request.summation,
         )

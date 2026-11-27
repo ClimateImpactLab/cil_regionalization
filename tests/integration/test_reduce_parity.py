@@ -197,6 +197,7 @@ def build_request(
         sample_dims=("model", "draw"),
         quantiles=tuple(quantiles),
         include_n_members=n_members,
+        model_dims=("model",) if n_members else (),
         quantile_method=methods[0],
         summation=methods[1],
         time_reduction=time_reduction,
@@ -210,7 +211,8 @@ def _sorted(frame: pd.DataFrame, request: ReduceRequest) -> pd.DataFrame:
     keys = [
         c
         for c in request.columns
-        if c not in (request.value_col, "n_members", "n_sample", "n_bin_members")
+        if c
+        not in (request.value_col, "n_members", "n_sample", "n_models", "n_bin_members")
     ]
     return frame.sort_values(keys, kind="stable").reset_index(drop=True)
 
@@ -290,6 +292,7 @@ def _pooled_by_hand(
         quantiles=list(request.quantiles),
         weight_col="model_weight" if weighted else None,
         include_n_members=request.include_n_members,
+        model_dims=["model"] if request.include_n_members else None,
         quantile_method=request.quantile_method,
         summation=request.summation,
     )
@@ -327,6 +330,7 @@ def _per_year_by_hand(
         quantiles=list(request.quantiles),
         weight_col="model_weight" if weighted else None,
         include_n_members=request.include_n_members,
+        model_dims=["model"] if request.include_n_members else None,
         quantile_method=request.quantile_method,
         summation=request.summation,
     )
@@ -357,6 +361,7 @@ def _by_hand(
         quantiles=list(request.quantiles),
         weight_col="model_weight" if weighted else None,
         include_n_members=request.include_n_members,
+        model_dims=["model"] if request.include_n_members else None,
         quantile_method=request.quantile_method,
         summation=request.summation,
     )
@@ -603,6 +608,7 @@ class TestWindowsOfTheLeaf:
             quantiles=list(request.quantiles),
             weight_col="model_weight" if weighted else None,
             include_n_members=True,
+            model_dims=["model"],
             quantile_method=request.quantile_method,
             summation=request.summation,
         )[request.columns]
@@ -650,6 +656,7 @@ class TestWindowsOfTheLeaf:
             quantiles=list(request.quantiles),
             weight_col="model_weight" if weighted else None,
             include_n_members=True,
+            model_dims=["model"],
             quantile_method="lower_step" if weighted else "linear",
             summation="fast",
         )[request.columns]
@@ -826,6 +833,7 @@ class TestPooledYears:
             "value",
             "n_members",
             "n_sample",
+            "n_models",
         ]
         assert "n_sample" not in means.columns
 

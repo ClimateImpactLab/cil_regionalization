@@ -96,6 +96,7 @@ class ReduceRequest:
     quantiles: tuple[float, ...]
     include_mean: bool = True
     include_n_members: bool = False
+    model_dims: tuple[str, ...] = ()
     quantile_method: str = field(kw_only=True)
     summation: str = field(kw_only=True)
     time_reduction: str = field(kw_only=True)
@@ -136,6 +137,7 @@ class ReduceRequest:
                 if self.include_n_members and self.time_reduction == "pooled"
                 else []
             )
+            + (["n_models"] if self.include_n_members else [])
             + (["n_bin_members"] if self.include_n_bin_members else [])
         )
 

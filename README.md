@@ -411,6 +411,7 @@ the quantile is the extraction tool's step.
 ```toml
 [stats]
 sample_dims = ["batch", "rcp", "gcm"]
+model_dims = ["gcm"]
 time_col = "year"
 quantiles = [0.05, 0.5, 0.95]
 quantile_method = "lower_step"
@@ -448,11 +449,13 @@ A leaf's member is read off its level values, here its `gcm` and its
 them. A leaf is pooled under the level its member has in a period and
 left out of the periods in which it has none. The statistics file has
 a `warming_level` column next to `window`, which stays the period, and
-two counts on every row. `n_members` is the draws behind the
-statistic, a batch of a model counting as one. `n_bin_members` is the
-distinct members of the temperature table behind it, which is the
-number to read a 95th percentile over four models by. A level nobody
-is at in a period has no row, and the manifest records it with a zero.
+three counts on every row. `n_members` is the draws behind the
+statistic, a batch of a model counting as one. `n_models` is the
+distinct values of `stats.model_dims` among them, the climate models,
+and `n_bin_members` the distinct members of the temperature table, a
+model under an rcp. Those are the numbers to read a 95th percentile
+over four models by. A level nobody is at in a period has no row, and
+the manifest records it with a zero.
 
 The statistics come from the leaf files under every stage, as when
 the years are pooled, so stage `all` writes the leaves and then
@@ -628,10 +631,11 @@ What pooling changes:
 - A model weight applies to each member-year.
 - `quantile_method` and `summation` work as before. No window mean is
   taken, so `summation` acts on the pooled mean alone.
-- With `include_n_members` the file has two counts. `n_members` is
+- With `include_n_members` the file has three counts. `n_members` is
   what it is without pooling, the members behind a statistic: those
   with a value in the window and, with model weights, a weight above
-  zero. `n_sample` is the member-years behind it.
+  zero. `n_sample` is the member-years behind it, and `n_models` the
+  climate models among them.
 - The manifest records `time_reduction`, next to `quantile_method`
   and `summation`, and `years` for a product per year.
 

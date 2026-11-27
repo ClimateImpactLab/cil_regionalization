@@ -134,6 +134,8 @@ def _pipeline_cfg(
             },
             "stats": {
                 "sample_dims": list(levels),
+                # what the model count is over wherever counts are written
+                "model_dims": [list(levels)[-1]],
                 "time_col": "year",
                 "quantile_method": "linear",
                 "summation": "fast",
@@ -212,6 +214,7 @@ class TestEndToEnd:
             "value",
             "window",
             "n_members",
+            "n_models",
             "weight_share",
         }
         # 2 kumquat x 3 zeppelin leaves, one member each.
@@ -473,6 +476,7 @@ class TestRowOrder:
         # zeppelin is not pooled, so it stays a column of the statistics
         raw["stats"].update(
             sample_dims=["kumquat"],
+            model_dims=["kumquat"],
             windows=self._WINDOWS,
             quantiles=self._QUANTILES,
             **stats,
@@ -1094,6 +1098,7 @@ sample_dims = ["kumquat", "zeppelin"]
 time_col = "year"
 summation = "fast"
 time_reduction = "window_mean"
+model_dims = ["zeppelin"]
 {stats}"""
         )
         cfg = load_pipeline_config(cfg_path)
@@ -2595,6 +2600,68 @@ def _same_frames(one: pd.DataFrame, two: pd.DataFrame) -> None:
     assert one["value"].to_numpy().tobytes() == two["value"].to_numpy().tobytes()
 
 
+class TestModelCount:
+    """The statistics carry the climate models behind a row beside the
+    samples, wherever they carry counts."""
+
+    def test_the_rows_carry_the_models_beside_the_samples(self, weights_dir, tmp_path):
+        """Two kumquat values of three zeppelin models. Failed with no
+        such column."""
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        raw = _pipeline_cfg(
+            weights_dir, tree, tmp_path / "out", levels=_LEVELS
+        ).model_dump()
+        raw["stats"]["include_n_members"] = True
+        stats = run_pipeline(MonteCarloPipelineConfig.model_validate(raw)).stats
+        assert set(stats["n_members"]) == {6} and set(stats["n_models"]) == {3}
+        manifest = json.loads(
+            (tmp_path / "out" / "statistics.manifest.json").read_text()
+        )
+        assert manifest["model_dims"] == ["zeppelin"]
+
+    @pytest.mark.parametrize("why", ["include_n_members", "warming_levels"])
+    def test_counts_without_the_model_columns_are_refused(
+        self, weights_dir, tmp_path, why
+    ):
+        raw = _pipeline_cfg(
+            weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS
+        ).model_dump()
+        raw["stats"]["model_dims"] = None
+        if why == "include_n_members":
+            raw["stats"]["include_n_members"] = True
+        else:
+            raw["stats"]["windows"] = []
+            raw["stats"]["warming_levels"] = {
+                "gmst": "gmst.csv",
+                "member": ["zeppelin"],
+                "reference_period": [1986, 2005],
+                "offset": 0.61,
+                "levels": [2.0],
+                "half_width": 0.25,
+                "smoothing": "unknown",
+                "surrogates": "exclude",
+                "periods": [{"gmst_span": [2040, 2059], "impact_span": [2040, 2059]}],
+            }
+        with pytest.raises(ValueError, match="stats.model_dims has to name"):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_a_reduce_of_fewer_leaves_asks_for_the_model_columns(
+        self, weights_dir, tmp_path
+    ):
+        """Its counts are switched on whatever the config says."""
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        raw = _leaves_cfg(weights_dir, tree, out).model_dump()
+        run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        raw["stats"]["model_dims"] = None
+        raw["tree"]["exclude"] = [["k0", "z1"]]
+        with pytest.raises(
+            ValueError, match="1 of the 6 aggregated leaves are not declared"
+        ):
+            TestReduce._reduce(raw)
+
+
 class TestTargetCoverage:
     """The statistics carry the share of each target's weight basis,
     the smallest any pooled leaf gave it, and the manifests list the
@@ -2774,6 +2841,7 @@ class TestReduce:
             "statistic",
             "value",
             "n_members",
+            "n_models",
             "weight_share",
         ]
         for stem, memory_gb, blocks in (("one", 1.0, 1), ("two", _ONE_GROUP_GB, 2)):
@@ -3305,6 +3373,7 @@ class TestPooledYears:
             quantiles=cfg.stats.quantiles,
             weight_col="model_weight" if weighted else None,
             include_n_members=True,
+            model_dims=["zeppelin"],
             quantile_method=cfg.stats.quantile_method,
             summation=cfg.stats.summation,
         ).rename(columns={"n_members": "n_sample"})
@@ -3318,7 +3387,8 @@ class TestPooledYears:
                 stats["target_id"], stats["band"], stats["kumquat"], stats["window"]
             )
         ]
-        columns = [c for c in stats.columns if c != "n_sample"] + ["n_sample"]
+        counts = ["n_members", "n_sample", "n_models"]
+        columns = [c for c in stats.columns if c not in counts] + counts
         return _ordered(stats[columns], cfg).assign(weight_share=1.0)
 
     @_METHODS_AND_WEIGHTS
@@ -3343,6 +3413,7 @@ class TestPooledYears:
             "value",
             "n_members",
             "n_sample",
+            "n_models",
             "weight_share",
         ]
         assert _leaves_manifest(out)["complete"] is True
@@ -3760,6 +3831,7 @@ summation = "fast"
 time_reduction = "pooled"
 windows = [[2050, 2051]]
 include_n_members = true
+model_dims = ["zeppelin"]
 
 [output]
 dir = "{out}"
@@ -3844,6 +3916,7 @@ class TestPerYear:
             quantiles=cfg.stats.quantiles,
             weight_col="model_weight" if weighted else None,
             include_n_members=True,
+            model_dims=["zeppelin"],
             quantile_method=cfg.stats.quantile_method,
             summation=cfg.stats.summation,
         )
@@ -3870,6 +3943,7 @@ class TestPerYear:
             "statistic",
             "value",
             "n_members",
+            "n_models",
             "weight_share",
         ]
         assert result.stats["year"].dtype == np.int64
@@ -4231,6 +4305,7 @@ class TestWarmingLevels:
                 value_col="value",
                 quantiles=cfg.stats.quantiles,
                 include_n_members=True,
+                model_dims=["gcm"],
                 quantile_method=cfg.stats.quantile_method,
                 summation=cfg.stats.summation,
             )
@@ -4270,7 +4345,7 @@ class TestWarmingLevels:
         assert list(result.stats.columns) == (
             ["target_id", "warming_level", "window", "statistic", "value", "n_members"]
             + (["n_sample"] if pooled else [])
-            + ["n_bin_members", "weight_share"]
+            + ["n_models", "n_bin_members", "weight_share"]
         )
         assert result.stats["warming_level"].dtype == "float64"
         _same_frames(result.stats, self._by_hand(cfg, out))

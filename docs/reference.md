@@ -415,6 +415,7 @@ summarize_samples(
     include_mean: bool = True,
     weight_col: str | None = None,
     include_n_members: bool = False,
+    model_dims: Sequence[str] | None = None,
     quantile_method: str,
     summation: str,
 ) -> pd.DataFrame
@@ -439,11 +440,14 @@ dimension warns with `UnweightedModelWeightsWarning`.
 Returns a long frame: identity columns, 'statistic', ``value_col``.
 Labels are 'mean' and 'qNN' in percent ('q05', 'q95', 'q2.5').
 
-``include_n_members`` adds an integer 'n_members' column after
-``value_col``: the members of the identity group that entered the
-statistic, so those with a window mean that is not NaN and, when
-weighted, a weight above zero. ``data`` must not already have a
-column of that name.
+``include_n_members`` adds two integer columns after ``value_col``.
+'n_members' is the samples behind a statistic, the members with a
+window mean that is not NaN and, when weighted, a weight above zero,
+so a batch of a model counts once a batch. 'n_models' is the
+climate models among them, the distinct values of ``model_dims``,
+which it then has to name, such as ``["gcm"]``. Over fifteen batches
+of four models they are 60 and 4. ``data`` must not already have
+columns of those names.
 
 ``quantile_method`` is "linear", "lower_step" or "inverted_cdf",
 and has no default. "linear" interpolates between members and is
@@ -519,6 +523,7 @@ pooled_statistics(
     include_mean: bool = True,
     weight_col: str | None = None,
     include_n_members: bool = False,
+    model_dims: Sequence[str] | None = None,
     quantile_method: str,
     summation: str,
 ) -> pd.DataFrame
@@ -528,9 +533,10 @@ Statistics over the pooled sample, for data reduced by `window_means`.
 
 The second half of `summarize_samples`. The window column is an
 ordinary identity column here. ``weight_col``,
-``include_n_members``, ``quantile_method`` and ``summation`` behave
-the same, and the same input is refused. Returns identity columns,
-'statistic', ``value_col``, then 'n_members' if asked for.
+``include_n_members``, ``model_dims``, ``quantile_method`` and
+``summation`` behave the same, and the same input is refused.
+Returns identity columns, 'statistic', ``value_col``, then
+'n_members' and 'n_models' if asked for.
 
 ### `mixture_quantile`
 
@@ -1297,6 +1303,7 @@ reduce stage takes other windows from them.
 | `years` | tuple[int, int] | not set |
 | `model_weights` | str | not set |
 | `model_weight_level` | str | not set |
+| `model_dims` | list[str] | not set |
 
 ### `[stats.warming_levels]`
 
