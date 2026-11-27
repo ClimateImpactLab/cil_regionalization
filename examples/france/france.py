@@ -45,8 +45,16 @@ def _(Path, mo, os):
     HERE = mo.notebook_dir()
     DATA = Path(os.environ.get("FRANCE_DATA", HERE / "data")).resolve()
     OUT = Path(os.environ.get("FRANCE_OUT", HERE / "out")).resolve()
-    # the paper's temperature table, which this repository does not hold
-    GMST = os.environ.get("FRANCE_GMST")
+    # the mortality paper's temperature table, unless another is given
+    GMST = os.environ.get(
+        "FRANCE_GMST",
+        str(
+            HERE.parents[1]
+            / "data"
+            / "external"
+            / "GMTanom_all_temp_2001_2010_smooth.csv"
+        ),
+    )
     OFFLINE = os.environ.get("FRANCE_OFFLINE") == "1"
     OUT.mkdir(parents=True, exist_ok=True)
     return DATA, GMST, HERE, OFFLINE, OUT
@@ -1120,9 +1128,9 @@ def _(mo):
     2, 3, 4 and 5. In mid century no model reaches 4 or 5, so those come
     out empty, and the record says so.
 
-    The table is the one the Inequality Paper read, given by
-    `FRANCE_GMST`. It is a derived file of the lab and is not in this
-    repository, so without it this section stops here.
+    The table is the mortality paper's, which the Inequality Paper read,
+    under `data/external/` of this repository. `FRANCE_GMST` gives
+    another.
     """
     )
     return
@@ -1130,10 +1138,6 @@ def _(mo):
 
 @app.cell
 def _(GMST, cilreg, mo):
-    mo.stop(
-        GMST is None,
-        mo.md("**`FRANCE_GMST` is not set, so the warming levels are skipped.**"),
-    )
     PERIODS = {
         # the physical products average nineteen years of impacts, as the
         # extraction tool did, and the valued ones pool twenty
@@ -1231,7 +1235,6 @@ def _(
     shown,
     tree_section,
 ):
-    mo.stop(GMST is None)
     _configs = OUT / "configs"
 
     def warming_block(family):
@@ -1310,7 +1313,6 @@ def _(
 
 @app.cell
 def _(GMST, PIPELINE, WARMING_REDUCES, department_map, mo, pd):
-    mo.stop(GMST is None)
     warming_products = {
         _name: pd.read_parquet(PIPELINE / f"{_name}.parquet")
         for _name in WARMING_REDUCES

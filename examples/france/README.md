@@ -50,7 +50,7 @@ own country codes.
 
 ```
 uv sync --extra examples
-FRANCE_GMST=<the temperature table> uv run marimo edit examples/france/france.py
+uv run marimo edit examples/france/france.py
 ```
 
 `python examples/france/france.py` runs it as a script, and
@@ -60,8 +60,8 @@ it reads and writes.
 - `FRANCE_DATA` is the data directory, `examples/france/data` unless set.
 - `FRANCE_OUT` is where the weights, the configs and the pipeline
   outputs go, `examples/france/out` unless set.
-- `FRANCE_GMST` is the temperature table of section 8. Without it that
-  section is skipped and says so.
+- `FRANCE_GMST` is the temperature table of section 8, the mortality
+  paper's under `data/external/` unless set.
 - `FRANCE_OFFLINE=1` reads the committed France rows of the published
   weights instead of fetching them in section 3.
 
@@ -91,9 +91,8 @@ python examples/france/prepare_data.py \
 `data/sources.json` records where each file came from, its terms and
 its SHA256.
 
-The temperature table is not copied into `data/`. It is a derived file
-of the lab, and whether it may be published has not been settled. The
-real run reads it from its path on the cluster through `FRANCE_GMST`.
+The temperature table is the mortality paper's, committed under
+`data/external/` with its source and terms.
 
 ## Sources and terms
 

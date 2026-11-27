@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+The mortality paper's temperature table and the Inequality Paper's bins
+are under `data/external/`, where the test suite and the France example
+read them. The example's section 8 reads the table unless
+`FRANCE_GMST` names another, and always runs.
+
 **`assign_warming_levels` takes `surrogates`, `"exclude"` or
 `"include"`, with no default, and so does `[stats.warming_levels]`.**
 Excluded, a surrogate model is at no level and the record lists it

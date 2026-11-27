@@ -10,8 +10,8 @@ import pandas as pd
 import cil_regionalization as cilreg
 
 ROOT = Path(__file__).resolve().parents[2]
-TABLE = ROOT / "examples" / "france" / "data" / "GMTanom_all_temp_2001_2010_smooth.csv"
-BINS = ROOT / "tests" / "data" / "external" / "inequality_gwl_bins.csv"
+TABLE = ROOT / "data" / "external" / "GMTanom_all_temp_2001_2010_smooth.csv"
+BINS = ROOT / "data" / "external" / "inequality_gwl_bins.csv"
 
 
 def test_the_members_at_each_level_are_the_papers():
