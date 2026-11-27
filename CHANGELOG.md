@@ -24,6 +24,12 @@ remote regions file. Reading one needs gcsfs, which the `[bigquery]`
 extra installs, and a remote file in a format other than Parquet is
 copied to a temporary directory first.
 
+**`aggregate_gradient` takes `weight` with no default, and finds the
+regions in the weight file's source key column.** It defaulted to
+population, and read a column called `hierid` whatever the artifact's
+source key was. The resident memory the pipeline logs counts pages of
+the size the machine reports, where it took them as 4096 bytes.
+
 **A model takes the row of its own name in a model weights table,
 letter for letter, or the row declared for it, and a model with
 neither is refused.** Before, the library dropped `surrogate_` from the

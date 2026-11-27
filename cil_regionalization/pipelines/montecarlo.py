@@ -2308,11 +2308,14 @@ def _peak_rss_gb() -> float:
 
 
 def _current_rss_gb() -> Optional[float]:
-    """This process's current resident memory in GB (Linux only)."""
+    """This process's current resident memory in GB (Linux only). The
+    count is in pages, of the size the machine reports."""
+    import resource
+
     try:
         with open("/proc/self/statm") as f:
             pages = int(f.read().split()[1])
-        return pages * 4096 / 1e9
+        return pages * resource.getpagesize() / 1e9
     except OSError:
         return None
 

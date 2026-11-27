@@ -371,8 +371,12 @@ def compute() -> pd.DataFrame:
             g = cilreg.window_gradient(grad * scale[:, None, :], YEARS, (lo, hi))
             m = cilreg.window_gradient((mean * scale)[:, None, :], YEARS, (lo, hi))
             for level in ("adm1", "adm2"):
-                targets, G = cilreg.aggregate_gradient(weights[level], regions, g)
-                _, M = cilreg.aggregate_gradient(weights[level], regions, m)
+                targets, G = cilreg.aggregate_gradient(
+                    weights[level], regions, g, weight="pop"
+                )
+                _, M = cilreg.aggregate_gradient(
+                    weights[level], regions, m, weight="pop"
+                )
                 G, M = G * dollars, M[:, 0] * dollars
                 parts = [(level, targets, G, M)]
                 if level == "adm1":
@@ -431,7 +435,9 @@ def compute_map(regions) -> dict:
     for lo, hi in data.WINDOWS:
         m = cilreg.window_gradient(valued[:, None, :], YEARS, (lo, hi))
         for level in ("adm1", "adm2"):
-            targets, M = cilreg.aggregate_gradient(weights[level], regions, m)
+            targets, M = cilreg.aggregate_gradient(
+                weights[level], regions, m, weight="pop"
+            )
             out[(level, f"{lo}-{hi}")] = pd.DataFrame(
                 {"mean": M[:, 0]}, index=pd.MultiIndex.from_frame(targets)
             )
