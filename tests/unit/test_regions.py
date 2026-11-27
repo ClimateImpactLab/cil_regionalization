@@ -116,6 +116,8 @@ class TestInvalidGeometry:
             rs = RegionSet.from_config(cfg)
         assert len(rs) == 2  # both kept
         assert rs.gdf.geometry.is_valid.all()
+        assert rs.repaired_ids == [{"region_id": "bad"}]
+        assert rs.skipped_invalid_ids == []
         assert any(
             "repairing" in r.message and "bad" in r.message for r in caplog.records
         )
@@ -132,6 +134,10 @@ class TestInvalidGeometry:
         assert len(rs) == 1
         kept = next(rs.iter_regions())[0]["region_id"]
         assert kept == "good"
+        # left out, not repaired. It went red on the record that listed
+        # it as repaired.
+        assert rs.repaired_ids == []
+        assert rs.skipped_invalid_ids == [{"region_id": "bad"}]
         assert any(
             "skipping" in r.message and "bad" in r.message for r in caplog.records
         )

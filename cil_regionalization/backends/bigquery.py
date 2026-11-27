@@ -55,7 +55,7 @@ from cil_regionalization.fallback import (
 from cil_regionalization.grid import GridSpec
 from cil_regionalization.manifest import build_manifest, record_schema
 from cil_regionalization.nearest_cell import find_missing_regions, synthesize_rows
-from cil_regionalization.regions import RegionSet
+from cil_regionalization.regions import RegionSet, _geometry_record
 from cil_regionalization.schema import OutputSchema
 from cil_regionalization.validate import check_grid_invariants, check_sum_to_one
 from cil_regionalization.weights import WeightSpec
@@ -1118,9 +1118,7 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
             manifest.inputs["regions_table"] = regions.table
         if regions.source_uri is not None:
             manifest.inputs["regions_path"] = regions.source_uri
-            if regions.repaired_ids:
-                manifest.extra["repaired_geometry_count"] = len(regions.repaired_ids)
-                manifest.extra["repaired_geometry_regions"] = list(regions.repaired_ids)
+            manifest.extra.update(_geometry_record(regions))
         for w in non_area:
             if w.table is not None:
                 manifest.inputs[f"weight:{w.name}"] = w.table

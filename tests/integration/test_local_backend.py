@@ -652,12 +652,38 @@ class TestRepairedGeometryManifest:
         assert extra["repaired_geometry_count"] == 1
         assert extra["repaired_geometry_regions"] == [{"region_id": "bad"}]
 
+    def test_a_skipped_region_is_recorded_as_skipped_not_repaired(
+        self, synthetic_raster, tmp_path
+    ):
+        """It went red on the manifest that listed it under the repaired
+        regions although it has no row in the weights."""
+        import geopandas as gpd
+        from shapely.geometry import Polygon, box
+
+        bowtie = Polygon([(0, 0), (1, 1), (1, 0), (0, 1), (0, 0)])
+        gdf = gpd.GeoDataFrame(
+            {"region_id": ["bad", "good"], "geometry": [bowtie, box(2, 2, 3, 3)]},
+            crs="EPSG:4326",
+        )
+        regions_path = tmp_path / "invalid.parquet"
+        gdf.to_parquet(regions_path)
+        raw = _cfg(regions_path, synthetic_raster, tmp_path / "out").model_dump()
+        raw["regions"]["on_invalid_geometry"] = "skip"
+        result = _run(Config.model_validate(raw))
+        extra = result.manifest.extra
+        assert "repaired_geometry_count" not in extra
+        assert "repaired_geometry_regions" not in extra
+        assert extra["skipped_invalid_geometry_count"] == 1
+        assert extra["skipped_invalid_geometry_regions"] == [{"region_id": "bad"}]
+        assert set(result.frame["region_id"]) == {"good"}
+
     def test_nothing_recorded_without_repairs(
         self, three_region_geoparquet, synthetic_raster, tmp_path
     ):
         result = _run(_cfg(three_region_geoparquet, synthetic_raster, tmp_path / "out"))
         assert "repaired_geometry_count" not in result.manifest.extra
         assert "repaired_geometry_regions" not in result.manifest.extra
+        assert "skipped_invalid_geometry_count" not in result.manifest.extra
 
 
 class TestUnknownIds:

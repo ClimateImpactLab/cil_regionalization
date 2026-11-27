@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+**A histclim file with rows its leaf does not have is refused, naming
+the first row and the regions or years the file alone has.** The two
+are one projection under two climates, so a row in one alone means the
+other is incomplete. The rows were dropped with nothing said, while a
+leaf row the histclim file lacked was refused already.
+
+**A region left out for an invalid geometry is recorded as skipped,
+apart from the regions repaired.** Under `on_invalid_geometry = "skip"`
+the manifest listed the regions it left out as `repaired_geometry_regions`.
+It now lists them as `skipped_invalid_geometry_regions`, with
+`skipped_invalid_geometry_count`, and the source units as
+`skipped_invalid_geometry_source_units`, and `RegionSet` carries them as
+`skipped_invalid_ids`. In the four published artifacts checked, every
+region listed as repaired has its rows.
+
 **A model takes the row of its own name in a model weights table,
 letter for letter, or the row declared for it, and a model with
 neither is refused.** Before, the library dropped `surrogate_` from the

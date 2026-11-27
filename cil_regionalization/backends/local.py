@@ -69,7 +69,7 @@ from cil_regionalization.fallback import (
 from cil_regionalization.grid import GridSpec
 from cil_regionalization.manifest import build_manifest, hash_file, record_schema
 from cil_regionalization.nearest_cell import find_missing_regions, synthesize_rows
-from cil_regionalization.regions import RegionSet
+from cil_regionalization.regions import RegionSet, _geometry_record
 from cil_regionalization.schema import OutputSchema, SourceUnits
 from cil_regionalization.validate import (
     check_grid_invariants,
@@ -215,9 +215,7 @@ class LocalBackend(WeightsBackend):
             )
         manifest.inputs.update(_input_checksums(regions, weights))
         manifest.extra["min_segment_area"] = drop_stats
-        if regions.repaired_ids:
-            manifest.extra["repaired_geometry_count"] = len(regions.repaired_ids)
-            manifest.extra["repaired_geometry_regions"] = list(regions.repaired_ids)
+        manifest.extra.update(_geometry_record(regions))
         manifest.extra.update(_unknown_id_record(regions))
         manifest.timing_seconds["compute_total"] = time.perf_counter() - t0
 
@@ -417,8 +415,16 @@ class LocalBackend(WeightsBackend):
         manifest.extra.update(_unknown_id_record(regions))
         if regions.repaired_ids:
             manifest.extra["repaired_geometry_regions"] = regions.repaired_ids
+        if regions.skipped_invalid_ids:
+            manifest.extra["skipped_invalid_geometry_regions"] = (
+                regions.skipped_invalid_ids
+            )
         if source_set.repaired_ids:
             manifest.extra["repaired_geometry_source_units"] = source_set.repaired_ids
+        if source_set.skipped_invalid_ids:
+            manifest.extra["skipped_invalid_geometry_source_units"] = (
+                source_set.skipped_invalid_ids
+            )
         if near_edge_regions:
             manifest.extra["near_domain_edge_regions"] = near_edge_regions
         if near_edge_sources:

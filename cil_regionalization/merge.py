@@ -168,6 +168,12 @@ def _build_merged_manifest(
                     "repaired_geometry_regions": supplement.get("extra", {}).get(
                         "repaired_geometry_regions", []
                     ),
+                    "skipped_invalid_geometry_count": supplement.get("extra", {}).get(
+                        "skipped_invalid_geometry_count", 0
+                    ),
+                    "skipped_invalid_geometry_regions": supplement.get("extra", {}).get(
+                        "skipped_invalid_geometry_regions", []
+                    ),
                     "bq_compute_location": supplement.get("extra", {}).get(
                         "bq_compute_location"
                     ),

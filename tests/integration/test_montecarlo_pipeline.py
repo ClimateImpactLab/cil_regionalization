@@ -1286,6 +1286,84 @@ class TestSubtract:
         t1 = result.stats[result.stats["target_id"] == "T1"]
         assert (t1["value"].round(9) == 10.5).all()
 
+    def _refused(self, weights_dir, tmp_path, edit) -> str:
+        tree = tmp_path / "tree"
+        _build_subtract_tree(tree, _LEVELS)
+        for name in ("damages.parquet", "histclim.parquet"):
+            path = tree / "k0" / "z1" / name
+            frame = edit(name, pd.read_parquet(path))
+            frame.to_parquet(path, index=False)
+        raw = _pipeline_cfg(
+            weights_dir, tree, tmp_path / "out", levels=_LEVELS
+        ).model_dump()
+        raw["tree"]["subtract_filename"] = "histclim.parquet"
+        with pytest.raises(ValueError, match="partial run") as error:
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert "5 of 6 leaves succeeded" in str(error.value)
+        assert "k0/z1" in str(error.value)
+        assert not (tmp_path / "out" / "statistics.parquet").exists()
+        return str(error.value)
+
+    def test_a_histclim_file_with_a_year_more_is_refused_by_name(
+        self, weights_dir, tmp_path
+    ):
+        """The leaf lacks a year its histclim sibling has. Its row was
+        dropped with nothing said, and this went red on that."""
+
+        def edit(name, frame):
+            if name == "damages.parquet":
+                return frame
+            extra = frame[frame["year"] == 2081].assign(year=2082)
+            return pd.concat([frame, extra], ignore_index=True)
+
+        message = self._refused(weights_dir, tmp_path, edit)
+        assert (
+            "has 2 rows the leaf does not have (first: {'unit_id': 'u1', "
+            "'year': 2082}); the two files must cover the same regions and "
+            "years. The subtract file alone has year 2082."
+        ) in message
+
+    def test_a_histclim_file_with_a_region_more_is_refused_by_name(
+        self, weights_dir, tmp_path
+    ):
+        def edit(name, frame):
+            if name == "damages.parquet":
+                return frame
+            extra = frame[frame["unit_id"] == "u1"].assign(unit_id="u9")
+            return pd.concat([frame, extra], ignore_index=True)
+
+        message = self._refused(weights_dir, tmp_path, edit)
+        assert "has 4 rows the leaf does not have" in message
+        assert "The subtract file alone has unit_id u9." in message
+
+    def test_a_leaf_short_of_one_of_its_rows_is_refused(self, weights_dir, tmp_path):
+        """Every value of the row is elsewhere in the leaf, so only the
+        row is named."""
+
+        def edit(name, frame):
+            if name == "histclim.parquet":
+                return frame
+            gone = (frame["unit_id"] == "u2") & (frame["year"] == 2051)
+            return frame[~gone]
+
+        message = self._refused(weights_dir, tmp_path, edit)
+        assert (
+            "has 1 row the leaf does not have (first: {'unit_id': 'u2', "
+            "'year': 2051}); the two files must cover the same regions and "
+            "years. They are one projection"
+        ) in message
+
+    def test_a_histclim_file_short_of_a_row_is_refused(self, weights_dir, tmp_path):
+        """The other way round, which was refused already."""
+
+        def edit(name, frame):
+            if name == "damages.parquet":
+                return frame
+            return frame.iloc[1:]
+
+        message = self._refused(weights_dir, tmp_path, edit)
+        assert "covers 7 of 8 rows" in message
+
     def test_missing_subtract_file_counts_as_missing(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
         _build_tree(tree, _LEVELS)  # no histclim siblings

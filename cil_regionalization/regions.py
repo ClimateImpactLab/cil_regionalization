@@ -41,12 +41,15 @@ class RegionSet:
     on_invalid_geometry: InvalidGeomPolicy
     table: str | None = None
     gdf: gpd.GeoDataFrame | None = None
-    # Filled in by from_config for path-loaded gdfs whose geometries were
-    # repaired by `shapely.make_valid` under the `repair` policy. The
-    # backends record this in the manifest under `repaired_geometry_regions`
-    # so a future reader of the parquet knows which regions' shapes were
-    # mutated relative to the source.
+    # Filled in by from_config for path-loaded gdfs. The ids whose
+    # geometries `shapely.make_valid` repaired under the "repair" policy,
+    # which stay with their shapes changed, and the ids of the invalid
+    # geometries the "skip" policy left out. The backends record them
+    # apart in the manifest, under `repaired_geometry_regions` and
+    # `skipped_invalid_geometry_regions`, since a region left out is not a
+    # region repaired.
     repaired_ids: list[dict[str, Any]] = field(default_factory=list)
+    skipped_invalid_ids: list[dict[str, Any]] = field(default_factory=list)
     # Values listed in `regions.keep` and `regions.drop` that match no row
     # of the file as read, by filter column. The local backend applies
     # `on_unknown_id` to them and records them in the manifest.
@@ -74,7 +77,7 @@ class RegionSet:
         # downstream geodesic / spatial ops have a definite frame.
         if gdf.crs is None:
             gdf = gdf.set_crs("EPSG:4326")
-        gdf, repaired = _handle_invalid_geometries(
+        gdf, repaired, skipped = _handle_invalid_geometries(
             gdf, cfg.on_invalid_geometry, list(cfg.id_fields)
         )
         gdf = gdf.reset_index(drop=True)
@@ -84,6 +87,7 @@ class RegionSet:
             table=None,
             gdf=gdf,
             repaired_ids=repaired,
+            skipped_invalid_ids=skipped,
             unknown_keep_ids=unknown_keep,
             unknown_drop_ids=unknown_drop,
             source_uri=str(source_uri),
@@ -209,18 +213,32 @@ def _absent_values(column, listed: list[Any]) -> list[str]:
     )
 
 
+def _geometry_record(regions: "RegionSet") -> dict[str, Any]:
+    """The manifest entries of the invalid region geometries, the repaired
+    and the skipped apart, each only if there are any."""
+    out: dict[str, Any] = {}
+    if regions.repaired_ids:
+        out["repaired_geometry_count"] = len(regions.repaired_ids)
+        out["repaired_geometry_regions"] = list(regions.repaired_ids)
+    if regions.skipped_invalid_ids:
+        out["skipped_invalid_geometry_count"] = len(regions.skipped_invalid_ids)
+        out["skipped_invalid_geometry_regions"] = list(regions.skipped_invalid_ids)
+    return out
+
+
 def _handle_invalid_geometries(
     gdf: gpd.GeoDataFrame,
     policy: InvalidGeomPolicy,
     id_fields: list[str],
-) -> tuple[gpd.GeoDataFrame, list[dict[str, Any]]]:
-    """Apply the invalid-geometry policy. Returns ``(gdf, bad_ids)``, the
-    ids of the invalid geometries whether they were repaired or skipped.
-    Raises under "error" if any geometry is invalid."""
+) -> tuple[gpd.GeoDataFrame, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Apply the invalid-geometry policy. Returns ``(gdf, repaired,
+    skipped)``, the ids of the invalid geometries that were repaired and
+    kept, and of those left out. One of the two is always empty. Raises
+    under "error" if any geometry is invalid."""
     invalid_mask = ~gdf.geometry.is_valid
     n_invalid = int(invalid_mask.sum())
     if n_invalid == 0:
-        return gdf, []
+        return gdf, [], []
 
     bad_ids = gdf.loc[invalid_mask, id_fields].to_dict(orient="records")
     if policy == "repair":
@@ -233,12 +251,12 @@ def _handle_invalid_geometries(
         )
         out = gdf.copy()
         out = out.set_geometry(repaired)
-        return out, bad_ids
+        return out, bad_ids, []
     if policy == "skip":
         logger.info(
             "regions: skipping %d invalid geometries; ids=%s", n_invalid, bad_ids
         )
-        return gdf.loc[~invalid_mask].copy(), bad_ids
+        return gdf.loc[~invalid_mask].copy(), [], bad_ids
     raise ValueError(
         f"regions: {n_invalid} invalid geometries with on_invalid_geometry='error'; "
         f"ids={bad_ids}"
