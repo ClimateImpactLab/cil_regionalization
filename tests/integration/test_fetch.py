@@ -374,17 +374,25 @@ class TestFetchModelWeights:
         yield server
         server.stop()
 
-    def test_it_reads_the_table_of_the_rcp_and_matches_the_names(self, smme, tmp_path):
+    def test_it_reads_the_table_of_the_rcp_with_the_rows_declared(self, smme, tmp_path):
+        """The published rows are not spelt as the trees spell the
+        members, so they are declared, and without them the members are
+        refused."""
         from cil_regionalization.fetch import fetch_model_weights
 
-        weights = fetch_model_weights(
-            "rcp85", record=RECORD_ID, base_url=smme.base_url, cache_dir=tmp_path
-        )
-        attached = weights.attach(
-            pd.Series(["CCSM4", "MIROC5", "surrogate_GFDL-CM3_89"])
-        )
-        assert attached.tolist() == [0.25, 0.5, 0.25]
+        options = dict(record=RECORD_ID, base_url=smme.base_url, cache_dir=tmp_path)
+        members = pd.Series(["CCSM4", "MIROC5", "surrogate_GFDL-CM3_89"])
+        names = {
+            "CCSM4": "ccsm4",
+            "MIROC5": "miroc5*",
+            "surrogate_GFDL-CM3_89": "gfdl-cm3_89",
+        }
+        weights = fetch_model_weights("rcp85", table_names=names, **options)
+        assert weights.attach(members).tolist() == [0.25, 0.5, 0.25]
         assert weights.sha256 == hashlib.sha256(self.TSV).hexdigest()
+        # from the cache, as it was fetched
+        with pytest.raises(ValueError, match="3 members have no row"):
+            fetch_model_weights("rcp85", **options).attach(members)
 
     def test_a_second_call_reads_the_cache(self, smme, tmp_path):
         from cil_regionalization.fetch import fetch_model_weights

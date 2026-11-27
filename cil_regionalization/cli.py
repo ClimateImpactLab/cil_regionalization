@@ -373,6 +373,11 @@ def _cmd_regions_find(config_path: str, *, pattern: str, limit: int) -> int:
 def _regions_find_bq(cfg: Config, primary: str, pattern: str, limit: int) -> int:
     from google.cloud import bigquery
 
+    if cfg.backend.bigquery.project is None:
+        raise ValueError(
+            "regions.table is read through BigQuery, which needs "
+            "backend.bigquery.project, the billing project. It has no default."
+        )
     client = bigquery.Client(project=cfg.backend.bigquery.project)
     table = cfg.regions.table
     project, dataset, _ = table.split(".", 2)

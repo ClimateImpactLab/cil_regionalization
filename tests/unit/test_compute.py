@@ -35,6 +35,30 @@ class TestDaskOff:
         with dask_client_for(opts) as client:
             assert client is None
 
+    def test_slurm_without_its_settings_is_refused_before_dask_is_imported(
+        self, monkeypatch
+    ):
+        """For options built without the model's check, as a caller can.
+        It went red on the defaults of one cluster's partition."""
+        import pydantic
+
+        def boom(*a, **k):
+            raise AssertionError("dask was imported before the settings were checked")
+
+        real_import = __import__
+        monkeypatch.setattr(
+            "builtins.__import__",
+            lambda name, *a, **k: (
+                boom()
+                if name.startswith(("dask", "distributed"))
+                else real_import(name, *a, **k)
+            ),
+        )
+        opts = LocalBackendOptions.model_construct(dask="slurm", slurm_queue="general")
+        with pytest.raises(pydantic.ValidationError, match="slurm_cores"):
+            with dask_client_for(opts):
+                pass
+
     def test_default_is_off(self):
         opts = LocalBackendOptions()
         assert opts.dask == "off"

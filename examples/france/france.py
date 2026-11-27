@@ -828,18 +828,29 @@ def _(mo):
     The projections weight each climate model by the SMME weights, which
     give the 21 models and the 12 surrogates their share of the
     distribution of warming. `read_model_weights` reads the table and
-    `attach` gives every draw the weight of its model. A surrogate is
-    named `surrogate_GFDL-CM3_89` in the tree and `gfdl-cm3_89` in the
-    table, and a model can carry a `*` in the table, and `attach` matches
-    them. Without weights every draw counts the same.
+    `attach` gives every draw the weight of its model. A member takes the
+    row of its own name, letter for letter, or the row declared for it.
+    The published table spells its rows otherwise, `gfdl-cm3_89` for the
+    tree's `surrogate_GFDL-CM3_89` and `miroc5*` for `MIROC5`, so the rows
+    are declared, member name to table name, in
+    `examples/model_weights/smme_rcp85_names.toml` until the table carries
+    the members' names. Without weights every draw counts the same.
     """
     )
     return
 
 
 @app.cell
-def _(DATA, STATISTICS, cilreg, members, pd, plt, warnings):
-    model_weights = cilreg.read_model_weights(DATA / "smme" / "rcp85_SMME_weights.tsv")
+def _(DATA, HERE, STATISTICS, cilreg, members, pd, plt, warnings):
+    from cil_regionalization.pipelines.montecarlo import load_model_weight_names
+
+    # the row of each member in the published table, written out
+    SMME_NAMES = load_model_weight_names(
+        HERE.parent / "model_weights" / "smme_rcp85_names.toml"
+    )
+    model_weights = cilreg.read_model_weights(
+        DATA / "smme" / "rcp85_SMME_weights.tsv", table_names=SMME_NAMES
+    )
     _weighted = members.assign(weight=model_weights.attach(members["gcm"]))
     _options = dict(
         sample_dims=["batch", "gcm"],
@@ -865,7 +876,7 @@ def _(DATA, STATISTICS, cilreg, members, pd, plt, warnings):
     _ax.set_xlabel("percent moved by the model weights, across departments")
     _ax.legend()
     _fig
-    return (model_weights,)
+    return SMME_NAMES, model_weights
 
 
 @app.cell
@@ -999,7 +1010,17 @@ def _(DATA, LEAVES, OUT, relative):
 
 
 @app.cell
-def _(DATA, OUT, cilreg_cli, mo, pipeline_config, relative, shown, tree_section):
+def _(
+    DATA,
+    OUT,
+    SMME_NAMES,
+    cilreg_cli,
+    mo,
+    pipeline_config,
+    relative,
+    shown,
+    tree_section,
+):
     _deaths = 'format = "parquet"\nvalue_col = "deaths"\nkind = "extensive"\nversion = "world-combo-201710"\n'
     _stats = (
         'sample_dims = ["batch", "gcm"]\nmodel_dims = ["gcm"]\ntime_col = "year"\nquantiles = [0.05, 0.5, 0.95]\n'
@@ -1008,6 +1029,10 @@ def _(DATA, OUT, cilreg_cli, mo, pipeline_config, relative, shown, tree_section)
     _weights = (
         f'model_weights = "{relative(DATA / "smme" / "rcp85_SMME_weights.tsv", OUT / "configs")}"\n'
         'model_weight_level = "gcm"\n'
+    )
+    # a table of stats, so after every key of it
+    _names = "\n[stats.model_weight_names]\n" + "".join(
+        f'"{_member}" = "{_row}"\n' for _member, _row in SMME_NAMES.items()
     )
     aggregate_deaths = pipeline_config(
         "deaths_aggregate",
@@ -1027,7 +1052,7 @@ def _(DATA, OUT, cilreg_cli, mo, pipeline_config, relative, shown, tree_section)
             f"deaths_{_name}",
             tree=_rcp85,
             data=_deaths,
-            stats=_stats + _weights + _time,
+            stats=_stats + _weights + _time + _names,
             output=f'stem = "deaths_{_name}"\nleaves_stem = "deaths"\n',
         )
         for _name, _time in {

@@ -17,6 +17,7 @@ import hashlib
 import itertools
 import json
 import math
+import re
 from pathlib import Path
 
 import geopandas as gpd
@@ -1113,26 +1114,6 @@ model_dims = ["zeppelin"]
         assert found == str(tmp_path / "configs" / "tables" / name)
 
 
-class TestNoSiteFactsInCode:
-    def test_pipeline_code_carries_no_absolute_paths_or_environments(self):
-        import cil_regionalization.pipelines.montecarlo as module
-
-        source = Path(module.__file__).read_text()
-        for forbidden in (
-            "/project/",
-            "/" + "Volumes/",  # split so test_no_mount_paths.py does not match it
-            "/shares/",
-            "/home/",
-            "conda",
-            "sbatch",
-            "battuta",
-            "caslake",
-        ):
-            assert forbidden not in source, (
-                f"pipeline code contains site-specific string {forbidden!r}"
-            )
-
-
 def _build_netcdf_tree(
     root: Path,
     levels: dict[str, list[str]],
@@ -1412,6 +1393,7 @@ class TestModelWeights:
         cfg = _pipeline_cfg(weights_dir, tree, tmp_path / "out", levels=_LEVELS)
         raw = cfg.model_dump()
         raw["stats"]["model_weights"] = str(self._weights_file(tmp_path))
+        raw["stats"]["model_weight_names"] = {"z0": "Z0*"}
         raw["stats"]["quantile_method"] = "lower_step"
         raw["stats"]["model_weight_level"] = "zeppelin"
         raw["stats"]["quantiles"] = []
@@ -1444,12 +1426,75 @@ class TestModelWeights:
         raw["stats"]["quantile_method"] = "lower_step"
         raw["stats"]["model_weight_level"] = "zeppelin"
         cfg = MonteCarloPipelineConfig.model_validate(raw)
-        # the check of the values the tree declares, not the lookup of
-        # one leaf's weight, which says "has no row"
+        # the check of the values the tree declares, before any leaf
         with pytest.raises(
-            ValueError, match=r"values of 'zeppelin' have no row in the model"
+            ValueError,
+            match=r"2 members have no row in the model weights file .*: 'z1' "
+            r"\(closest row 'z0'\) and 'z2' \(closest row 'z0'\)",
         ):
             run_pipeline(cfg)
+        assert not (tmp_path / "out").exists()
+
+    def test_a_model_spelt_otherwise_than_its_row_is_refused_by_both_names(
+        self, weights_dir, tmp_path
+    ):
+        """Z0* was the row of z0 to the rule that lowercased both and
+        dropped the star. It went red on that rule. Nothing is written."""
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        cfg = self._weighted_cfg(
+            weights_dir, tree, tmp_path / "out", self._weights_file(tmp_path)
+        )
+        raw = cfg.model_dump()
+        raw["stats"]["model_weight_names"] = {}
+        with pytest.raises(
+            ValueError,
+            match=r"1 member has no row in the model weights file .*: 'z0' "
+            r"\(closest row 'Z0\*'\)\..*stats.model_weight_names.*"
+            r'as in "z0" = "Z0\*"',
+        ):
+            run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert not (tmp_path / "out").exists()
+
+    @pytest.mark.parametrize(
+        "names, message",
+        [
+            (
+                {"z0": "Z0*", "Z0": "Z0*", "z1": "z1"},
+                "stats.model_weight_names declares one row for more than one "
+                "member, the row 'Z0*' for 'z0' and 'Z0'. Each member needs a "
+                "row of its own.",
+            ),
+            (
+                {"z0": ""},
+                "stats.model_weight_names maps a member name to a table name, "
+                "and 'z0' = '' leaves one empty",
+            ),
+        ],
+    )
+    def test_declared_rows_are_refused_by_the_name_they_came_under(
+        self, weights_dir, tmp_path, names, message
+    ):
+        """The refusal of read_model_weights named its table_names,
+        which a config does not have. It went red on that."""
+        raw = self._weighted_cfg(
+            weights_dir, tmp_path / "tree", tmp_path / "out", tmp_path / "w.tsv"
+        ).model_dump()
+        raw["stats"]["model_weight_names"] = names
+        with pytest.raises(ValueError, match=re.escape(message)):
+            MonteCarloPipelineConfig.model_validate(raw)
+
+    def test_declared_rows_without_a_table_are_refused(self, weights_dir, tmp_path):
+        raw = _pipeline_cfg(
+            weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS
+        ).model_dump()
+        raw["stats"]["model_weight_names"] = {"z0": "Z0*"}
+        with pytest.raises(
+            ValueError,
+            match="stats.model_weight_names declares rows of a model weights "
+            "file, and stats.model_weights names none",
+        ):
+            MonteCarloPipelineConfig.model_validate(raw)
 
     def test_weight_level_must_be_sample_dim(self, weights_dir, tmp_path):
         cfg = _pipeline_cfg(weights_dir, tmp_path / "t", tmp_path / "o", levels=_LEVELS)
@@ -1466,6 +1511,7 @@ class TestModelWeights:
         cfg = _pipeline_cfg(weights_dir, tree, out, levels=_LEVELS, n_workers=n_workers)
         raw = cfg.model_dump()
         raw["stats"]["model_weights"] = str(weights_file)
+        raw["stats"]["model_weight_names"] = {"z0": "Z0*"}
         raw["stats"]["quantile_method"] = "lower_step"
         raw["stats"]["model_weight_level"] = "zeppelin"
         raw["tree"]["exclude"] = [list(cell) for cell in exclude]
@@ -1478,12 +1524,11 @@ class TestModelWeights:
         _build_tree(tree, _LEVELS)
         p = tmp_path / "weights.tsv"
         pd.DataFrame(
-            {"model": ["Z0*", "z1", "z2", "z0"], "weight": [0.6, 0.3, 0.1, 0.2]}
+            {"model": ["Z0*", "z1", "z2", "z1"], "weight": [0.6, 0.3, 0.1, 0.2]}
         ).to_csv(p, sep="\t", index=False)
         cfg = self._weighted_cfg(weights_dir, tree, tmp_path / "out", p)
-        with pytest.raises(ValueError) as error:
+        with pytest.raises(ValueError, match="has the row 'z1' more than once"):
             run_pipeline(cfg)
-        assert "['Z0*', 'z0']" in str(error.value)
         assert not (tmp_path / "out").exists()
 
     @pytest.mark.parametrize("n_workers", [1, 2])
@@ -1550,9 +1595,12 @@ class TestModelWeights:
 
         manifest = json.loads(Path(result.paths["manifest"]).read_text())
         assert manifest["model_weights"] == str(p)
+        assert manifest["model_weight_names"] == {"z0": "Z0*"}
         assert manifest["model_weights_record"] == {
             "path": str(p),
             "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+            "table_names": {"z0": "Z0*"},
+            "table_names_unused": {},
             "members": {
                 "z0": {"row": "Z0*", "weight": 0.6, "n_leaves": 2},
                 "z1": {"row": "z1", "weight": 0.3, "n_leaves": 2},
@@ -3587,9 +3635,9 @@ class TestPooledYears:
 
         real, reads = montecarlo.read_model_weights, []
 
-        def read_model_weights(path):
+        def read_model_weights(path, **options):
             reads.append(path)
-            return real(path)
+            return real(path, **options)
 
         monkeypatch.setattr(montecarlo, "window_means", window_means)
         monkeypatch.setattr(montecarlo, "read_model_weights", read_model_weights)

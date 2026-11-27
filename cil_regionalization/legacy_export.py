@@ -12,11 +12,6 @@ constant.
 ``cropwt`` is NaN for a region with no cropland, the outcome of the
 ``fallback = "nan"`` policy, as in the legacy files. Downstream
 aggregation fills it per pixel from ``areawt``.
-
-On the RCC, run it in this environment::
-
-    module load python
-    source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
 """
 
 from __future__ import annotations

@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+**A model takes the row of its own name in a model weights table,
+letter for letter, or the row declared for it, and a model with
+neither is refused.** Before, the library dropped `surrogate_` from the
+tree's names and `*` from the table's and lowercased both, a rule
+nobody saw that could put a weight on the wrong model. The refusal
+names each model as the tree spells it with the row it comes closest
+to, and says the two ways out: write the trees' names into the table,
+or declare each model's row, model name to table name, under
+`[stats.model_weight_names]` of a pipeline config or as `table_names`
+of `read_model_weights` and `fetch_model_weights`. The manifest records
+the rows declared. **The published SMME tables do not pass as they
+stand.** They name the models in lower case, some with a trailing `*`,
+and the surrogates without the prefix, so of the 32 models under
+rcp45 and the 33 under rcp85 only `bcc-csm1-1` matches. Until the
+tables are rewritten, every run that reads them declares the rows.
+`examples/model_weights/` holds the pairs for both tables, written out,
+and `load_model_weight_names` reads them. Two models declared to one
+row, or taking one row between them, are refused. `ModelWeights` loses
+`keys` and gains `check`, and `read_model_weights` takes `sep`. The
+France, aggregation, energy percentiles and valued mortality examples
+declare their rows.
+
+**A model at weight zero is dropped before every quantile, as it was
+from the mean.** `"lower_step"` could return the value of such a model,
+since its weight did not move the running share. The published SMME
+tables have no row at weight zero.
+
+**`UnweightedModelWeightsWarning` is given when `model_dims` names the
+climate model and no weights are set, and no longer when a sample
+dimension is called `gcm`.** Its message names no lab.
+`summarize_samples` and `pooled_statistics` take `model_dims` without
+`include_n_members`, for the warning, where it was refused.
+
+**No fact of one cluster or one cloud account is a default.** With
+`backend.local.dask = "slurm"` the queue, the cores, memory and
+walltime of a job and the number of jobs, `slurm_queue`, the new
+`slurm_cores` and `slurm_memory`, `slurm_walltime` and `n_workers`, are
+required. They defaulted to one cluster's partition. With
+`backend.kind = "bigquery"`, `backend.bigquery.project` and
+`temp_dataset` are required, where they defaulted to one cloud
+account's. The docstrings that named a cluster's paths no longer do,
+and a test reads every module of the package for such facts, where it
+read the pipeline alone.
+
+**The BigQuery backend refuses an edge-offset grid.** Its SQL places
+the cells for the centre offset, so it returned the weights of an
+edge-offset grid half a cell off. The config and the backend both
+refuse it.
+
 The documentation of `quantile_method` says which value estimates a
 quantile. `"inverted_cdf"` is the estimator and returns a value a
 member has. `"linear"` interpolates and can return a number no member
@@ -214,14 +263,11 @@ its warming level in a calendar period.
   carries is of the bytes the rows were parsed from. `attach` returns
   the weight of each row's model and raises if a model has no row.
   `record` returns the entry a manifest should keep, described below.
-  Names match as they did before: a `*` is dropped from the table
-  name, `surrogate_` is dropped from the member, and both are
-  lowercased.
-- Changed: a weights table in which two rows match the same model is
-  refused, with both rows named. Before, the last of the two rows was
-  applied and nothing was said. Neither published SMME table has such
-  rows (32 names in the rcp45 table, 33 in the rcp85 one, all
-  distinct after matching), so no run that worked is refused.
+  A model takes the row of its own name or the row declared for it,
+  as the first entry of this section says.
+- Changed: a weights table with a name in it twice is refused, with
+  the name given. Before, the last of the two rows was applied and
+  nothing was said.
 - Changed: the pipeline reads the model weights file once, in the
   parent, and hands those rows to the workers. Before, every worker
   read the file again when it started, and workers are replaced every

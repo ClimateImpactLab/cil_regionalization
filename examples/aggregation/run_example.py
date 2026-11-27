@@ -45,7 +45,9 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parents[1]))
 
 from cil_regionalization.apply import WeightsArtifact, apply_weights
+from cil_regionalization.model_weights import read_model_weights
 from cil_regionalization.netcdf_io import read_netcdf_leaf
+from cil_regionalization.pipelines.montecarlo import load_model_weight_names
 from cil_regionalization.stats import summarize_samples
 
 DATA = _HERE / "data"
@@ -252,17 +254,17 @@ def main(argv: list[str] | None = None) -> int:
     # happened first, above; the window mean and pooled statistics come
     # last. The 33 climate models are the draws, each with its SMME
     # weight.
-    smme = pd.read_csv(DATA / "smme_weights_rcp85.csv")
-    smme_weight = dict(
-        zip(smme["model"].str.replace("*", "", regex=False).str.lower(), smme["weight"])
+    # Each model takes the row declared for it, since the table does not
+    # spell its rows as the trees spell the models, and one with no row
+    # is refused.
+    smme = read_model_weights(
+        DATA / "smme_weights_rcp85.csv",
+        sep=",",
+        table_names=load_model_weight_names(
+            _HERE.parent / "model_weights" / "smme_rcp85_names.toml"
+        ),
     )
-    damages["weight"] = (
-        damages["gcm"]
-        .str.replace("surrogate_", "", regex=False)
-        .str.lower()
-        .map(smme_weight)
-    )
-    assert damages["weight"].notna().all()
+    damages["weight"] = smme.attach(damages["gcm"])
     stats = summarize_samples(
         damages,
         sample_dims=["gcm"],

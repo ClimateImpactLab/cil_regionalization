@@ -228,7 +228,10 @@ product reads the same table. `attach` gives every draw the weight of
 its model, so the weight repeats across batches:
 
 ```python
-weights = cilreg.fetch_model_weights("rcp85")
+from cil_regionalization.pipelines.montecarlo import load_model_weight_names
+
+names = load_model_weight_names("examples/model_weights/smme_rcp85_names.toml")
+weights = cilreg.fetch_model_weights("rcp85", table_names=names)
 draws["weight"] = weights.attach(draws["gcm"])
 stats = cilreg.summarize_samples(
     draws,
@@ -242,34 +245,51 @@ stats = cilreg.summarize_samples(
 )
 ```
 
-The naming rule: weight file names are lowercase, a trailing `*` is
-bookkeeping and drops out, and an underscore suffix (`gfdl-cm3_94`)
-marks a surrogate, which the projection trees spell with a prefix
-(`surrogate_GFDL-CM3_94`). Strip the prefix and lowercase, and every
-model in the trees matches exactly one weight row.
+A model takes the row of its own name, letter for letter, or the row
+declared for it, and a model with neither is refused. Nothing reads a
+name to decide what it means, so a weight cannot land on the wrong
+model by a rule nobody sees. The published tables do not pass as they
+stand. They name the models in lower case, some with a trailing `*`,
+and the surrogates without the `surrogate_` prefix of the trees, so
+`ACCESS1-0` is the row `access1-0*` and `surrogate_GFDL-CM3_94` the row
+`gfdl-cm3_94`. Until the tables are rewritten with the trees' names, a
+run declares each model's row, model name to table name, written out.
+`examples/model_weights/` holds the pairs for both published tables,
+which the code above reads. The refusal names the row a model comes
+closest to, and the two ways out, fixing the table or declaring the
+row.
 
-`read_model_weights` applies that rule to a file on disk. It reads the
-file once and refuses a table in which two rows match the same model.
+`read_model_weights` does the same for a file on disk. It reads the
+file once and refuses a table that has a name twice, and two models
+declared to one row.
 
 ```python
-weights = cilreg.read_model_weights("rcp85_SMME_weights.tsv")
+weights = cilreg.read_model_weights("rcp85_SMME_weights.tsv", table_names=names)
 draws["weight"] = weights.attach(draws["gcm"])
 entry = weights.record(leaf_models)  # one model name per leaf pooled
 ```
 
-`attach` raises if a model has no row. `record` returns what a manifest
-should keep about the run: the file's path and SHA256, each model that
-was given a weight with that weight and its number of leaves, and the
-rows no model matched with their weights. The two lists together are
-the whole table, so the statistics can be rerun from the manifest if
-the file is lost. A pipeline run writes this entry to its manifest as
-`model_weights_record`.
+`attach` raises if a model has no row, or two models take one row.
+`record` returns what a manifest should keep about the run: the file's
+path and SHA256, the rows declared, each model that was given a weight
+with its row, that weight and its number of leaves, and the rows no
+model took with their weights. The two lists together are the whole
+table, so the statistics can be rerun from the manifest if the file is
+lost. A pipeline run writes this entry to its manifest as
+`model_weights_record`, and takes the declared rows as
+`[stats.model_weight_names]`:
+
+```toml
+[stats.model_weight_names]
+"ACCESS1-0" = "access1-0*"
+"surrogate_GFDL-CM3_94" = "gfdl-cm3_94"
+```
 
 Weighted quantiles follow the historical extraction tool: the left
 step inverse of the weighted empirical distribution, not the
-interpolated quantiles of the unweighted path. Pooling a sample
-dimension named `gcm` without weights warns once; filter
-`UnweightedModelWeightsWarning` to silence it. On the Mexico sample
+interpolated quantiles of the unweighted path. Pooling without
+weights while `model_dims` names the climate model warns once. Filter
+`UnweightedModelWeightsWarning` where equal weights are meant. On the Mexico sample
 (`examples/rates`) the weights barely move the median and pull the
 95th percentile down by about a fifth.
 
@@ -279,8 +299,8 @@ the computation:
 - `"inverted_cdf"` is the estimator of a quantile, the standard
   inverse of the empirical distribution (Hyndman and Fan type 1), the
   smallest member value whose cumulative weight share reaches q. It is
-  the same with or without weights, always returns the value of a
-  member, and never that of a member whose weight is zero.
+  the same with or without weights, and always returns the value of a
+  member.
 - `"linear"` interpolates between two members, so it can return a
   number no member holds. It is computed by numpy, so it is
   `numpy.quantile(method="linear")` and xarray's `.quantile` to the
@@ -291,10 +311,12 @@ the computation:
   except the median of members that count equally. Without weights
   every member counts the same, which is what that tool did when it
   was told to use no model weights. A quantile at or below the first
-  member's share is `-inf`, and the value of a member with weight zero
-  can come back.
+  member's share is `-inf`.
 
 The names say what each computes, so pick by that, not by the name.
+A member with weight zero is dropped before any of them, and before
+the mean and the counts, so no quantile returns the value of a member
+that weighs nothing.
 
 With four members that count equally the three give three different
 95th percentiles. `"inverted_cdf"` gives the fourth member, `"linear"`

@@ -192,6 +192,8 @@ name = "area"
 kind = "bigquery"
 coverage = "pixel_centroid"
 [backend.bigquery]
+project = "example-project"
+temp_dataset = "example_temp"
 staging_uri = "gs://example-staging/segment-weights/"
 [output]
 dir = "{tmp_path}/out"

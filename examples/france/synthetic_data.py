@@ -170,9 +170,10 @@ def _write_tree(data: Path, hierids: list[str]) -> None:
 def _write_smme(data: Path) -> None:
     (data / "smme").mkdir(parents=True, exist_ok=True)
     rows = {
+        # spelt as the published tables spell these rows
         "rcp85": [
             ("ccsm4", 0.3),
-            ("gfdl-cm3", 0.2),
+            ("gfdl-cm3*", 0.2),
             ("miroc5*", 0.4),
             ("gfdl-cm3_89", 0.1),
         ],

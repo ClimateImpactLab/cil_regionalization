@@ -15,11 +15,6 @@ Small differences are expected. Areas are geodesic on the ellipsoid
 ST_INTERSECTION). The local intersection is planar shapely, which
 differs mostly in boundary cells. Population is a GPW raster sum
 locally and a GPW point sum in BigQuery, on the same pixel footprint.
-
-On the RCC, run it in this environment::
-
-    module load python
-    source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
 """
 
 from __future__ import annotations

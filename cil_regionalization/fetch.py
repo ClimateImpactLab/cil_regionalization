@@ -38,7 +38,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 if sys.version_info >= (3, 11):
@@ -364,12 +364,15 @@ def fetch_model_weights(
     base_url: str | None = None,
     cache_dir: str | Path | None = None,
     refresh: bool = False,
+    table_names: Mapping[str, str] | None = None,
 ):
     """The published climate model weights of ``rcp``, as
-    `read_model_weights` reads them, from the file
+    `read_model_weights` reads them with ``table_names``, from the file
     ``<rcp>_SMME_weights.tsv`` of their Zenodo record. The download is
     checked against the md5 the record declares and cached with it, and
-    a cached copy that no longer matches raises."""
+    a cached copy that no longer matches raises. The published tables
+    do not spell their rows as the trees spell the members, so until
+    they are rewritten every member but one needs its row declared."""
     from cil_regionalization.model_weights import read_model_weights
 
     entry = RegistryEntry(
@@ -386,7 +389,7 @@ def fetch_model_weights(
                 f"the md5 their record declared. Fetch them again with "
                 f"refresh=True."
             )
-        return read_model_weights(path)
+        return read_model_weights(path, table_names=table_names)
     files = _record_files(entry)
     if name not in files:
         tables = sorted(k for k in files if k.endswith("_SMME_weights.tsv"))
@@ -403,7 +406,7 @@ def fetch_model_weights(
         partial.replace(path)
     finally:
         partial.unlink(missing_ok=True)
-    return read_model_weights(path)
+    return read_model_weights(path, table_names=table_names)
 
 
 def list_cached(cache_dir: str | Path | None = None) -> list[dict[str, Any]]:

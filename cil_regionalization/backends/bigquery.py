@@ -46,7 +46,7 @@ import pandas as pd
 
 
 from cil_regionalization.backends.base import WeightsBackend, WeightsResult
-from cil_regionalization.config import Config
+from cil_regionalization.config import BIGQUERY_CENTRE_ONLY, Config
 from cil_regionalization.fallback import (
     apply_fallback,
     compute_native_weights,
@@ -317,6 +317,8 @@ class BigQueryBackend(WeightsBackend):
                 "BigQueryBackend Stage 3 supports grid.mode='generate' only. "
                 "Prebuilt grids land later."
             )
+        if grid.offset != "center":
+            raise ValueError(BIGQUERY_CENTRE_ONLY.format(offset=grid.offset))
         for w in weights:
             if w.is_area:
                 continue
