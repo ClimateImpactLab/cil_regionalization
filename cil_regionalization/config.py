@@ -24,6 +24,13 @@ else:  # pragma: no cover
 
 LonConvention = Literal["[-180,180)", "[0,360)"]
 GridOffset = Literal["center", "edge"]
+# The BigQuery backend's SQL places every cell for the centre offset.
+BIGQUERY_CENTRE_ONLY = (
+    "backend.kind = 'bigquery' takes grid.offset = 'center' only, and got "
+    "{offset!r}. Its SQL handles centre offsets only, so the weights of an "
+    "edge-offset grid would come out half a cell off. Use backend.kind = "
+    "'local' for an edge-offset grid."
+)
 GridMode = Literal["generate", "prebuilt"]
 CoverageMode = Literal["exact_fraction", "pixel_centroid"]
 BackendKind = Literal["local", "bigquery"]
@@ -198,10 +205,17 @@ class WeightConfig(_Strict):
 
 class LocalBackendOptions(_Strict):
     dask: DaskMode = "off"
+    # Under "slurm" the number of jobs, and under "local" the number of
+    # processes, four unless set.
     n_workers: Optional[int] = Field(default=None, ge=1)
     threads_per_worker: Optional[int] = Field(default=None, ge=1)
-    slurm_queue: Optional[str] = None
-    slurm_walltime: Optional[str] = None
+    # The queue, the cores and memory of one job, and its walltime, as
+    # dask_jobqueue takes them. Facts of a cluster, so none has a
+    # default, and dask = "slurm" needs every one of them and n_workers.
+    slurm_queue: Optional[str] = Field(default=None, min_length=1)
+    slurm_cores: Optional[int] = Field(default=None, ge=1)
+    slurm_memory: Optional[str] = Field(default=None, min_length=1)
+    slurm_walltime: Optional[str] = Field(default=None, min_length=1)
     # Segments below this geodesic area are dropped as boundary residue.
     # The default is justified by the measured global IR-to-ADM1
     # distribution: 3,410 of 28,646 segments fall below 1 m2 (floating
@@ -218,15 +232,43 @@ class LocalBackendOptions(_Strict):
     # from the one measurement above.
     min_segment_area_m2: float = Field(default=1.0, ge=0)
 
+    @model_validator(mode="after")
+    def _slurm_is_declared(self) -> "LocalBackendOptions":
+        if self.dask != "slurm":
+            return self
+        missing = [
+            name
+            for name in (
+                "slurm_queue",
+                "slurm_cores",
+                "slurm_memory",
+                "slurm_walltime",
+                "n_workers",
+            )
+            if getattr(self, name) is None
+        ]
+        if missing:
+            raise ValueError(
+                f"backend.local.dask = 'slurm' needs "
+                f"{_listed(['backend.local.' + name for name in missing])}. "
+                f"The queue, the cores, memory and walltime of a job and the "
+                f"number of jobs belong to a cluster, so none has a default."
+            )
+        return self
+
+
+def _listed(names: list[str]) -> str:
+    """a, b and c."""
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
 
 class BigQueryBackendOptions(_Strict):
-    project: str = "compute-impactlab"
-    # Confirmed on cilresearch (2026-06-10): `temp_workspace` is the temp
-    # dataset that exists in `compute-impactlab` and is in the same location
-    # (US) as the GPW weight table. Earlier inspection of legacy scripts
-    # surfaced `workflow_scratch_tables` which is not present on this
-    # project; never create a dataset to "make it work".
-    temp_dataset: str = "temp_workspace"
+    # The billing project and the dataset temp tables go in, which has to
+    # be in the location of the weight tables. Facts of one cloud
+    # account, so neither has a default, and backend.kind = "bigquery"
+    # needs both. No dataset is ever created.
+    project: Optional[str] = Field(default=None, min_length=1)
+    temp_dataset: Optional[str] = Field(default=None, min_length=1)
     # 10 GB matches the confirmed worst-case s51 full-table scan of the GPW
     # population table (~6 GB) with headroom. The ST_CONTAINS join scans
     # the full GPW table regardless of how few regions are requested, so
@@ -366,16 +408,29 @@ class Config(_Strict):
         return self
 
     @model_validator(mode="after")
-    def _bigquery_requires_staging_uri(self) -> "Config":
-        if (
-            self.backend.kind == "bigquery"
-            and self.backend.bigquery.staging_uri is None
-        ):
+    def _bigquery_is_declared(self) -> "Config":
+        if self.backend.kind != "bigquery":
+            return self
+        missing = [
+            f"backend.bigquery.{name}"
+            for name in ("project", "temp_dataset")
+            if getattr(self.backend.bigquery, name) is None
+        ]
+        if missing:
+            raise ValueError(
+                f"backend.kind = 'bigquery' needs {' and '.join(missing)}, the "
+                f"billing project and the dataset in the location of the "
+                f"weight tables that temp tables go in. They belong to a cloud "
+                f"account, so neither has a default."
+            )
+        if self.backend.bigquery.staging_uri is None:
             raise ValueError(
                 "backend.bigquery.staging_uri is required: a gs:// prefix the "
                 "run may write geometry staging files to. It is a site fact "
                 "with no defensible library default."
             )
+        if self.grid.offset != "center":
+            raise ValueError(BIGQUERY_CENTRE_ONLY.format(offset=self.grid.offset))
         return self
 
     @model_validator(mode="after")

@@ -5,9 +5,10 @@
     with dask_client_for(cfg.backend.local) as client:
         ...                # `client` is None when dask = "off"
 
-The config's `n_workers`, `threads_per_worker`, `slurm_queue` and
-`slurm_walltime` override the defaults. The cores and memory of a SLURM
-job are fixed to the CIL 'cil' partition.
+The config's `n_workers` and `threads_per_worker` override the local
+defaults. A SLURM cluster takes its queue, the cores, memory and
+walltime of a job and the number of jobs from the config alone, which
+has no default for any of them.
 """
 
 from __future__ import annotations
@@ -21,15 +22,6 @@ from cil_regionalization.config import LocalBackendOptions
 
 logger = logging.getLogger(__name__)
 
-
-# CIL 'cil' partition reference shape: 64 cores, 251 GB RAM per node,
-# typical run uses 2 nodes. One Dask worker per node by default so
-# in-process geometry caches are shared across threads.
-_SLURM_DEFAULT_QUEUE = "cil"
-_SLURM_DEFAULT_CORES = 64
-_SLURM_DEFAULT_MEMORY = "251GB"
-_SLURM_DEFAULT_WALLTIME = "02:00:00"
-_SLURM_DEFAULT_N_WORKERS = 2
 
 # LocalCluster reference shape: one worker per process so each gets
 # its own Python interpreter (geometry ops release the GIL only
@@ -46,9 +38,10 @@ def dask_client_for(opts: LocalBackendOptions) -> Iterator[Optional[object]]:
     Under ``"off"`` the caller runs serially and Dask is not imported, so
     this works without the optional dependency. ``"local"`` starts a
     ``LocalCluster`` on this machine. ``"slurm"`` starts a
-    ``dask_jobqueue.SLURMCluster`` on the CIL 'cil' partition and scales it
-    to ``opts.n_workers`` jobs. The client and cluster are closed when the
-    ``with`` block exits. Raises if ``opts.dask`` is any other value.
+    ``dask_jobqueue.SLURMCluster`` with the queue, cores, memory and
+    walltime of ``opts`` and scales it to ``opts.n_workers`` jobs. The
+    client and cluster are closed when the ``with`` block exits. Raises
+    if ``opts.dask`` is any other value, or a SLURM setting is missing.
     """
     if opts.dask == "off":
         yield None
@@ -79,23 +72,25 @@ def dask_client_for(opts: LocalBackendOptions) -> Iterator[Optional[object]]:
         return
 
     if opts.dask == "slurm":
+        # checked again, before anything is imported, for options built
+        # without the model's check
+        type(opts).model_validate(opts.model_dump())
         from dask.distributed import Client
         from dask_jobqueue import SLURMCluster
 
-        n_workers = opts.n_workers or _SLURM_DEFAULT_N_WORKERS
         cluster = SLURMCluster(
-            queue=opts.slurm_queue or _SLURM_DEFAULT_QUEUE,
-            cores=_SLURM_DEFAULT_CORES,
-            memory=_SLURM_DEFAULT_MEMORY,
-            walltime=opts.slurm_walltime or _SLURM_DEFAULT_WALLTIME,
+            queue=opts.slurm_queue,
+            cores=opts.slurm_cores,
+            memory=opts.slurm_memory,
+            walltime=opts.slurm_walltime,
             processes=opts.threads_per_worker or 1,
         )
-        cluster.scale(jobs=n_workers)
+        cluster.scale(jobs=opts.n_workers)
         client = Client(cluster)
         logger.info(
             "dask SLURMCluster requested: %d jobs on queue %r",
-            n_workers,
-            opts.slurm_queue or _SLURM_DEFAULT_QUEUE,
+            opts.n_workers,
+            opts.slurm_queue,
         )
         try:
             yield client

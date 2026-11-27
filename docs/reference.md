@@ -399,11 +399,13 @@ columns pass through. ``window`` is an inclusive (start, end) pair on
 ``time_col``.
 
 ``weight_col`` names a per-member weight, constant across the
-member's time rows. Weights must be finite and non-negative, and a
-zero weight drops the member. Weights are not renormalized within a
+member's time rows. Weights must be finite and non-negative. A zero
+weight drops the member before the mean, the counts and the
+quantiles, under every method, so no quantile returns the value of
+a member that weighs nothing. Weights are not renormalized within a
 model, so in an unbalanced sample a model's total weight grows with
-how often it appears. Leaving ``weight_col`` unset with a ``gcm``
-sample dimension warns with `UnweightedModelWeightsWarning`.
+how often it appears. Leaving ``weight_col`` unset with
+``model_dims`` given warns with `UnweightedModelWeightsWarning`.
 
 Returns a long frame with the identity columns, 'statistic' and
 ``value_col``. Labels are 'mean' and 'qNN' in percent ('q05', 'q95',
@@ -527,12 +529,21 @@ and otherwise the smallest or largest point mass.
 ### `read_model_weights`
 
 ```python
-read_model_weights(path: str | Path) -> ModelWeights
+read_model_weights(
+    path: str | Path,
+    *,
+    table_names: Optional[Mapping[str, str]] = None,
+    sep: str = '\t',
+) -> ModelWeights
 ```
 
 Read a weights table. The file is read once, and the hash is of
-the bytes the rows were parsed from. Raises if two rows match the
-same member.
+the bytes the rows were parsed from. ``table_names`` declares the
+row of each member whose name is not that of its row, member name to
+table name, and is checked where a member takes its row. The
+published SMME tables need it until they carry the members' names.
+Raises if a name is in the table twice, or if two members are
+declared to one row.
 
 ### `fetch_model_weights`
 
@@ -544,14 +555,17 @@ fetch_model_weights(
     base_url: str | None = None,
     cache_dir: str | Path | None = None,
     refresh: bool = False,
+    table_names: Mapping[str, str] | None = None,
 )
 ```
 
 The published climate model weights of ``rcp``, as
-`read_model_weights` reads them, from the file
+`read_model_weights` reads them with ``table_names``, from the file
 ``<rcp>_SMME_weights.tsv`` of their Zenodo record. The download is
 checked against the md5 the record declares and cached with it, and
-a cached copy that no longer matches raises.
+a cached copy that no longer matches raises. The published tables
+do not spell their rows as the trees spell the members, so until
+they are rewritten every member but one needs its row declared.
 
 ### `ModelWeights`
 
@@ -560,13 +574,14 @@ class ModelWeights:
     path: str
     sha256: str
     names: tuple[str, ...]
-    keys: tuple[str, ...]
     weights: tuple[float, ...]
+    table_names: Mapping[str, str] = field(default_factory=dict)
 ```
 
 The rows of a weights table, in file order, with the SHA256 of
 the bytes they were parsed from. ``names`` are as written in the
-file and ``keys`` are what a member is matched on.
+file, and ``table_names`` the rows declared for members whose names
+are not those of their rows.
 
 #### `ModelWeights.missing`
 
@@ -575,6 +590,15 @@ ModelWeights.missing(members: Iterable[str]) -> list[str]
 ```
 
 The members that have no row in the table, sorted.
+
+#### `ModelWeights.check`
+
+```python
+ModelWeights.check(members: Iterable[str]) -> None
+```
+
+Raises if a member has no row in the table, naming the row
+each one comes closest to, or if two members take one row.
 
 #### `ModelWeights.weight_of`
 
@@ -591,8 +615,8 @@ ModelWeights.attach(members: pd.Series) -> pd.Series
 ```
 
 The weight of each row's member, as float64 on the index of
-``members``. Raises if a member has no row in the table, or a
-row names no member.
+``members``. Raises if a member has no row in the table, if two
+members take one row, or if a row names no member.
 
 #### `ModelWeights.record`
 
@@ -603,8 +627,10 @@ ModelWeights.record(members: Iterable[str]) -> dict
 The manifest entry of a run, given the member of each leaf
 that was pooled. Its 'members' holds each member with its table
 row, its weight and its number of leaves, and 'unmatched_rows'
-the weight of every row no member matched, so the two together
-cover the whole table. Raises if a member has no row.
+the weight of every row no member took, so the two together
+cover the whole table. 'table_names' are the rows declared, and
+'table_names_unused' those declared for a member the run does
+not have. Raises as `check` does.
 
 ### `regroup`
 
@@ -1196,8 +1222,10 @@ Can be left out.
 | `dask` | "off" or "local" or "slurm" | "off" |
 | `n_workers` | int, at least 1 | not set |
 | `threads_per_worker` | int, at least 1 | not set |
-| `slurm_queue` | str | not set |
-| `slurm_walltime` | str | not set |
+| `slurm_queue` | str, not empty | not set |
+| `slurm_cores` | int, at least 1 | not set |
+| `slurm_memory` | str, not empty | not set |
+| `slurm_walltime` | str, not empty | not set |
 | `min_segment_area_m2` | float, at least 0 | 1.0 |
 
 ### `[backend.bigquery]`
@@ -1206,8 +1234,8 @@ Can be left out.
 
 | key | type | default |
 | --- | --- | --- |
-| `project` | str | "compute-impactlab" |
-| `temp_dataset` | str | "temp_workspace" |
+| `project` | str, not empty | not set |
+| `temp_dataset` | str, not empty | not set |
 | `dry_run_byte_ceiling` | int, at least 0 | 10000000000 |
 | `staging_uri` | str | not set |
 | `cache_temp_tables` | bool | false |
@@ -1331,6 +1359,7 @@ run, or a run of the reduce stage over leaves that were kept.
 | `years` | tuple[int, int] | not set |
 | `model_weights` | str | not set |
 | `model_weight_level` | str | not set |
+| `model_weight_names` | dict[str, str] | {} |
 | `model_dims` | list[str] | not set |
 
 ### `[stats.warming_levels]`

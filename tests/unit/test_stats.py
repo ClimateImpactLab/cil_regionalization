@@ -7,6 +7,7 @@ so nothing can depend on batch, gcm, or year.
 from __future__ import annotations
 
 import itertools
+from pathlib import Path
 from statistics import NormalDist
 
 import numpy as np
@@ -1225,7 +1226,10 @@ class TestWeightedStatistics:
             )
 
 
-class TestUnweightedGcmWarning:
+class TestUnweightedModelWarning:
+    """Pooling with ``model_dims`` named and no weights warns, keyed on
+    the declaration and on no name of a column."""
+
     def _gcm_frame(self):
         return _frame(
             [
@@ -1234,7 +1238,10 @@ class TestUnweightedGcmWarning:
             ]
         )
 
-    def test_unweighted_gcm_warns(self):
+    @pytest.mark.parametrize("name", ["gcm", "zeppelin"])
+    def test_unweighted_models_warn_under_any_name(self, name):
+        """It went red on the check of a column named gcm, under
+        zeppelin, and on the message that named a lab."""
         import warnings
 
         from cil_regionalization.stats import (
@@ -1242,17 +1249,42 @@ class TestUnweightedGcmWarning:
             pooled_statistics,
         )
 
-        with pytest.warns(UnweightedModelWeightsWarning, match="convention"):
+        frame = self._gcm_frame().rename(columns={"gcm": name})
+        with pytest.warns(UnweightedModelWeightsWarning) as caught:
             with warnings.catch_warnings():
                 warnings.simplefilter("always")
                 pooled_statistics(
-                    self._gcm_frame(),
-                    sample_dims=["gcm"],
+                    frame,
+                    sample_dims=[name],
+                    model_dims=[name],
                     quantile_method="linear",
                     summation="fast",
                 )
+        assert str(caught[0].message) == (
+            f"model_dims ['{name}'] names the climate model and weight_col is "
+            f"not set, so every climate model counts the same. Set weight_col "
+            f"to weight them, or filter UnweightedModelWeightsWarning where "
+            f"equal weights are meant."
+        )
 
-    def test_weighted_gcm_does_not_warn(self):
+    def test_the_first_half_warns_too(self):
+        from cil_regionalization.stats import (
+            UnweightedModelWeightsWarning,
+            summarize_samples,
+        )
+
+        with pytest.warns(UnweightedModelWeightsWarning, match="model_dims"):
+            summarize_samples(
+                self._gcm_frame().assign(year=2050),
+                sample_dims=["gcm"],
+                model_dims=["gcm"],
+                time_col="year",
+                window=(2050, 2050),
+                quantile_method="linear",
+                summation="fast",
+            )
+
+    def test_weighted_models_do_not_warn(self):
         import warnings
 
         from cil_regionalization.stats import pooled_statistics
@@ -1263,22 +1295,23 @@ class TestUnweightedGcmWarning:
             pooled_statistics(
                 df,
                 sample_dims=["gcm"],
+                model_dims=["gcm"],
                 weight_col="w",
                 quantile_method="lower_step",
                 summation="fast",
             )
 
-    def test_other_sample_dims_do_not_warn(self):
+    def test_no_model_dims_do_not_warn_whatever_the_columns_are_called(self):
+        """A column named gcm is a column like any other."""
         import warnings
 
         from cil_regionalization.stats import pooled_statistics
 
-        df = self._gcm_frame().rename(columns={"gcm": "zeppelin"})
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             pooled_statistics(
-                df,
-                sample_dims=["zeppelin"],
+                self._gcm_frame(),
+                sample_dims=["gcm"],
                 quantile_method="linear",
                 summation="fast",
             )
@@ -1297,9 +1330,16 @@ class TestUnweightedGcmWarning:
             pooled_statistics(
                 self._gcm_frame(),
                 sample_dims=["gcm"],
+                model_dims=["gcm"],
                 quantile_method="linear",
                 summation="fast",
             )
+
+    def test_the_module_names_no_lab(self):
+        """It went red on the message that named one."""
+        import cil_regionalization.stats as module
+
+        assert "Climate Impact Lab" not in Path(module.__file__).read_text()
 
 
 class TestSingleYearWindow:
@@ -1632,15 +1672,18 @@ class TestModelCount:
                 summation="fast",
             )
 
-    def test_model_columns_without_the_counts_are_refused(self):
-        with pytest.raises(ValueError, match="only include_n_members writes"):
-            pooled_statistics(
-                self._draws(),
-                sample_dims=["batch", "gcm"],
-                model_dims=["gcm"],
-                quantile_method="lower_step",
-                summation="fast",
-            )
+    def test_model_columns_without_the_counts_add_no_count(self):
+        """They name the climate model for the warning as well. They were
+        refused without the counts, and this went red on that."""
+        out = pooled_statistics(
+            self._draws(),
+            sample_dims=["batch", "gcm"],
+            model_dims=["gcm"],
+            weight_col=None,
+            quantile_method="lower_step",
+            summation="fast",
+        )
+        assert "n_models" not in out.columns and "n_members" not in out.columns
 
     def test_model_columns_that_are_not_pooled_are_refused(self):
         with pytest.raises(ValueError, match=r"model_dims \['target'\] are not among"):

@@ -141,7 +141,12 @@ def _raw(
     if weighted:
         table = tmp_path / "model_weights.tsv"
         table.write_text("model\tweight\nm0\t0.5\nm1\t0.375\nm0_06\t0.125\n")
-        raw["stats"].update(model_weights=str(table), model_weight_level="gcm")
+        # the table spells the surrogate as the published tables do
+        raw["stats"].update(
+            model_weights=str(table),
+            model_weight_level="gcm",
+            model_weight_names={"surrogate_m0_06": "m0_06"},
+        )
     return raw, out
 
 

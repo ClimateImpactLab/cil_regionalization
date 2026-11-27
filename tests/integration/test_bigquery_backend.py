@@ -78,7 +78,11 @@ def _bq_cfg(**overrides) -> Config:
         "backend": {
             "kind": "bigquery",
             "coverage": "pixel_centroid",
-            "bigquery": {"staging_uri": "gs://example-staging/segment-weights/"},
+            "bigquery": {
+                "project": "compute-impactlab",
+                "temp_dataset": "temp_workspace",
+                "staging_uri": "gs://example-staging/segment-weights/",
+            },
         },
         "output": {"dir": "/tmp/cilreg_bq_test"},
     }
@@ -300,6 +304,30 @@ class TestGeometryContentHash:
         assert backend._geometry_content_hash(
             df1, "hierid"
         ) != backend._geometry_content_hash(df2, "hierid")
+
+
+class TestGridOffset:
+    def test_the_backend_refuses_an_edge_offset_grid(self):
+        """Its SQL places every cell for the centre offset, so an edge
+        grid would get weights half a cell off. The config refuses it
+        too; this is the backend's own check, for a grid built by hand.
+        It went red with the edge grid accepted."""
+        import dataclasses
+
+        from cil_regionalization.backends.bigquery import BigQueryBackend
+        from cil_regionalization.grid import GridSpec
+        from cil_regionalization.regions import RegionSet
+        from cil_regionalization.weights import from_config_list
+
+        cfg = _bq_cfg()
+        grid = dataclasses.replace(GridSpec.from_config(cfg.grid), offset="edge")
+        with pytest.raises(ValueError, match="takes grid.offset = 'center' only"):
+            BigQueryBackend()._validate_inputs(
+                RegionSet.from_config(cfg.regions),
+                grid,
+                from_config_list(cfg.weights),
+                cfg,
+            )
 
 
 class TestMainSql:

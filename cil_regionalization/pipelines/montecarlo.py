@@ -116,6 +116,7 @@ from cil_regionalization.apply import SHARE_COLUMN, WeightsArtifact, apply_weigh
 from cil_regionalization.config import SourceUnitPolicies, _Strict
 from cil_regionalization.manifest import collect_package_versions
 from cil_regionalization.model_weights import ModelWeights, read_model_weights
+from cil_regionalization.model_weights import _listed as _quoted_list
 from cil_regionalization.reduce import (
     LeafRequest,
     ReduceConfig,
@@ -124,7 +125,7 @@ from cil_regionalization.reduce import (
 )
 from cil_regionalization.stats import (
     _quantile_label,
-    _warn_if_unweighted_gcm,
+    _warn_if_unweighted_models,
     _window_label,
     check_quantile_method,
     check_summation,
@@ -393,6 +394,12 @@ class StatsConfig(_Strict):
     years: Optional[tuple[int, int]] = None
     model_weights: Optional[str] = None
     model_weight_level: Optional[str] = None
+    # The row of each member of the weight level whose name is not that
+    # of its row, member name to table name, written out. A member takes
+    # the row of its own name otherwise, and nothing reads a name to
+    # decide what it means. The published SMME tables need it until they
+    # carry the members' names. The manifest records it.
+    model_weight_names: dict[str, str] = Field(default_factory=dict)
     # The sample dimensions of the climate model, such as ["gcm"], which
     # the count of models beside the count of samples is taken over.
     # Required wherever the statistics carry their counts.
@@ -452,6 +459,31 @@ class StatsConfig(_Strict):
                 "stats.model_weights and stats.model_weight_level come "
                 "together: the file says what the weights are, the level "
                 "says which sample dimension they attach to"
+            )
+        if self.model_weight_names and self.model_weights is None:
+            raise ValueError(
+                "stats.model_weight_names declares rows of a model weights "
+                "file, and stats.model_weights names none"
+            )
+        empty = [m for m, row in self.model_weight_names.items() if not m or not row]
+        if empty:
+            raise ValueError(
+                f"stats.model_weight_names maps a member name to a table name, "
+                f"and {empty[0]!r} = {self.model_weight_names[empty[0]]!r} "
+                f"leaves one empty"
+            )
+        rows: dict[str, list[str]] = {}
+        for member, row in self.model_weight_names.items():
+            rows.setdefault(row, []).append(member)
+        shared = [(row, members) for row, members in rows.items() if len(members) > 1]
+        if shared:
+            row, members = shared[0]
+            more = f", and {len(shared) - 1} more rows" if len(shared) > 1 else ""
+            raise ValueError(
+                f"stats.model_weight_names declares one row for more than one "
+                f"member, the row {row!r} for "
+                f"{_quoted_list(members)}{more}. Each member needs "
+                f"a row of its own."
             )
         # "linear" with model weights is refused here, when the config is
         # read, and not after the leaves
@@ -682,6 +714,26 @@ def _resolved(value: str, base: Path) -> str:
     if "://" in value or value.startswith("/"):
         return value
     return str((base / value).resolve())
+
+
+def load_model_weight_names(path: str | Path) -> dict[str, str]:
+    """The ``[stats.model_weight_names]`` table of a TOML file, member
+    name to table name, so that a run and a script can declare the same
+    rows. Raises if the file has no such table, or a name is not a
+    string."""
+    p = Path(path).resolve()
+    with p.open("rb") as f:
+        data = tomllib.load(f)
+    names = data.get("stats", {}).get("model_weight_names")
+    if not isinstance(names, dict):
+        raise ValueError(f"{p} has no [stats.model_weight_names] table")
+    bad = [(k, v) for k, v in names.items() if not isinstance(v, str) or not v]
+    if bad:
+        raise ValueError(
+            f"{p} maps a member name to a table name, both strings; got "
+            f"{bad[0][0]!r} = {bad[0][1]!r}"
+        )
+    return dict(names)
 
 
 def load_warming_levels(path: str | Path) -> WarmingLevelsConfig:
@@ -1055,7 +1107,7 @@ def run_pipeline(
         include_mean=cfg.stats.include_mean,
         weight_col=weight_col,
         include_n_members=cfg.stats.include_n_members,
-        model_dims=cfg.stats.model_dims if cfg.stats.include_n_members else None,
+        model_dims=cfg.stats.model_dims,
         quantile_method=cfg.stats.quantile_method,
         summation=cfg.stats.summation,
     )
@@ -1123,6 +1175,7 @@ def run_pipeline(
         "reduced": str(reduced_path) if reduced_path else None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
+        "model_weight_names": cfg.stats.model_weight_names,
         "model_dims": cfg.stats.model_dims,
         "model_weights_record": _model_weights_record(
             cfg, model_weights, [o["leaf"] for o in outcomes]
@@ -1274,17 +1327,12 @@ def _model_weights(cfg: MonteCarloPipelineConfig) -> Optional[ModelWeights]:
     # The file is read here and nowhere else. The workers get these
     # rows, so a file edited during the run cannot give different
     # leaves different weights.
-    model_weights = read_model_weights(cfg.stats.model_weights)
+    model_weights = read_model_weights(
+        cfg.stats.model_weights, table_names=cfg.stats.model_weight_names
+    )
     # fail before the run, not after it: every declared value of the
-    # weight level must have a row in the table
-    declared = cfg.tree.expect[cfg.stats.model_weight_level]
-    unmatched = model_weights.missing(declared)
-    if unmatched:
-        raise ValueError(
-            f"{len(unmatched)} values of "
-            f"{cfg.stats.model_weight_level!r} have no row in the model "
-            f"weights file (first: {unmatched[:5]})"
-        )
+    # weight level must have a row in the table, and one of its own
+    model_weights.check(cfg.tree.expect[cfg.stats.model_weight_level])
     return model_weights
 
 
@@ -2014,8 +2062,8 @@ def _run_reduce(
         _verify_leaves(leaves_dir, entries, cfg.run.n_workers)
     if warming is None:
         # the members at a warming level count equally by design
-        _warn_if_unweighted_gcm(
-            list(cfg.stats.sample_dims), "model_weight" if model_weights else None
+        _warn_if_unweighted_models(
+            cfg.stats.model_dims, model_weights is not None, "stats.model_weights"
         )
     _log_memory("reduce start")
     stats, report = backend.run(request)
@@ -2102,6 +2150,7 @@ def _run_reduce(
         "reduced": None,
         "model_weights": cfg.stats.model_weights,
         "model_weight_level": cfg.stats.model_weight_level,
+        "model_weight_names": cfg.stats.model_weight_names,
         "model_dims": cfg.stats.model_dims,
         "model_weights_record": _model_weights_record(
             cfg, model_weights, [entry["leaf"] for entry in entries]

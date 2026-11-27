@@ -29,6 +29,7 @@ import pandas as pd
 import xarray as xr
 
 import cil_regionalization as cilreg
+from cil_regionalization.pipelines.montecarlo import load_model_weight_names
 from cil_regionalization.stats import pooled_statistics, window_means
 
 ZARRS = Path(
@@ -36,6 +37,11 @@ ZARRS = Path(
 )
 WEIGHTS = "/project/cil/home_dirs/scadavidsanchez/repos/climate-and-damages-aggregations/data/weights/ir_{adm}_full"
 SMME = "/project/cil/gcp/climate/SMME-weights/{rcp}_SMME_weights.tsv"
+# the row of each member in the SMME table of an rcp, written out, until
+# the tables carry the members' names
+SMME_NAMES = (
+    Path(__file__).resolve().parents[2] / "model_weights" / "smme_{rcp}_names.toml"
+)
 OUT = "/project/cil/gcp/impact_map/mortality"
 BATCHES = [f"batch{i}" for i in range(15)]
 SSPS = ["SSP2", "SSP3", "SSP4"]
@@ -46,17 +52,25 @@ QUANTILES = [0.05, 0.17, 0.25, 0.5, 0.75, 0.83, 0.95]
 IAMS = {"IIASA GDP": "low", "OECD Env-Growth": "high"}
 
 
+def model_weights(rcp: str) -> cilreg.ModelWeights:
+    """The SMME table of the rcp, with the row of each member declared."""
+    return cilreg.read_model_weights(
+        SMME.format(rcp=rcp),
+        table_names=load_model_weight_names(str(SMME_NAMES).format(rcp=rcp)),
+    )
+
+
 def weighted_gcms(rcp: str, gcms: list[str]) -> list[str]:
     """The gcms the rcp's SMME table declares, in zarr naming.
 
     The zarrs carry one gcm dimension shared by both rcps, padded with
     NaN where an rcp was not run: rcp45 holds 32 real models plus an
     all-NaN surrogate_GFDL-ESM2G_06 slice. The weight table is the
-    declaration of the rcp's ensemble, so it decides what aggregates.
+    declaration of the rcp's ensemble, so it decides what aggregates. A
+    gcm takes its row by its own name or the row declared for it.
     """
-    smme = pd.read_csv(SMME.format(rcp=rcp), sep="\t")["model"]
-    declared = set(smme.str.replace("*", "", regex=False).str.lower())
-    kept = [g for g in gcms if g.replace("surrogate_", "").lower() in declared]
+    absent = set(model_weights(rcp).missing(gcms))
+    kept = [g for g in gcms if g not in absent]
     dropped = sorted(set(gcms) - set(kept))
     if dropped:
         print(f"{rcp}: not in the SMME table, skipped: {dropped}", flush=True)
@@ -115,20 +129,8 @@ def batch_frames(task) -> list[pd.DataFrame]:
 
 
 def weighted_stats(reduced: pd.DataFrame, rcp: str) -> pd.DataFrame:
-    smme = pd.read_csv(SMME.format(rcp=rcp), sep="\t")[["model", "weight"]]
-    smme["key"] = smme["model"].str.replace("*", "", regex=False).str.lower()
-    frame = (
-        reduced.assign(
-            key=reduced["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-        )
-        .merge(
-            smme[["key", "weight"]].rename(columns={"weight": "model_weight"}),
-            on="key",
-        )
-        .drop(columns="key")
-    )
-    if len(frame) != len(reduced):
-        raise ValueError("a climate model has no SMME weight row")
+    # refuses a gcm with no row, so no climate model is dropped
+    frame = reduced.assign(model_weight=model_weights(rcp).attach(reduced["gcm"]))
     return pooled_statistics(
         frame,
         sample_dims=["batch", "gcm"],

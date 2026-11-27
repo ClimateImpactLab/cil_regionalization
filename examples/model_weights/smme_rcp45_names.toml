@@ -1,0 +1,38 @@
+# The row of each member of the projection trees in rcp45_SMME_weights.tsv
+# of Zenodo record 22003542, written out for stats.model_weight_names until
+# the table carries the members' names. README.md beside this file says how
+# the pairs were made. bcc-csm1-1 is spelt the same on both sides and
+# needs no entry.
+
+[stats.model_weight_names]
+"ACCESS1-0" = "access1-0*"
+"BNU-ESM" = "bnu-esm*"
+"CanESM2" = "canesm2"
+"CCSM4" = "ccsm4"
+"CESM1-BGC" = "cesm1-bgc*"
+"CNRM-CM5" = "cnrm-cm5"
+"CSIRO-Mk3-6-0" = "csiro-mk3-6-0"
+"GFDL-CM3" = "gfdl-cm3"
+"GFDL-ESM2G" = "gfdl-esm2g"
+"GFDL-ESM2M" = "gfdl-esm2m"
+"inmcm4" = "inmcm4*"
+"IPSL-CM5A-LR" = "ipsl-cm5a-lr"
+"IPSL-CM5A-MR" = "ipsl-cm5a-mr"
+"MIROC-ESM" = "miroc-esm"
+"MIROC-ESM-CHEM" = "miroc-esm-chem*"
+"MIROC5" = "miroc5*"
+"MPI-ESM-LR" = "mpi-esm-lr"
+"MPI-ESM-MR" = "mpi-esm-mr*"
+"MRI-CGCM3" = "mri-cgcm3*"
+"NorESM1-M" = "noresm1-m"
+"surrogate_CanESM2_89" = "canesm2_89"
+"surrogate_CanESM2_94" = "canesm2_94"
+"surrogate_CanESM2_99" = "canesm2_99"
+"surrogate_GFDL-CM3_89" = "gfdl-cm3_89"
+"surrogate_GFDL-CM3_94" = "gfdl-cm3_94"
+"surrogate_GFDL-CM3_99" = "gfdl-cm3_99"
+"surrogate_GFDL-ESM2G_01" = "gfdl-esm2g_01"
+"surrogate_GFDL-ESM2G_11" = "gfdl-esm2g_11"
+"surrogate_MRI-CGCM3_01" = "mri-cgcm3_01"
+"surrogate_MRI-CGCM3_06" = "mri-cgcm3_06"
+"surrogate_MRI-CGCM3_11" = "mri-cgcm3_11"

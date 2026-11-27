@@ -49,7 +49,7 @@ import itertools
 import math
 import re
 import warnings
-from typing import NamedTuple, Sequence
+from typing import NamedTuple, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -66,13 +66,19 @@ class UnweightedModelWeightsWarning(UserWarning):
     """
 
 
-def _warn_if_unweighted_gcm(sample_dims: list[str], weight_col: str | None) -> None:
-    if weight_col is None and "gcm" in sample_dims:
+def _warn_if_unweighted_models(
+    model_dims: Optional[Sequence[str]],
+    weighted: bool,
+    setting: str = "weight_col",
+) -> None:
+    """Warns when the climate model is named and pooled with no weights.
+    ``setting`` is what gives the weights where the call comes from."""
+    if model_dims and not weighted:
         warnings.warn(
-            "sample_dims includes 'gcm' and weight_col is not set. This "
-            "weights every climate model equally, which is not the "
-            "convention Climate Impact Lab projections use. See 'Climate "
-            "model weights' in the README.",
+            f"model_dims {list(model_dims)} names the climate model and "
+            f"{setting} is not set, so every climate model counts the same. "
+            f"Set {setting} to weight them, or filter "
+            f"UnweightedModelWeightsWarning where equal weights are meant.",
             UnweightedModelWeightsWarning,
             stacklevel=3,
         )
@@ -177,11 +183,13 @@ def summarize_samples(
     ``time_col``.
 
     ``weight_col`` names a per-member weight, constant across the
-    member's time rows. Weights must be finite and non-negative, and a
-    zero weight drops the member. Weights are not renormalized within a
+    member's time rows. Weights must be finite and non-negative. A zero
+    weight drops the member before the mean, the counts and the
+    quantiles, under every method, so no quantile returns the value of
+    a member that weighs nothing. Weights are not renormalized within a
     model, so in an unbalanced sample a model's total weight grows with
-    how often it appears. Leaving ``weight_col`` unset with a ``gcm``
-    sample dimension warns with `UnweightedModelWeightsWarning`.
+    how often it appears. Leaving ``weight_col`` unset with
+    ``model_dims`` given warns with `UnweightedModelWeightsWarning`.
 
     Returns a long frame with the identity columns, 'statistic' and
     ``value_col``. Labels are 'mean' and 'qNN' in percent ('q05', 'q95',
@@ -234,7 +242,7 @@ def summarize_samples(
             raise ValueError(f"data is missing required column {col!r}")
     if weight_col is not None:
         _check_weight_column(data, weight_col, sample_dims, [time_col, value_col])
-    _warn_if_unweighted_gcm(sample_dims, weight_col)
+    _warn_if_unweighted_models(model_dims, weight_col is not None)
 
     quantiles = list(quantiles)
     if not include_mean and not quantiles:
@@ -572,7 +580,9 @@ def _statistic_pieces(
     for key_tuple, start, end in zip(key_tuples, starts, ends):
         values = all_values[start:end]
         weights = all_weights[start:end]
-        keep = ~np.isnan(values)
+        # a member with weight zero is not in the sample, so no method
+        # can return its value
+        keep = ~np.isnan(values) & (weights > 0)
         values, weights = values[keep], weights[keep]
         if len(values) == 0 and weight_col is None:
             # no member has a value, so the group has no statistic, as
@@ -589,7 +599,7 @@ def _statistic_pieces(
                 ", so no member carries any weight",
             )
         if count_members:
-            member_counts.append(int(np.count_nonzero(weights)))
+            member_counts.append(len(values))
         if include_mean:
             if summation == "exact":
                 # each product is rounded once, whatever the order, and
@@ -602,11 +612,7 @@ def _statistic_pieces(
             rows["mean"].append((*key_tuple, mean))
         exact = summation == "exact"
         if quantile_method == "inverted_cdf":
-            # a member with weight zero is not in the sample
-            positive = weights > 0
-            picked = _inverted_cdf_quantiles(
-                values[positive], weights[positive], quantiles, exact=exact
-            )
+            picked = _inverted_cdf_quantiles(values, weights, quantiles, exact=exact)
         else:
             picked = _step_quantiles(values, weights, quantiles, exact=exact)
         for q, value in zip(quantiles, picked):
@@ -933,29 +939,27 @@ def _check_counts(
     model_dims: Sequence[str] | None,
     sample_dims: Sequence[str],
 ) -> list[str] | None:
-    """``model_dims`` as a list, checked against the request for counts.
-    Raises if counts are asked for without it, or it without them, or
-    it names a column that is not a sample dimension, or ``data``
-    already has a column of a count."""
-    if not include_n_members:
-        if model_dims is not None:
+    """``model_dims`` as a list, or None. It names the climate model, for
+    its count and for the warning when models are pooled without
+    weights. Raises if counts are asked for without it, if it names a
+    column that is not a sample dimension, or if ``data`` already has a
+    column of a count."""
+    if model_dims is not None:
+        model_dims = list(model_dims)
+        stray = [d for d in model_dims if d not in sample_dims]
+        if stray:
             raise ValueError(
-                "model_dims names the columns of the climate model for its "
-                "count, which only include_n_members writes"
+                f"model_dims {stray} are not among sample_dims "
+                f"{list(sample_dims)}; a climate model is counted among the "
+                f"members it pools"
             )
-        return None
-    if model_dims is None or not list(model_dims):
+    if not include_n_members:
+        return model_dims or None
+    if not model_dims:
         raise ValueError(
             "include_n_members counts the samples and the climate models "
             "behind each statistic, so model_dims has to name the sample "
             "dimensions of the climate model, such as ['gcm']"
-        )
-    model_dims = list(model_dims)
-    stray = [d for d in model_dims if d not in sample_dims]
-    if stray:
-        raise ValueError(
-            f"model_dims {stray} are not among sample_dims {list(sample_dims)}; "
-            f"a climate model is counted among the members it pools"
         )
     for column in (_N_MEMBERS_COLUMN, _N_MODELS_COLUMN):
         if column in data.columns:
@@ -1203,7 +1207,7 @@ def pooled_statistics(
             raise ValueError(f"data is missing required column {col!r}")
     if weight_col is not None:
         _check_weight_column(data, weight_col, sample_dims, [value_col])
-    _warn_if_unweighted_gcm(sample_dims, weight_col)
+    _warn_if_unweighted_models(model_dims, weight_col is not None)
 
     quantiles = list(quantiles)
     if not include_mean and not quantiles:

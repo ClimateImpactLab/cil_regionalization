@@ -11,11 +11,6 @@ whether both sides find the same regions without cropland (NaN
 the same cell. A moved maximum-weight cell is the sign of a real
 spatial disagreement. The report describes the differences and is not
 a pass or fail check.
-
-On the RCC, run it in this environment::
-
-    module load python
-    source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
 """
 
 from __future__ import annotations

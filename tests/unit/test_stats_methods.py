@@ -292,28 +292,54 @@ class TestInvertedCdf:
         )
         assert list(got.values()) == [1.0, 3.0]
 
-    def test_a_member_with_weight_zero_is_never_returned(self):
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
+    @pytest.mark.parametrize(
+        "method, at_q64", [("lower_step", 20.0), ("inverted_cdf", 22.0)]
+    )
+    def test_a_member_with_weight_zero_is_never_returned(
+        self, method, at_q64, summation
+    ):
         """A weights table can carry a model at weight zero to leave it
-        out. Of the members 1 to 33 the 21st has weight zero and the
-        22nd reaches q = 0.64. "lower_step" returns the one before it,
-        21.0, which the mean leaves out."""
+        out. Of the members 1 to 33 the 21st has weight zero. Without it
+        the 22nd reaches q = 0.64, and "lower_step" returns the one
+        before, 20.0. "lower_step" returned 21.0, the member at weight
+        zero, which did not move the running share, and went red on it.
+        "inverted_cdf" left the member out before, and cannot go red by
+        reverting."""
         values = np.arange(1.0, 34.0)
         weights = np.full(33, 1 / 32)
         weights[20] = 0.0
         frame = _members(values, weights)
+        options = dict(quantile_method=method, summation=summation)
 
-        step = _pooled(frame, [0.64], include_mean=False)
-        assert step == {"q64": 21.0}
-
-        got = _pooled(frame, [0.64], quantile_method="inverted_cdf", include_mean=False)
-        assert got == {"q64": 22.0}
+        got = _pooled(frame, [0.64], include_mean=False, **options)
+        assert got == {"q64": at_q64}
 
         # at no q, and exactly as if the member were not in the frame
         qs = [round(q, 3) for q in np.linspace(0.0, 1.0, 201)]
-        options = dict(quantile_method="inverted_cdf", include_mean=False)
         every = _pooled(frame, qs, **options)
         assert 21.0 not in every.values()
         assert every == _pooled(frame.drop(index=20), qs, **options)
+
+    @pytest.mark.parametrize("method", ["lower_step", "inverted_cdf"])
+    def test_both_halves_drop_a_member_with_weight_zero(self, method):
+        """`summarize_samples` takes the window mean first and then the
+        same statistics."""
+        weights = np.full(33, 1 / 32)
+        weights[20] = 0.0
+        frame = _members(np.arange(1.0, 34.0), weights).assign(year=2050)
+        out = summarize_samples(
+            frame,
+            sample_dims=["draw"],
+            time_col="year",
+            window=(2050, 2050),
+            quantiles=[0.64],
+            weight_col="w",
+            include_mean=False,
+            quantile_method=method,
+            summation="fast",
+        )
+        assert 21.0 not in out["value"].tolist()
 
     def test_n_members_leaves_out_the_weight_zero_member(self):
         weights = np.full(33, 1 / 32)

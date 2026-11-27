@@ -48,6 +48,7 @@ import shapely
 
 import cil_regionalization as cilreg
 from cil_regionalization.fetch import default_cache_dir, load_registry
+from cil_regionalization.pipelines.montecarlo import load_model_weight_names
 
 import data
 
@@ -64,6 +65,13 @@ SMME = Path(
     f"/project/cil/gcp/climate/BCSD/SMME/SMME-weights/{data.RCP}_SMME_weights.tsv"
 )
 IMPACT_MAP = Path("/project/cil/gcp/impact_map/energy")
+# the row of each member in the SMME table, written out, until the table
+# carries the members' names
+SMME_NAMES = (
+    Path(__file__).resolve().parents[1]
+    / "model_weights"
+    / f"smme_{data.RCP}_names.toml"
+)
 TARGETS = Path("/project/cil/gcp/impact_map_inputs/targets/gadm20")
 IR_SHAPES = Path(
     "/project/cil/gcp/regions/world-combo-201710/agglomerated-world-new.shp"
@@ -332,9 +340,8 @@ def inputs():
     price = pd.read_parquet(data.PRICE).pivot(
         index="year", columns="country", values="price"
     )
-    smme = pd.read_csv(data.SMME)
-    smme = dict(
-        zip(smme["model"].str.replace("*", "", regex=False).str.lower(), smme["weight"])
+    smme = cilreg.read_model_weights(
+        data.SMME, sep=",", table_names=load_model_weight_names(SMME_NAMES)
     )
     return weights, pop, price, smme
 
@@ -394,7 +401,7 @@ def compute() -> pd.DataFrame:
     for (level, window), part in long.groupby(["level", "window"]):
         part = part.set_index(KEYS[level] + ["gcm"])
         M, V = part["mean"].unstack("gcm"), part["variance"].unstack("gcm")
-        w = np.array([smme[g.replace("surrogate_", "").lower()] for g in M.columns])
+        w = np.array([smme.weight_of(g) for g in M.columns])
         res = pd.DataFrame(
             cilreg.mixture_quantile(
                 w, M.to_numpy(), V.to_numpy(), list(QUANTILES.values())
@@ -411,7 +418,7 @@ def compute_map(regions) -> dict:
     """The map's means for Chile and Austria, from the median leaves only."""
     weights, pop, price, smme = inputs()
     gcms = data.gcms()
-    w = np.array([smme[g.replace("surrogate_", "").lower()] for g in gcms])
+    w = np.array([smme.weight_of(g) for g in gcms])
     mixed = sum(wi * median_effect(g, regions) for wi, g in zip(w, gcms)) / w.sum()
     valued = (
         mixed

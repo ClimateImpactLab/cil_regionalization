@@ -12,7 +12,7 @@ import copy
 import pytest
 from pydantic import ValidationError
 
-from cil_regionalization.config import Config, load_config
+from cil_regionalization.config import Config, LocalBackendOptions, load_config
 
 
 def _local_cfg() -> dict:
@@ -43,7 +43,11 @@ def _bq_cfg() -> dict:
         ],
         "backend": {
             "kind": "bigquery",
-            "bigquery": {"staging_uri": "gs://example-staging/segment-weights/"},
+            "bigquery": {
+                "project": "compute-impactlab",
+                "temp_dataset": "temp_workspace",
+                "staging_uri": "gs://example-staging/segment-weights/",
+            },
         },
         "output": {"dir": "gs://impactlab-data-scratch/test"},
     }
@@ -64,10 +68,8 @@ class TestValidConfigs:
     def test_minimal_bigquery_applies_defaults(self):
         cfg = Config.model_validate(_bq_cfg())
         assert cfg.backend.kind == "bigquery"
+        # the project and the temp dataset are declared, as the fixture does
         assert cfg.backend.bigquery.project == "compute-impactlab"
-        # Confirmed on cilresearch: temp_workspace is the existing dataset.
-        # workflow_scratch_tables (from the legacy scripts) is not present
-        # on this project; never create a dataset to "make it work".
         assert cfg.backend.bigquery.temp_dataset == "temp_workspace"
         assert cfg.backend.bigquery.cache_temp_tables is False
         # staging_uri has no default (a writable bucket is a site fact);
@@ -428,7 +430,7 @@ class TestMissingRequiredSections:
 class TestBigQueryStagingUri:
     def test_missing_staging_uri_rejected(self):
         d = _bq_cfg()
-        del d["backend"]["bigquery"]
+        del d["backend"]["bigquery"]["staging_uri"]
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         assert "staging_uri" in str(exc.value)
@@ -437,6 +439,91 @@ class TestBigQueryStagingUri:
     def test_local_backend_needs_no_staging_uri(self):
         cfg = Config.model_validate(_local_cfg())
         assert cfg.backend.bigquery.staging_uri is None
+
+
+class TestSiteFactsAreDeclared:
+    """A queue, the shape of a job, a billing project and a dataset belong
+    to one cluster or one cloud account, and the config says them."""
+
+    @pytest.mark.parametrize(
+        "missing", [["project"], ["temp_dataset"], ["project", "temp_dataset"]]
+    )
+    def test_bigquery_needs_its_project_and_temp_dataset(self, missing):
+        """They defaulted to one cloud account's, and this went red on
+        that."""
+        d = _bq_cfg()
+        for key in missing:
+            del d["backend"]["bigquery"][key]
+        named = " and ".join(f"backend.bigquery.{key}" for key in missing)
+        with pytest.raises(ValidationError) as exc:
+            Config.model_validate(d)
+        assert (
+            f"backend.kind = 'bigquery' needs {named}, the billing project "
+            f"and the dataset in the location of the weight tables that temp "
+            f"tables go in. They belong to a cloud account, so neither has a "
+            f"default."
+        ) in str(exc.value)
+
+    def test_the_local_backend_needs_neither(self):
+        cfg = Config.model_validate(_local_cfg())
+        assert cfg.backend.bigquery.project is None
+        assert cfg.backend.bigquery.temp_dataset is None
+
+    def test_slurm_needs_every_setting_of_its_jobs(self):
+        """They defaulted to one cluster's partition, and this went red
+        on that."""
+        with pytest.raises(ValidationError) as exc:
+            LocalBackendOptions(dask="slurm")
+        assert (
+            "backend.local.dask = 'slurm' needs backend.local.slurm_queue, "
+            "backend.local.slurm_cores, backend.local.slurm_memory, "
+            "backend.local.slurm_walltime and backend.local.n_workers. The "
+            "queue, the cores, memory and walltime of a job and the number of "
+            "jobs belong to a cluster, so none has a default."
+        ) in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "left_out",
+        ["slurm_queue", "slurm_cores", "slurm_memory", "slurm_walltime", "n_workers"],
+    )
+    def test_slurm_needs_each_of_them(self, left_out):
+        settings = dict(
+            dask="slurm",
+            slurm_queue="general",
+            slurm_cores=8,
+            slurm_memory="32GB",
+            slurm_walltime="01:00:00",
+            n_workers=3,
+        )
+        LocalBackendOptions(**settings)
+        del settings[left_out]
+        with pytest.raises(ValidationError, match=f"needs backend.local.{left_out}"):
+            LocalBackendOptions(**settings)
+
+    def test_the_other_dask_modes_need_none_of_them(self):
+        for mode in ("off", "local"):
+            assert LocalBackendOptions(dask=mode).slurm_queue is None
+
+
+class TestBigQueryGridOffset:
+    def test_an_edge_offset_grid_is_refused(self):
+        """The SQL places cells for the centre offset. It went red with
+        the edge offset accepted."""
+        d = _bq_cfg()
+        d["grid"]["offset"] = "edge"
+        with pytest.raises(ValidationError) as exc:
+            Config.model_validate(d)
+        assert (
+            "backend.kind = 'bigquery' takes grid.offset = 'center' only, and "
+            "got 'edge'. Its SQL handles centre offsets only, so the weights of "
+            "an edge-offset grid would come out half a cell off. Use "
+            "backend.kind = 'local' for an edge-offset grid."
+        ) in str(exc.value)
+
+    def test_the_local_backend_takes_an_edge_offset_grid(self):
+        d = _local_cfg()
+        d["grid"]["offset"] = "edge"
+        assert Config.model_validate(d).grid.offset == "edge"
 
 
 class TestUnknownKeys:
