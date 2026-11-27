@@ -736,10 +736,12 @@ def _(mo):
     `summarize_samples` does both in one call, and the cell checks that
     it gives the same numbers. Here the quantile is the step of the
     historical extraction tool, `quantile_method="lower_step"`, and the
-    means are the vectorised sums, `summation="fast"`, as in the published
-    runs. With the step, a quantile below the first draw's share is
-    `-inf`. `summation="exact"` sums exactly and refuses an infinite
-    statistic.
+    means are the vectorised sums, `summation="fast"`, because that is
+    what the published runs use.
+
+    The step returns `-inf` for a quantile below the first draw's share
+    of the weight, by its definition. A warming level that holds one
+    model has such a 5th percentile.
     """
     )
     return
