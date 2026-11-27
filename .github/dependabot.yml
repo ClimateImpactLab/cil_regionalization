@@ -1,13 +1,9 @@
 version: 2
+
+# Actions only. pyproject declares floors, and envs/requirements-cluster.freeze.txt
+# changes when the cluster env is rebuilt, not when PyPI moves.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: weekly
-    # a library: never raise a floor that new releases already satisfy
-    versioning-strategy: increase-if-necessary
