@@ -54,23 +54,71 @@ def _two_region_setup():
 
 
 class TestAggregateGradient:
+    def test_the_region_column_is_the_artifact_s_source_key(self):
+        """Not a column called hierid, which the code named. It went red on
+        that, with a KeyError."""
+        art, regions, gradient = _two_region_setup()
+        renamed = _artifact(
+            art.frame.rename(columns={"hierid": "region"}).to_dict("records")
+        )
+        renamed = WeightsArtifact(
+            frame=renamed.frame,
+            schema=OutputSchema(
+                id_fields=("ISO", "ID_1"),
+                weight_names=("pop",),
+                source_units=SourceUnits.from_string_ids(["region"]),
+                normalization="per_source",
+            ),
+            regions_version="test-targets",
+            source_version="test-regions",
+            partial_coverage={},
+        )
+        want = aggregate_gradient(art, regions, gradient, weight="pop")
+        got = aggregate_gradient(renamed, regions, gradient, weight="pop")
+        pd.testing.assert_frame_equal(got[0], want[0])
+        np.testing.assert_array_equal(got[1], want[1])
+
+    def test_the_weight_has_no_default(self):
+        """Which weight splits a region is a choice. It went red on the
+        default of population."""
+        art, regions, gradient = _two_region_setup()
+        with pytest.raises(TypeError, match="weight"):
+            aggregate_gradient(art, regions, gradient)
+
+    def test_a_source_key_of_two_columns_is_refused(self):
+        art, regions, gradient = _two_region_setup()
+        two = WeightsArtifact(
+            frame=art.frame.assign(part="x"),
+            schema=OutputSchema(
+                id_fields=("ISO", "ID_1"),
+                weight_names=("pop",),
+                source_units=SourceUnits.from_string_ids(["hierid", "part"]),
+                normalization="per_source",
+            ),
+            regions_version="test-targets",
+            source_version="test-regions",
+            partial_coverage={},
+        )
+        with pytest.raises(ValueError, match=r"source key is \['hierid', 'part'\]"):
+            aggregate_gradient(two, regions, gradient, weight="pop")
+
     def test_extensive_shares_split_the_gradient(self):
         art, regions, gradient = _two_region_setup()
-        targets, agg = aggregate_gradient(art, regions, gradient)
+        targets, agg = aggregate_gradient(art, regions, gradient, weight="pop")
         got = {tuple(t): agg[i] for i, t in enumerate(targets.itertuples(index=False))}
         assert np.allclose(got[("T", 1)], [0.75 * 1.0, 0.75 * 2.0])
         assert np.allclose(got[("T", 2)], [0.25 * 1.0 + 3.0, 0.25 * 2.0 + 4.0])
 
     def test_targets_sum_to_the_total(self):
         art, regions, gradient = _two_region_setup()
-        _, agg = aggregate_gradient(art, regions, gradient)
+        _, agg = aggregate_gradient(art, regions, gradient, weight="pop")
         assert np.allclose(agg.sum(axis=0), gradient.sum(axis=1))
 
     def test_rate_normalization_is_weighted_mean(self):
         art, regions, gradient = _two_region_setup()
         pop = np.array([100.0, 300.0])
         targets, agg = aggregate_gradient(
-            art, regions, gradient, scale=pop, normalize=True
+            art, regions, gradient, weight="pop", scale=pop, normalize=True
         )
         got = {tuple(t): agg[i] for i, t in enumerate(targets.itertuples(index=False))}
         # target 2: weights a=0.25*100=25, b=1.0*300=300
@@ -83,13 +131,18 @@ class TestAggregateGradient:
         art, regions, gradient = _two_region_setup()
         with pytest.raises(ValueError, match="no weight rows"):
             aggregate_gradient(
-                art, regions + ["c"], np.hstack([gradient, [[5.0], [6.0]]])
+                art,
+                regions + ["c"],
+                np.hstack([gradient, [[5.0], [6.0]]]),
+                weight="pop",
             )
 
     def test_wrong_scale_shape_raises(self):
         art, regions, gradient = _two_region_setup()
         with pytest.raises(ValueError, match="scale has shape"):
-            aggregate_gradient(art, regions, gradient, scale=np.ones(3), normalize=True)
+            aggregate_gradient(
+                art, regions, gradient, weight="pop", scale=np.ones(3), normalize=True
+            )
 
 
 class TestWindowGradient:
@@ -118,9 +171,11 @@ class TestWindowGradient:
         rng = np.random.default_rng(0)
         g = rng.normal(size=(3, 2, 2))
         first = aggregate_gradient(
-            art, regions, window_gradient(g, years, (2000, 2002))
+            art, regions, window_gradient(g, years, (2000, 2002)), weight="pop"
         )[1]
-        stacked = np.stack([aggregate_gradient(art, regions, gy)[1] for gy in g])
+        stacked = np.stack(
+            [aggregate_gradient(art, regions, gy, weight="pop")[1] for gy in g]
+        )
         after = window_gradient(stacked, years, (2000, 2002))
         assert np.allclose(first, after)
 
@@ -174,7 +229,7 @@ class TestDeltaMethod:
         )
         g = np.array([[1.0, 1.0]])
         V = np.array([[1.0]])
-        _, agg = aggregate_gradient(art, ["a", "b"], g)
+        _, agg = aggregate_gradient(art, ["a", "b"], g, weight="pop")
         correct = float(delta_method(agg, V)["sd"].iloc[0])
         per_region_var = np.einsum("cr,cd,dr->r", g, V, g)
         naive = float(np.sqrt(per_region_var.sum()))

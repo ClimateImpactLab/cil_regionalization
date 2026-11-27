@@ -1004,7 +1004,7 @@ aggregate_gradient(
     regions: list[str],
     gradient: np.ndarray,
     *,
-    weight: str = 'pop',
+    weight: str,
     scale: np.ndarray | None = None,
     normalize: bool = False,
 ) -> tuple[pd.DataFrame, np.ndarray]
@@ -1014,7 +1014,9 @@ The target key frame and the gradient aggregated to the weight
 file's targets, target by coefficient.
 
 ``gradient`` is coefficient by region, in the order of ``regions``,
-and the shares are the column ``<weight>wt``. Weight rows for other
+and the shares are the column ``<weight>wt``, which has no default.
+A region is a value of the artifact's one source key column. Weight
+rows for other
 regions are ignored, as with ``restrict_to_sources``. For a total,
 an extensive value, leave ``scale`` and ``normalize`` alone, and
 each region's gradient is split by the weight shares and summed. For
@@ -1024,9 +1026,10 @@ of its regions' gradients. The aggregation is linear, so aggregating
 a difference of gradients, such as one against histclim, equals
 differencing the aggregated ones.
 
-Raises if the share column is missing, if a region has no weight
-rows, if ``scale`` is not one value per region, or if a target has
-zero total weight under ``normalize``.
+Raises if the share column is missing, if the artifact's source key
+is not one column, if a region has no weight rows, if ``scale`` is not
+one value per region, or if a target has zero total weight under
+``normalize``.
 
 ### `delta_method`
 

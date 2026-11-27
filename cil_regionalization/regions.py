@@ -21,6 +21,8 @@ them.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,12 +43,15 @@ class RegionSet:
     on_invalid_geometry: InvalidGeomPolicy
     table: str | None = None
     gdf: gpd.GeoDataFrame | None = None
-    # Filled in by from_config for path-loaded gdfs whose geometries were
-    # repaired by `shapely.make_valid` under the `repair` policy. The
-    # backends record this in the manifest under `repaired_geometry_regions`
-    # so a future reader of the parquet knows which regions' shapes were
-    # mutated relative to the source.
+    # Filled in by from_config for path-loaded gdfs. The ids whose
+    # geometries `shapely.make_valid` repaired under the "repair" policy,
+    # which stay with their shapes changed, and the ids of the invalid
+    # geometries the "skip" policy left out. The backends record them
+    # apart in the manifest, under `repaired_geometry_regions` and
+    # `skipped_invalid_geometry_regions`, since a region left out is not a
+    # region repaired.
     repaired_ids: list[dict[str, Any]] = field(default_factory=list)
+    skipped_invalid_ids: list[dict[str, Any]] = field(default_factory=list)
     # Values listed in `regions.keep` and `regions.drop` that match no row
     # of the file as read, by filter column. The local backend applies
     # `on_unknown_id` to them and records them in the manifest.
@@ -55,6 +60,9 @@ class RegionSet:
     # Resolved on-disk-or-remote URI of the source. For local paths this is
     # the absolute path; for `gs://` paths it stays a URI.
     source_uri: str | None = None
+    # The SHA256 of the bytes read from a `gs://` source, for the manifest,
+    # which hashes a local file from its path instead.
+    source_sha256: str | None = None
 
     @classmethod
     def from_config(cls, cfg: RegionsConfig) -> "RegionSet":
@@ -66,7 +74,7 @@ class RegionSet:
                 gdf=None,
             )
         source_uri = cfg.path  # type: ignore[assignment]
-        gdf = _read_regions(source_uri)
+        gdf, source_sha256 = _read_regions(source_uri)
         _check_id_fields(gdf, cfg.id_fields)
         gdf, unknown_keep, unknown_drop = _apply_filters(gdf, cfg.keep, cfg.drop)
         # Shapefiles without a .prj file lack a CRS; the canonical IR
@@ -74,7 +82,7 @@ class RegionSet:
         # downstream geodesic / spatial ops have a definite frame.
         if gdf.crs is None:
             gdf = gdf.set_crs("EPSG:4326")
-        gdf, repaired = _handle_invalid_geometries(
+        gdf, repaired, skipped = _handle_invalid_geometries(
             gdf, cfg.on_invalid_geometry, list(cfg.id_fields)
         )
         gdf = gdf.reset_index(drop=True)
@@ -84,9 +92,11 @@ class RegionSet:
             table=None,
             gdf=gdf,
             repaired_ids=repaired,
+            skipped_invalid_ids=skipped,
             unknown_keep_ids=unknown_keep,
             unknown_drop_ids=unknown_drop,
             source_uri=str(source_uri),
+            source_sha256=source_sha256,
         )
 
     @property
@@ -113,13 +123,15 @@ class RegionSet:
             yield ids, row.geometry
 
 
-def _read_regions(source: str | Path) -> gpd.GeoDataFrame:
-    """Read regions from a local path or a `gs://` URI.
+def _read_regions(source: str | Path) -> tuple[gpd.GeoDataFrame, str | None]:
+    """Regions from a local path or a `gs://` URI, with the SHA256 of the
+    bytes read from a `gs://` one, None for a local path.
 
     A ``.parquet`` or ``.geoparquet`` file is read with `gpd.read_parquet`
-    and anything else with `gpd.read_file`. A remote shapefile and its
-    companions are copied to a temporary directory and read there. Raises
-    `FileNotFoundError` if a local path does not exist.
+    and anything else with `gpd.read_file`. Any other remote file, and a
+    remote shapefile with its companions, is copied to a temporary
+    directory and read there, and the hash is of the copy of the main
+    file. Raises `FileNotFoundError` if a local path does not exist.
     """
     # A remote shapefile is staged locally because GDAL's `/vsigs/` needs
     # explicit credentials, which pyogrio's default config does not pick
@@ -132,23 +144,32 @@ def _read_regions(source: str | Path) -> gpd.GeoDataFrame:
         raise FileNotFoundError(f"regions.path not found: {path}")
     suffix = path.suffix.lower()
     if suffix in (".parquet", ".geoparquet"):
-        return gpd.read_parquet(path)
-    return gpd.read_file(path)
+        return gpd.read_parquet(path), None
+    return gpd.read_file(path), None
 
 
-def _read_remote_regions(uri: str) -> gpd.GeoDataFrame:
-    """Stream shapefile companions from GCS to a temp dir, then read."""
-    import gcsfs
+def _read_remote_regions(uri: str) -> tuple[gpd.GeoDataFrame, str]:
+    """The regions at a `gs://` URI and the SHA256 of the bytes read."""
     import tempfile
+
+    try:
+        import gcsfs
+    except ImportError as error:
+        raise ImportError(
+            f"regions.path {uri} is read with gcsfs, which the [bigquery] "
+            f"extra installs"
+        ) from error
 
     fs = gcsfs.GCSFileSystem()
     suffix = uri.lower().rsplit(".", 1)[-1] if "." in uri else ""
     if suffix in ("parquet", "geoparquet"):
-        with fs.open(uri, "rb") as f:
-            return gpd.read_parquet(f)
+        data = fs.cat(uri)
+        return gpd.read_parquet(io.BytesIO(data)), hashlib.sha256(data).hexdigest()
+    tmp = Path(tempfile.mkdtemp(prefix="cilreg-regions-"))
     if suffix != "shp":
-        # GeoParquet/GeoPackage etc.: let geopandas attempt a remote read.
-        return gpd.read_file(uri)
+        local = tmp / Path(uri).name
+        fs.get(uri, str(local))
+        return gpd.read_file(local), _sha256(local)
     # Shapefiles: download .shp + .dbf + .shx + .prj (if present).
     base = uri[:-4]  # strip ".shp"
     tmp = Path(tempfile.mkdtemp(prefix="cilreg-regions-"))
@@ -162,7 +183,11 @@ def _read_remote_regions(uri: str) -> gpd.GeoDataFrame:
             # .prj is optional; absence means downstream sets EPSG:4326.
     local_shp = tmp / Path(uri).name
     logger.info("regions: staged %s to %s for local read", uri, tmp)
-    return gpd.read_file(local_shp)
+    return gpd.read_file(local_shp), _sha256(local_shp)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _check_id_fields(gdf: gpd.GeoDataFrame, id_fields: list[str]) -> None:
@@ -209,18 +234,32 @@ def _absent_values(column, listed: list[Any]) -> list[str]:
     )
 
 
+def _geometry_record(regions: "RegionSet") -> dict[str, Any]:
+    """The manifest entries of the invalid region geometries, the repaired
+    and the skipped apart, each only if there are any."""
+    out: dict[str, Any] = {}
+    if regions.repaired_ids:
+        out["repaired_geometry_count"] = len(regions.repaired_ids)
+        out["repaired_geometry_regions"] = list(regions.repaired_ids)
+    if regions.skipped_invalid_ids:
+        out["skipped_invalid_geometry_count"] = len(regions.skipped_invalid_ids)
+        out["skipped_invalid_geometry_regions"] = list(regions.skipped_invalid_ids)
+    return out
+
+
 def _handle_invalid_geometries(
     gdf: gpd.GeoDataFrame,
     policy: InvalidGeomPolicy,
     id_fields: list[str],
-) -> tuple[gpd.GeoDataFrame, list[dict[str, Any]]]:
-    """Apply the invalid-geometry policy. Returns ``(gdf, bad_ids)``, the
-    ids of the invalid geometries whether they were repaired or skipped.
-    Raises under "error" if any geometry is invalid."""
+) -> tuple[gpd.GeoDataFrame, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Apply the invalid-geometry policy. Returns ``(gdf, repaired,
+    skipped)``, the ids of the invalid geometries that were repaired and
+    kept, and of those left out. One of the two is always empty. Raises
+    under "error" if any geometry is invalid."""
     invalid_mask = ~gdf.geometry.is_valid
     n_invalid = int(invalid_mask.sum())
     if n_invalid == 0:
-        return gdf, []
+        return gdf, [], []
 
     bad_ids = gdf.loc[invalid_mask, id_fields].to_dict(orient="records")
     if policy == "repair":
@@ -233,12 +272,12 @@ def _handle_invalid_geometries(
         )
         out = gdf.copy()
         out = out.set_geometry(repaired)
-        return out, bad_ids
+        return out, bad_ids, []
     if policy == "skip":
         logger.info(
             "regions: skipping %d invalid geometries; ids=%s", n_invalid, bad_ids
         )
-        return gdf.loc[~invalid_mask].copy(), bad_ids
+        return gdf.loc[~invalid_mask].copy(), [], bad_ids
     raise ValueError(
         f"regions: {n_invalid} invalid geometries with on_invalid_geometry='error'; "
         f"ids={bad_ids}"

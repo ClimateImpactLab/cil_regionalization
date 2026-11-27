@@ -2308,11 +2308,14 @@ def _peak_rss_gb() -> float:
 
 
 def _current_rss_gb() -> Optional[float]:
-    """This process's current resident memory in GB (Linux only)."""
+    """This process's current resident memory in GB (Linux only). The
+    count is in pages, of the size the machine reports."""
+    import resource
+
     try:
         with open("/proc/self/statm") as f:
             pages = int(f.read().split()[1])
-        return pages * 4096 / 1e9
+        return pages * resource.getpagesize() / 1e9
     except OSError:
         return None
 
@@ -2409,8 +2412,9 @@ def _subtract_leaf(
     for row, in a float64 value column. In the projection trees this is
     the scenario file minus its histclim sibling, before any weighting.
     Raises if the two files differ in columns, if a key repeats in
-    either, or if a row of ``frame`` has no match in the file. Rows of
-    the file with no match in ``frame`` are dropped.
+    either, or if a row of either has no match in the other. They are
+    one projection under two climates, so a row in one alone means the
+    other is incomplete.
     """
     other = _read_leaf(path, data_cfg, artifact)
     keys = [c for c in frame.columns if c != data_cfg.value_col]
@@ -2426,6 +2430,28 @@ def _subtract_leaf(
         raise ValueError(
             f"subtract file {path} covers {len(merged)} of {len(frame)} "
             f"rows; the two files must cover the same regions and years"
+        )
+    if len(other) != len(merged):
+        # each row of the file matched at most one row of frame
+        flagged = other[keys].merge(frame[keys], on=keys, how="left", indicator=True)
+        alone = flagged.loc[flagged["_merge"] == "left_only", keys]
+        first = {
+            k: v.item() if hasattr(v, "item") else v for k, v in alone.iloc[0].items()
+        }
+        only = []
+        for key in keys:
+            values = sorted(set(alone[key]) - set(frame[key]), key=str)
+            if values:
+                shown = ", ".join(str(v) for v in values[:3])
+                more = f" and {len(values) - 3} more" if len(values) > 3 else ""
+                only.append(f"{key} {shown}{more}")
+        where = f" The subtract file alone has {'; '.join(only)}." if only else ""
+        raise ValueError(
+            f"subtract file {path} has {len(alone)} "
+            f"{'row' if len(alone) == 1 else 'rows'} the leaf does not "
+            f"have (first: {first}); the two files must cover the same "
+            f"regions and years.{where} They are one projection under two "
+            f"climates, so a row in one alone means the other is incomplete."
         )
     merged[data_cfg.value_col] = merged[data_cfg.value_col].astype("float64") - merged[
         f"{data_cfg.value_col}_subtract"

@@ -69,7 +69,9 @@ def load_weights() -> "cilreg.WeightsArtifact":
 
 def valued_states(weights, regions, gradient, vcv, gammas, factor):
     """Mean and sd of the valued effect per state, repaired dollars."""
-    targets, G = cilreg.aggregate_gradient(weights, regions, gradient * factor[None, :])
+    targets, G = cilreg.aggregate_gradient(
+        weights, regions, gradient * factor[None, :], weight="pop"
+    )
     stats = cilreg.delta_method(G, vcv, coefficients=gammas)
     out = pd.concat([targets, stats * DOLLARS_2019 / GJ_PER_KWH], axis=1)
     return out
@@ -78,7 +80,7 @@ def valued_states(weights, regions, gradient, vcv, gammas, factor):
 def physical_states(weights, regions, gradient, vcv, gammas, population):
     """Mean and sd of the per-capita effect per state, GJ per capita."""
     targets, G = cilreg.aggregate_gradient(
-        weights, regions, gradient, scale=population, normalize=True
+        weights, regions, gradient, weight="pop", scale=population, normalize=True
     )
     stats = cilreg.delta_method(G, vcv, coefficients=gammas)
     return pd.concat([targets, stats], axis=1)

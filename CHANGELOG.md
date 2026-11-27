@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+**A histclim file with rows its leaf does not have is refused, naming
+the first row and the regions or years the file alone has.** The two
+are one projection under two climates, so a row in one alone means the
+other is incomplete. The rows were dropped with nothing said, while a
+leaf row the histclim file lacked was refused already.
+
+**A region left out for an invalid geometry is recorded as skipped,
+apart from the regions repaired.** Under `on_invalid_geometry = "skip"`
+the manifest listed the regions it left out as `repaired_geometry_regions`.
+It now lists them as `skipped_invalid_geometry_regions`, with
+`skipped_invalid_geometry_count`, and the source units as
+`skipped_invalid_geometry_source_units`, and `RegionSet` carries them as
+`skipped_invalid_ids`. In the four published artifacts checked, every
+region listed as repaired has its rows.
+
+**A `gs://` regions path passes the input check, and its bytes are
+hashed into the manifest as a local file's are.** The reader took such a
+path already, and the check refused it. The manifest had no hash of a
+remote regions file. Reading one needs gcsfs, which the `[bigquery]`
+extra installs, and a remote file in a format other than Parquet is
+copied to a temporary directory first.
+
+**`aggregate_gradient` takes `weight` with no default, and finds the
+regions in the weight file's source key column.** It defaulted to
+population, and read a column called `hierid` whatever the artifact's
+source key was. The resident memory the pipeline logs counts pages of
+the size the machine reports, where it took them as 4096 bytes.
+
 **A model takes the row of its own name in a model weights table,
 letter for letter, or the row declared for it, and a model with
 neither is refused.** Before, the library dropped `surrogate_` from the

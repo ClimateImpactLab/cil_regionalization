@@ -113,7 +113,7 @@ def aggregate_gradient(
     regions: list[str],
     gradient: np.ndarray,
     *,
-    weight: str = "pop",
+    weight: str,
     scale: np.ndarray | None = None,
     normalize: bool = False,
 ) -> tuple[pd.DataFrame, np.ndarray]:
@@ -121,7 +121,9 @@ def aggregate_gradient(
     file's targets, target by coefficient.
 
     ``gradient`` is coefficient by region, in the order of ``regions``,
-    and the shares are the column ``<weight>wt``. Weight rows for other
+    and the shares are the column ``<weight>wt``, which has no default.
+    A region is a value of the artifact's one source key column. Weight
+    rows for other
     regions are ignored, as with ``restrict_to_sources``. For a total,
     an extensive value, leave ``scale`` and ``normalize`` alone, and
     each region's gradient is split by the weight shares and summed. For
@@ -131,9 +133,10 @@ def aggregate_gradient(
     a difference of gradients, such as one against histclim, equals
     differencing the aggregated ones.
 
-    Raises if the share column is missing, if a region has no weight
-    rows, if ``scale`` is not one value per region, or if a target has
-    zero total weight under ``normalize``.
+    Raises if the share column is missing, if the artifact's source key
+    is not one column, if a region has no weight rows, if ``scale`` is not
+    one value per region, or if a target has zero total weight under
+    ``normalize``.
     """
     frame = weights.frame
     key_cols = list(weights.schema.id_fields)
@@ -143,9 +146,16 @@ def aggregate_gradient(
             f"weight file has no {share_col!r} column "
             f"(columns: {sorted(frame.columns)})"
         )
+    source_keys = list(weights.schema.source_units.key_columns)
+    if len(source_keys) != 1:
+        raise ValueError(
+            f"a gradient region is one value of the source key, and this "
+            f"weight file's source key is {source_keys}"
+        )
+    (region_col,) = source_keys
     index = {r: i for i, r in enumerate(regions)}
-    rows = frame[frame["hierid"].isin(index)]
-    covered = set(rows["hierid"])
+    rows = frame[frame[region_col].isin(index)]
+    covered = set(rows[region_col])
     absent = [r for r in regions if r not in covered]
     if absent:
         raise ValueError(
@@ -167,7 +177,7 @@ def aggregate_gradient(
             f"scale has shape {scale_vec.shape}; expected ({len(regions)},)"
         )
     for row in rows.itertuples(index=False):
-        r = index[row.hierid]
+        r = index[getattr(row, region_col)]
         t = tindex[tuple(getattr(row, c) for c in key_cols)]
         w = getattr(row, share_col) * scale_vec[r]
         out[t] += w * gradient[:, r]
