@@ -686,6 +686,39 @@ class TestRepairedGeometryManifest:
         assert "skipped_invalid_geometry_count" not in result.manifest.extra
 
 
+class TestRemoteRegions:
+    def test_a_gs_regions_file_is_hashed_in_the_manifest(
+        self, three_region_geoparquet, synthetic_raster, tmp_path, monkeypatch
+    ):
+        """As a local file is. A gs:// regions file had no hash in the
+        manifest, and this went red on that."""
+        import hashlib
+        import shutil
+        import sys
+        import types
+
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        shutil.copy(three_region_geoparquet, bucket / "regions.parquet")
+
+        class GCSFileSystem:
+            def cat(self, uri):
+                return (tmp_path / uri.removeprefix("gs://")).read_bytes()
+
+        module = types.ModuleType("gcsfs")
+        module.GCSFileSystem = GCSFileSystem
+        monkeypatch.setitem(sys.modules, "gcsfs", module)
+
+        local = _run(_cfg(three_region_geoparquet, synthetic_raster, tmp_path / "a"))
+        remote = _run(
+            _cfg("gs://bucket/regions.parquet", synthetic_raster, tmp_path / "b")
+        )
+        expected = hashlib.sha256((bucket / "regions.parquet").read_bytes()).hexdigest()
+        assert remote.manifest.inputs["geometry:regions"] == expected
+        assert local.manifest.inputs["geometry:regions"] == expected
+        pd.testing.assert_frame_equal(remote.frame, local.frame)
+
+
 class TestUnknownIds:
     def _cfg(self, regions_path, raster_path, out_dir, **regions) -> Config:
         d = _cfg(regions_path, raster_path, out_dir).model_dump()

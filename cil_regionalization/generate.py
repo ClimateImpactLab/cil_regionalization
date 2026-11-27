@@ -35,10 +35,15 @@ class SumToOneError(ValueError):
 
 def check_inputs_exist(cfg: Config) -> list[str]:
     """A message for each input of ``cfg`` that is not on the local disk.
-    The inputs checked are regions.path, source.path unless it is a
-    ``gs://`` URI, and each weight raster on the local backend."""
+    The inputs checked are regions.path and source.path unless they are
+    ``gs://`` URIs, which are read and hashed when the run reads them, and
+    each weight raster on the local backend."""
     problems: list[str] = []
-    if cfg.regions.path is not None and not Path(cfg.regions.path).exists():
+    if (
+        cfg.regions.path is not None
+        and not cfg.regions.path.startswith("gs://")
+        and not Path(cfg.regions.path).exists()
+    ):
         problems.append(f"regions.path does not exist: {cfg.regions.path}")
     if (
         cfg.source is not None

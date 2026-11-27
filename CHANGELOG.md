@@ -17,6 +17,13 @@ It now lists them as `skipped_invalid_geometry_regions`, with
 `skipped_invalid_ids`. In the four published artifacts checked, every
 region listed as repaired has its rows.
 
+**A `gs://` regions path passes the input check, and its bytes are
+hashed into the manifest as a local file's are.** The reader took such a
+path already, and the check refused it. The manifest had no hash of a
+remote regions file. Reading one needs gcsfs, which the `[bigquery]`
+extra installs, and a remote file in a format other than Parquet is
+copied to a temporary directory first.
+
 **A model takes the row of its own name in a model weights table,
 letter for letter, or the row declared for it, and a model with
 neither is refused.** Before, the library dropped `surrogate_` from the

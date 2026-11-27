@@ -21,6 +21,8 @@ them.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +60,9 @@ class RegionSet:
     # Resolved on-disk-or-remote URI of the source. For local paths this is
     # the absolute path; for `gs://` paths it stays a URI.
     source_uri: str | None = None
+    # The SHA256 of the bytes read from a `gs://` source, for the manifest,
+    # which hashes a local file from its path instead.
+    source_sha256: str | None = None
 
     @classmethod
     def from_config(cls, cfg: RegionsConfig) -> "RegionSet":
@@ -69,7 +74,7 @@ class RegionSet:
                 gdf=None,
             )
         source_uri = cfg.path  # type: ignore[assignment]
-        gdf = _read_regions(source_uri)
+        gdf, source_sha256 = _read_regions(source_uri)
         _check_id_fields(gdf, cfg.id_fields)
         gdf, unknown_keep, unknown_drop = _apply_filters(gdf, cfg.keep, cfg.drop)
         # Shapefiles without a .prj file lack a CRS; the canonical IR
@@ -91,6 +96,7 @@ class RegionSet:
             unknown_keep_ids=unknown_keep,
             unknown_drop_ids=unknown_drop,
             source_uri=str(source_uri),
+            source_sha256=source_sha256,
         )
 
     @property
@@ -117,13 +123,15 @@ class RegionSet:
             yield ids, row.geometry
 
 
-def _read_regions(source: str | Path) -> gpd.GeoDataFrame:
-    """Read regions from a local path or a `gs://` URI.
+def _read_regions(source: str | Path) -> tuple[gpd.GeoDataFrame, str | None]:
+    """Regions from a local path or a `gs://` URI, with the SHA256 of the
+    bytes read from a `gs://` one, None for a local path.
 
     A ``.parquet`` or ``.geoparquet`` file is read with `gpd.read_parquet`
-    and anything else with `gpd.read_file`. A remote shapefile and its
-    companions are copied to a temporary directory and read there. Raises
-    `FileNotFoundError` if a local path does not exist.
+    and anything else with `gpd.read_file`. Any other remote file, and a
+    remote shapefile with its companions, is copied to a temporary
+    directory and read there, and the hash is of the copy of the main
+    file. Raises `FileNotFoundError` if a local path does not exist.
     """
     # A remote shapefile is staged locally because GDAL's `/vsigs/` needs
     # explicit credentials, which pyogrio's default config does not pick
@@ -136,23 +144,32 @@ def _read_regions(source: str | Path) -> gpd.GeoDataFrame:
         raise FileNotFoundError(f"regions.path not found: {path}")
     suffix = path.suffix.lower()
     if suffix in (".parquet", ".geoparquet"):
-        return gpd.read_parquet(path)
-    return gpd.read_file(path)
+        return gpd.read_parquet(path), None
+    return gpd.read_file(path), None
 
 
-def _read_remote_regions(uri: str) -> gpd.GeoDataFrame:
-    """Stream shapefile companions from GCS to a temp dir, then read."""
-    import gcsfs
+def _read_remote_regions(uri: str) -> tuple[gpd.GeoDataFrame, str]:
+    """The regions at a `gs://` URI and the SHA256 of the bytes read."""
     import tempfile
+
+    try:
+        import gcsfs
+    except ImportError as error:
+        raise ImportError(
+            f"regions.path {uri} is read with gcsfs, which the [bigquery] "
+            f"extra installs"
+        ) from error
 
     fs = gcsfs.GCSFileSystem()
     suffix = uri.lower().rsplit(".", 1)[-1] if "." in uri else ""
     if suffix in ("parquet", "geoparquet"):
-        with fs.open(uri, "rb") as f:
-            return gpd.read_parquet(f)
+        data = fs.cat(uri)
+        return gpd.read_parquet(io.BytesIO(data)), hashlib.sha256(data).hexdigest()
+    tmp = Path(tempfile.mkdtemp(prefix="cilreg-regions-"))
     if suffix != "shp":
-        # GeoParquet/GeoPackage etc.: let geopandas attempt a remote read.
-        return gpd.read_file(uri)
+        local = tmp / Path(uri).name
+        fs.get(uri, str(local))
+        return gpd.read_file(local), _sha256(local)
     # Shapefiles: download .shp + .dbf + .shx + .prj (if present).
     base = uri[:-4]  # strip ".shp"
     tmp = Path(tempfile.mkdtemp(prefix="cilreg-regions-"))
@@ -166,7 +183,11 @@ def _read_remote_regions(uri: str) -> gpd.GeoDataFrame:
             # .prj is optional; absence means downstream sets EPSG:4326.
     local_shp = tmp / Path(uri).name
     logger.info("regions: staged %s to %s for local read", uri, tmp)
-    return gpd.read_file(local_shp)
+    return gpd.read_file(local_shp), _sha256(local_shp)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _check_id_fields(gdf: gpd.GeoDataFrame, id_fields: list[str]) -> None:

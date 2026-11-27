@@ -1084,10 +1084,13 @@ def _input_checksums(
     regions: RegionSet,
     weights: list[WeightSpec],
 ) -> dict[str, str]:
-    """Hash the regions file and each weight raster for the manifest."""
+    """Hash the regions file and each weight raster for the manifest. A
+    `gs://` regions file has the hash of the bytes it was read from."""
     inputs: dict[str, str] = {}
     path = regions.source_uri
-    if path is not None and not str(path).startswith("gs://") and Path(path).exists():
+    if regions.source_sha256 is not None:
+        inputs["geometry:regions"] = regions.source_sha256
+    elif path is not None and not str(path).startswith("gs://") and Path(path).exists():
         inputs["geometry:regions"] = hash_file(path)
     for w in weights:
         if w.is_area:
