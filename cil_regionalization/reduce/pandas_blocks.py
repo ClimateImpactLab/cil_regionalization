@@ -49,6 +49,7 @@ from cil_regionalization.stats import (
     pooled_statistics,
     window_means,
 )
+from cil_regionalization.workers import WorkerDied, shut_down_broken
 
 # What a block is planned to take for a row it keeps, and for each
 # dimension that row has of its own. They come from the resident memory
@@ -418,7 +419,7 @@ def _run_blocks(request: ReduceRequest, blocks, n_workers: int, judge) -> list[d
     """Every block's result, in any order. The first block is built
     alone and measured, and handed to ``judge``, which may raise, before
     any other is. The first block that fails stops the run, and a
-    worker that dies raises `RuntimeError`."""
+    worker that dies raises `WorkerDied`."""
     # A process pool executor, because a `multiprocessing.Pool` would
     # wait for ever for a worker that died.
     if not blocks:
@@ -444,30 +445,41 @@ def _run_blocks(request: ReduceRequest, blocks, n_workers: int, judge) -> list[d
         initargs=(request,),
     )
     try:
-        results.append(_collect(executor.submit(_measured_block, first), first))
+        results.append(
+            _collect(executor.submit(_measured_block, first), first, executor)
+        )
         results[0]["start_method"] = context.get_start_method()
         judge(results[0])
         _log_block(results, len(blocks))
         futures = {executor.submit(_reduce_block, block): block for block in rest}
         for future in as_completed(futures):
-            results.append(_collect(future, futures[future]))
+            results.append(_collect(future, futures[future], executor))
             _log_block(results, len(blocks))
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     return results
 
 
-def _collect(future, block) -> dict:
+def _collect(future, block, executor) -> dict:
+    """The result of a block's future. Raises `WorkerDied` if a worker
+    died, saying how the workers ended, which is not always memory."""
     first, stop = block
     try:
         return future.result()
     except BrokenProcessPool:
-        raise RuntimeError(
-            f"reduce: a worker died while row groups {first} to "
-            f"{stop - 1} were being reduced, most likely killed for "
-            f"memory. No statistics were written. Raise "
-            f"[reduce.pandas] memory_gb only if the node has it. "
-            f"Otherwise lower it, which makes the blocks smaller."
+        ended, killed = shut_down_broken(executor)
+        memory = (
+            " Raise [reduce.pandas] memory_gb only if the node has it. "
+            "Otherwise lower it, which makes the blocks smaller."
+            if killed
+            else ""
+        )
+        # Every block not back fails at once, so this one was not
+        # necessarily the dead worker's.
+        raise WorkerDied(
+            f"reduce: a worker died with row groups {first} to {stop - 1} "
+            f"among the blocks not back, {ended}. No statistics were "
+            f"written.{memory}"
         ) from None
 
 

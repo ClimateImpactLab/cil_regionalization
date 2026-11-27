@@ -93,7 +93,6 @@ import argparse
 import hashlib
 import itertools
 import json
-import multiprocessing as mp
 import os
 import sys
 import warnings
@@ -141,11 +140,16 @@ from cil_regionalization.warming_levels import (
     members_that_join,
     read_gmst,
 )
+from cil_regionalization.workers import WorkerDied, run_in_waves
 
 
 VariableKind = Literal["extensive", "intensive", "ratio"]
 # in a cell of tree.exclude, every value of the level
 EVERY_VALUE = "*"
+# The leaves a worker takes on average before new workers start, in
+# waves of n_workers times this many. A worker's resident memory grows
+# with the leaves it has processed, so the workers are renewed.
+LEAVES_PER_WORKER = 16
 Stage = Literal["all", "aggregate", "reduce"]
 
 
@@ -585,6 +589,11 @@ class PipelineOutputConfig(_Strict):
 
 
 class RunConfig(_Strict):
+    """``n_workers`` processes aggregate the leaves in waves, each wave on
+    new workers, since a worker's resident memory grows with the leaves
+    it has taken. A worker that dies stops the run, naming the leaves in
+    flight and saying how the workers ended."""
+
     n_workers: int = Field(default=1, ge=1)
 
 
@@ -1016,25 +1025,42 @@ def run_pipeline(
         # The artifact loads once per worker (initializer), not once per
         # task: shipping it in every task pickle made long-lived workers
         # churn through thousands of unpickled copies, and their resident
-        # memory grew with leaves processed. maxtasksperchild recycles
-        # workers to bound what churn remains; chunksize=1 so recycling
-        # counts actual leaves. imap_unordered streams results so memory
-        # can be logged as the run accumulates.
+        # memory grew with leaves processed. New workers for every wave of
+        # LEAVES_PER_WORKER leaves a worker bound what churn remains. A
+        # worker that dies stops the run, where a multiprocessing.Pool
+        # waited for ever for the leaf it held.
         worker_peak = 0.0
-        with mp.Pool(
-            processes=cfg.run.n_workers,
-            initializer=_init_worker,
-            initargs=initargs,
-            maxtasksperchild=16,
-        ) as pool:
-            for outcome in pool.imap_unordered(_process_leaf, tasks, chunksize=1):
-                collect(outcome)
-                worker_peak = max(worker_peak, outcome.get("worker_peak_gb") or 0.0)
-                if len(outcomes) % 250 == 0 or len(outcomes) == len(tasks):
-                    _log_memory(
-                        f"leaves {len(outcomes)}/{len(tasks)}, "
-                        f"max worker peak {worker_peak:.1f}G"
-                    )
+
+        def take(outcome: dict) -> None:
+            nonlocal worker_peak
+            collect(outcome)
+            worker_peak = max(worker_peak, outcome.get("worker_peak_gb") or 0.0)
+            if len(outcomes) % 250 == 0 or len(outcomes) == len(tasks):
+                _log_memory(
+                    f"leaves {len(outcomes)}/{len(tasks)}, "
+                    f"max worker peak {worker_peak:.1f}G"
+                )
+
+        try:
+            run_in_waves(
+                _process_leaf,
+                tasks,
+                n_workers=cfg.run.n_workers,
+                per_worker=LEAVES_PER_WORKER,
+                initializer=_init_worker,
+                initargs=initargs,
+                on_result=take,
+                name=lambda task: "/".join(task[0].values),
+                what="pipeline",
+            )
+        except WorkerDied as error:
+            kept = (
+                " The leaf files written so far are kept, and the leaves "
+                "manifest is left incomplete."
+                if leaves_document is not None
+                else ""
+            )
+            raise WorkerDied(f"{error} No statistics were written.{kept}") from None
     _log_memory("all leaves collected")
 
     failures = [o for o in outcomes if o["error"] is not None]

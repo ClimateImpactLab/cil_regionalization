@@ -1458,6 +1458,11 @@ weights gave them.
 
 Can be left out.
 
+``n_workers`` processes aggregate the leaves in waves, each wave on
+new workers, since a worker's resident memory grows with the leaves
+it has taken. A worker that dies stops the run, naming the leaves in
+flight and saying how the workers ended.
+
 | key | type | default |
 | --- | --- | --- |
 | `n_workers` | int, at least 1 | 1 |

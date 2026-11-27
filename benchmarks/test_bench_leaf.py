@@ -1,5 +1,6 @@
-"""One leaf through `apply_weights` and `window_means`, and a process
-pool run with a coarse and a fine task split.
+"""One leaf through `apply_weights` and `window_means`, a process pool
+run with a coarse and a fine task split, and the aggregate stage's pool
+against the waves that replaced it.
 
 The pool runs the same leaves twice, once with about 1.4 tasks a worker
 and once with every task halved, at whatever worker count the machine
@@ -29,7 +30,9 @@ from benchmarks.synthetic import (
     report,
     source_leaf,
 )
+from cil_regionalization.pipelines.montecarlo import LEAVES_PER_WORKER
 from cil_regionalization.stats import window_means
+from cil_regionalization.workers import run_in_waves
 
 pytestmark = pytest.mark.benchmark
 
@@ -122,3 +125,83 @@ def test_finer_tasks_give_the_same_leaves():
         f"  {2 * n_coarse} tasks of {half} leaves:  {fine_s:.1f} s "
         f"({fine_s / coarse_s:.0%} of the coarse run)"
     )
+
+
+_WORKER: dict = {}
+
+
+def _load_weights() -> None:
+    """The initializer of both pools. The weights load once a worker, as
+    the pipeline's do."""
+    logging.getLogger("cil_regionalization.validate").setLevel(logging.ERROR)
+    _WORKER["art"] = artifact(POOL_SCALE)
+
+
+def _one_leaf(seed: int) -> tuple[int, int, float, float]:
+    """The leaf's row count and sum, and the seconds it took in the
+    worker."""
+    start = time.perf_counter()
+    reduced = window_means(apply(_WORKER["art"], source_leaf(POOL_SCALE, seed)), **_KW)
+    return seed, len(reduced), float(reduced["pct"].sum()), time.perf_counter() - start
+
+
+def _recycled_pool(seeds: list[int]) -> list:
+    """What the aggregate stage ran before the waves."""
+    with mp.Pool(
+        processes=POOL_WORKERS,
+        initializer=_load_weights,
+        maxtasksperchild=LEAVES_PER_WORKER,
+    ) as pool:
+        return sorted(pool.imap_unordered(_one_leaf, seeds, chunksize=1))
+
+
+def _waves(seeds: list[int]) -> list:
+    got: list = []
+    run_in_waves(
+        _one_leaf,
+        seeds,
+        n_workers=POOL_WORKERS,
+        per_worker=LEAVES_PER_WORKER,
+        initializer=_load_weights,
+        initargs=(),
+        on_result=got.append,
+        name=str,
+        what="benchmark",
+    )
+    return sorted(got)
+
+
+def test_waves_give_what_the_recycled_pool_gave():
+    """Three waves of leaves, one a task, under the platform's start
+    method, each run twice and alternating. The time a leaf takes moves
+    from one run to the next on a laptop by more than the pools differ,
+    so what is compared is the wall time not spent on leaves, the wall
+    less the leaves' own seconds over the workers."""
+    seeds = list(range(3 * POOL_WORKERS * LEAVES_PER_WORKER))
+    runs: dict[str, list[tuple[float, float]]] = {"pool": [], "waves": []}
+    results = {}
+    for _ in range(2):
+        for key, run in (("pool", _recycled_pool), ("waves", _waves)):
+            start = time.perf_counter()
+            got = run(seeds)
+            wall = time.perf_counter() - start
+            runs[key].append((wall, wall - sum(r[3] for r in got) / POOL_WORKERS))
+            results[key] = [r[:3] for r in got]
+    assert results["waves"] == results["pool"]
+
+    report(
+        f"{len(seeds)} leaves at 1/{POOL_SCALE} size on {POOL_WORKERS} "
+        f"workers, {LEAVES_PER_WORKER} a worker, "
+        f"{mp.get_start_method()} start"
+    )
+    for key, label in (
+        ("pool", "pool renewing each worker after its leaves"),
+        ("waves", "waves of new workers"),
+    ):
+        report(
+            f"  {label + ':':<44} wall "
+            + ", ".join(f"{wall:.1f}" for wall, _ in runs[key])
+            + " s, not on leaves "
+            + ", ".join(f"{other:.1f}" for _, other in runs[key])
+            + " s"
+        )

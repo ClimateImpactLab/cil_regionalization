@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+**A worker that dies stops the aggregate stage at once, naming the
+leaves in flight and how the workers ended.** The leaves ran on a
+`multiprocessing.Pool` that renewed each worker after 16 leaves, and a
+worker that died outright, killed by a signal such as the kernel's for
+memory or ending as its setup raised, left the pool waiting for ever for
+the leaf it held. The leaves now run on a `ProcessPoolExecutor` under
+the platform's own start method, fork on Linux, in waves of 16 leaves a
+worker with new workers for each wave, and no more leaves are handed out
+than there are workers. A death raises with the leaves in flight and the
+workers' exit codes, and no statistics are written. Leaf files already
+written are kept, and the leaves manifest is left incomplete. Any other
+error that stops the run, such as a leaf written with other columns, now
+waits for the leaves in flight to finish, where the pool killed them.
+The reduce stage said a dead worker was most likely killed for memory,
+whatever ended it. It now gives the exit codes, and speaks of the memory
+budget only when a worker was killed by SIGKILL. A worker whose setup
+raised exits with code 0 and logs the traceback, and is said to. The
+waves cost half a second to a second on the leaf benchmark, 384 leaves
+at an eighth of the size on 8 workers under spawn on macOS. Over two
+runs of it, the wall time not spent on leaves, the wall less the leaves'
+own seconds over the workers, was 3.5 to 5.1 s with the pool and 4.4 to
+6.2 s in waves, on walls of 23 to 69 s that moved more than that from
+run to run. Fork on Linux was not measured.
+
 `window_means` takes the rows of each window once, looks for an
 infinite value without copying the rows of the windows, and builds the
 frame of the group keys once, where it did all three for every window.

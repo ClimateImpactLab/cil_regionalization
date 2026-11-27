@@ -1266,8 +1266,9 @@ class TestBlocks:
     def test_a_worker_that_dies_stops_the_run(self, tmp_path, monkeypatch):
         """Failed with a `multiprocessing.Pool`, which waits for the
         dead worker's block for ever. The workers here are forked, so
-        that they see the block function this test puts in."""
-        import functools
+        that they see the block function this test puts in. The worker
+        exits with code 1, and the message says so where it blamed
+        memory for every death."""
         import multiprocessing
 
         from cil_regionalization.reduce import pandas_blocks
@@ -1275,17 +1276,17 @@ class TestBlocks:
         if "fork" not in multiprocessing.get_all_start_methods():
             pytest.skip("needs forked workers")
         request, _ = build_request(tmp_path, weighted=False, n_members=False)
-        monkeypatch.setattr(
-            pandas_blocks,
-            "ProcessPoolExecutor",
-            functools.partial(
-                pandas_blocks.ProcessPoolExecutor,
-                mp_context=multiprocessing.get_context("fork"),
-            ),
-        )
         monkeypatch.setattr(pandas_blocks, "_reduce_block", _die)
-        with pytest.raises(RuntimeError, match="a worker died"):
-            _one_group_a_block(request, n_workers=2).run(request)
+        before = multiprocessing.get_start_method(allow_none=True)
+        multiprocessing.set_start_method("fork", force=True)
+        try:
+            with pytest.raises(RuntimeError, match="a worker died") as error:
+                _one_group_a_block(request, n_workers=2).run(request)
+        finally:
+            multiprocessing.set_start_method(before, force=True)
+        assert "exiting with code 1" in str(error.value)
+        assert "memory" not in str(error.value)
+        assert "No statistics were written." in str(error.value)
 
 
 def _die(block):

@@ -155,6 +155,104 @@ def _pipeline_cfg(
 _LEVELS = {"kumquat": ["k0", "k1"], "zeppelin": ["z0", "z1", "z2"]}
 
 
+def _last_first_waves(fn, tasks, *, initializer, initargs, on_result, **_):
+    """In place of `run_in_waves`: in this process, the leaves handed back
+    last first, each as soon as it is done."""
+    initializer(*initargs)
+    for task in reversed(list(tasks)):
+        on_result(fn(task))
+
+
+def _dies(task):
+    import os
+
+    os._exit(1)
+
+
+class TestWaves:
+    """The leaves are aggregated in waves, each on new workers."""
+
+    def test_waves_of_two_give_what_one_worker_gives(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Six leaves over two workers in waves of two, so three waves."""
+        from cil_regionalization.pipelines import montecarlo
+
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        one = run_pipeline(
+            _pipeline_cfg(weights_dir, tree, tmp_path / "one", levels=_LEVELS)
+        )
+        monkeypatch.setattr(montecarlo, "LEAVES_PER_WORKER", 1)
+        waves = run_pipeline(
+            _pipeline_cfg(
+                weights_dir, tree, tmp_path / "waves", levels=_LEVELS, n_workers=2
+            )
+        )
+        pd.testing.assert_frame_equal(
+            waves.stats, one.stats, check_exact=False, rtol=1e-12
+        )
+
+    def test_a_worker_that_dies_stops_the_run_with_nothing_written(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """It hung on a multiprocessing.Pool, which waits for ever for the
+        leaf a dead worker held. The workers here are forked, so that they
+        see the leaf function this test puts in."""
+        import multiprocessing
+
+        from cil_regionalization.pipelines import montecarlo
+
+        if "fork" not in multiprocessing.get_all_start_methods():
+            pytest.skip("needs forked workers")
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        monkeypatch.setattr(montecarlo, "_process_leaf", _dies)
+        before = multiprocessing.get_start_method(allow_none=True)
+        multiprocessing.set_start_method("fork", force=True)
+        try:
+            with pytest.raises(RuntimeError) as error:
+                run_pipeline(
+                    _pipeline_cfg(weights_dir, tree, out, levels=_LEVELS, n_workers=2)
+                )
+        finally:
+            multiprocessing.set_start_method(before, force=True)
+        message = str(error.value)
+        # two workers, so the first two leaves of the plan were out
+        assert message.startswith(
+            "pipeline: a worker died with k0/z0 and k0/z1 in flight, exiting "
+            "with code 1"
+        ), message
+        assert message.endswith("The run stopped there. No statistics were written.")
+        assert not out.exists() or not any(out.rglob("*.parquet"))
+
+    def test_a_worker_that_dies_leaves_the_leaves_manifest_incomplete(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """With leaf files written, the message says what is left on disk."""
+        import multiprocessing
+
+        from cil_regionalization.pipelines import montecarlo
+
+        if "fork" not in multiprocessing.get_all_start_methods():
+            pytest.skip("needs forked workers")
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        monkeypatch.setattr(montecarlo, "_process_leaf", _dies)
+        before = multiprocessing.get_start_method(allow_none=True)
+        multiprocessing.set_start_method("fork", force=True)
+        try:
+            with pytest.raises(RuntimeError) as error:
+                run_pipeline(_leaves_cfg(weights_dir, tree, out, n_workers=2))
+        finally:
+            multiprocessing.set_start_method(before, force=True)
+        assert str(error.value).endswith(
+            "No statistics were written. The leaf files written so far are "
+            "kept, and the leaves manifest is left incomplete."
+        )
+        assert _leaves_manifest(out)["complete"] is False
+
+
 class TestEndToEnd:
     def test_generation_application_statistics(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
@@ -495,24 +593,10 @@ class TestRowOrder:
     ):
         """Both files come in the order of `_ordered`. The pool here
         runs in this process and hands the leaves back last first."""
-        import types
 
         from cil_regionalization.pipelines import montecarlo
 
-        class LastFirstPool:
-            def __init__(self, processes, initializer, initargs, maxtasksperchild):
-                initializer(*initargs)
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def imap_unordered(self, func, tasks, chunksize=1):
-                return [func(task) for task in reversed(list(tasks))]
-
-        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
+        monkeypatch.setattr(montecarlo, "run_in_waves", _last_first_waves)
         tree = tmp_path / "tree"
         _build_tree(tree, self._ORDER_LEVELS)
         raw = self._cfg(
@@ -1983,25 +2067,11 @@ class TestLeafFiles:
     ):
         """The pool here runs in this process and hands the leaves back
         last first."""
-        import types
 
         from cil_regionalization import leaves
         from cil_regionalization.pipelines import montecarlo
 
-        class LastFirstPool:
-            def __init__(self, processes, initializer, initargs, maxtasksperchild):
-                initializer(*initargs)
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def imap_unordered(self, func, tasks, chunksize=1):
-                return [func(task) for task in reversed(list(tasks))]
-
-        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
+        monkeypatch.setattr(montecarlo, "run_in_waves", _last_first_waves)
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         run_pipeline(_leaves_cfg(weights_dir, tree, out, n_workers=2))
@@ -2417,24 +2487,10 @@ class TestLeafFiles:
         """Not the first in plan order. The pool here runs in this
         process and hands each leaf back as it is asked for, last
         first, so the odd leaf is the third to arrive."""
-        import types
 
         from cil_regionalization.pipelines import montecarlo
 
-        class LastFirstPool:
-            def __init__(self, processes, initializer, initargs, maxtasksperchild):
-                initializer(*initargs)
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def imap_unordered(self, func, tasks, chunksize=1):
-                return (func(task) for task in reversed(list(tasks)))
-
-        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
+        monkeypatch.setattr(montecarlo, "run_in_waves", _last_first_waves)
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         path = tree / "k1" / "z0" / "damages.parquet"

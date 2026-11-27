@@ -75,7 +75,12 @@ time the parts, so a rename there has to be followed here.
 `test_bench_leaf.py` takes one leaf through `apply_weights` and
 `window_means` with the labels attached at three different points, and
 runs a process pool twice over the same leaves: once with 1.4 tasks a
-worker and once with every task halved.
+worker and once with every task halved. It also runs three waves of
+leaves, one a task, through the pool the aggregate stage used, which
+renewed each worker after 16 leaves, and through the waves of new
+workers that replaced it. The time a leaf takes moves from run to run by
+more than the two differ, so it prints the wall time not spent on
+leaves beside the wall.
 It prints the skipped regions and the missing targets once; the pool
 workers mute the warning the library logs for every leaf.
 
