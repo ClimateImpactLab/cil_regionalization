@@ -570,6 +570,25 @@ Read a weights table. The file is read once, and the hash is of
 the bytes the rows were parsed from. Raises if two rows match the
 same member.
 
+### `fetch_model_weights`
+
+```python
+fetch_model_weights(
+    rcp: str,
+    *,
+    record: str = MODEL_WEIGHTS_RECORD,
+    base_url: str | None = None,
+    cache_dir: str | Path | None = None,
+    refresh: bool = False,
+)
+```
+
+The published climate model weights of ``rcp``, as
+`read_model_weights` reads them, from the file
+``<rcp>_SMME_weights.tsv`` of their Zenodo record. The download is
+checked against the md5 the record declares and cached with it, and
+a cached copy that no longer matches raises.
+
 ### `ModelWeights`
 
 ```python
@@ -622,6 +641,43 @@ table row, its weight and its number of leaves.
 ``unmatched_rows`` holds the rows no member matched with their
 weights, so the two together are the whole table. Raises if a
 member has no row.
+
+### `regroup`
+
+```python
+regroup(
+    reduced: pd.DataFrame,
+    *,
+    id_fields: Sequence[str],
+    by: Sequence[str],
+    kind: Literal['extensive', 'intensive'],
+    value_col: str,
+    summation: str,
+    basis: pd.DataFrame | None = None,
+) -> pd.DataFrame
+```
+
+``reduced`` with its targets grouped by the id fields ``by``, one
+value a group and every other column, so that a country is the sum
+or the mean of its states in each window and sample member.
+
+"extensive" sums the values, and needs no ``basis``. "intensive"
+takes the mean weighted by each target's basis, the frame
+`target_basis` gives, over the targets with a value. A group with no
+value is NaN. ``summation`` is "fast" or "exact", as for the
+statistics. Raises if ``by`` is not among ``id_fields``, or a row's
+target has no basis.
+
+### `target_basis`
+
+```python
+target_basis(artifact: WeightsArtifact, weight: str) -> pd.DataFrame
+```
+
+Each target's weight basis, the sum of the raw column of
+``weight`` over its rows, its population or its crop area, as the id
+fields and a column 'basis'. A row with no basis counts as none.
+Raises if the artifact has no raw column for the weight.
 
 ### `UnweightedModelWeightsWarning`
 

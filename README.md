@@ -221,18 +221,15 @@ results from these projections.
 
 The weight files are published as their own Zenodo record
 (doi:10.5281/zenodo.22003542), one per RCP (`rcp45_SMME_weights.tsv`,
-`rcp85_SMME_weights.tsv`; columns `quantile`, `model`, `weight`). To
-apply them, normalize the model names and merge the weight onto every
-draw of each model, so the weight repeats across batches:
+`rcp85_SMME_weights.tsv`; columns `quantile`, `model`, `weight`).
+`fetch_model_weights` downloads the table of an rcp from that record,
+checks it against the md5 the record declares, and caches it, so every
+product reads the same table. `attach` gives every draw the weight of
+its model, so the weight repeats across batches:
 
 ```python
-w = pd.read_csv(
-    "https://zenodo.org/records/22003542/files/rcp85_SMME_weights.tsv?download=1",
-    sep="\t",
-)[["model", "weight"]]
-w["key"] = w["model"].str.replace("*", "", regex=False).str.lower()
-draws["key"] = draws["gcm"].str.replace("surrogate_", "", regex=False).str.lower()
-draws = draws.merge(w[["key", "weight"]], on="key").drop(columns="key")
+weights = cilreg.fetch_model_weights("rcp85")
+draws["weight"] = weights.attach(draws["gcm"])
 stats = cilreg.summarize_samples(
     draws,
     sample_dims=["batch", "gcm"],
@@ -332,6 +329,41 @@ Files made before v0.6.0 had no such options. They are reproduced by
 with `"fast"`. Those without weights took their quantiles from pandas,
 whose arithmetic for the same interpolation differs from numpy's in
 the last bit of about one quantile in a hundred.
+
+## Country values from state values
+
+A country value is not a statistic of its states' statistics, since a
+95th percentile of a sum is not the sum of 95th percentiles. `regroup`
+takes a reduced frame, one value a target, window and draw, as a
+pipeline run writes it with `output.write_reduced = true`, to coarser
+targets, and the statistics are pooled after.
+
+```python
+reduced = pd.read_parquet("mortality_adm1.reduced.parquet")
+country = cilreg.regroup(
+    reduced,
+    id_fields=["ISO", "ID_1"],
+    by=["ISO"],
+    kind="extensive",
+    value_col="rebased",
+    summation="exact",
+)
+stats = cilreg.pooled_statistics(
+    country.assign(weight=weights.attach(country["gcm"])),
+    sample_dims=["batch", "gcm"],
+    value_col="rebased",
+    quantiles=[0.05, 0.5, 0.95],
+    weight_col="weight",
+    quantile_method="lower_step",
+    summation="exact",
+)
+```
+
+`"extensive"` sums the states. `"intensive"` takes the mean weighted
+by each state's basis, which `target_basis(artifact, "croparea")`
+gives from the weights the states were aggregated with, the crop area
+or the population of each. The regroup is exact when every impact
+region lies in one country, as they do.
 
 ## Warming levels
 

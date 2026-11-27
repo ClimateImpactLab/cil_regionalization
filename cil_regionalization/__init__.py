@@ -69,7 +69,12 @@ except ImportError:
 from cil_regionalization.apply import WeightsArtifact, apply_weights
 from cil_regionalization.backends.base import WeightsResult
 from cil_regionalization.config import Config, SourceUnitPolicies, load_config
-from cil_regionalization.fetch import clear_cache, fetch_weights, list_cached
+from cil_regionalization.fetch import (
+    clear_cache,
+    fetch_model_weights,
+    fetch_weights,
+    list_cached,
+)
 from cil_regionalization.generate import SumToOneError, generate_weights
 from cil_regionalization.gradients import (
     aggregate_gradient,
@@ -78,6 +83,7 @@ from cil_regionalization.gradients import (
     window_gradient,
 )
 from cil_regionalization.model_weights import ModelWeights, read_model_weights
+from cil_regionalization.regroup import regroup, target_basis
 from cil_regionalization.netcdf_io import read_netcdf_grid, read_netcdf_leaf
 from cil_regionalization.schema import GRID_CELLS, OutputSchema, SourceUnits
 from cil_regionalization.stats import (
@@ -116,6 +122,7 @@ __all__ = [
     "assign_warming_levels",
     "clear_cache",
     "delta_method",
+    "fetch_model_weights",
     "fetch_weights",
     "generate_weights",
     "list_cached",
@@ -125,9 +132,11 @@ __all__ = [
     "read_gmst",
     "read_gradient_leaf",
     "read_model_weights",
+    "regroup",
     "read_netcdf_grid",
     "read_netcdf_leaf",
     "summarize_samples",
+    "target_basis",
     "window_gradient",
     "window_means",
 ]

@@ -353,6 +353,59 @@ def fetch_weights(
     return WeightsArtifact.load(target)
 
 
+# the published SMME climate model weights, doi:10.5281/zenodo.22003542
+MODEL_WEIGHTS_RECORD = "22003542"
+
+
+def fetch_model_weights(
+    rcp: str,
+    *,
+    record: str = MODEL_WEIGHTS_RECORD,
+    base_url: str | None = None,
+    cache_dir: str | Path | None = None,
+    refresh: bool = False,
+):
+    """The published climate model weights of ``rcp``, as
+    `read_model_weights` reads them, from the file
+    ``<rcp>_SMME_weights.tsv`` of their Zenodo record. The download is
+    checked against the md5 the record declares and cached with it, and
+    a cached copy that no longer matches raises."""
+    from cil_regionalization.model_weights import read_model_weights
+
+    entry = RegistryEntry(
+        name="smme", record=record, base_url=base_url or DEFAULT_BASE_URL
+    )
+    name = f"{rcp}_SMME_weights.tsv"
+    cache = Path(cache_dir) if cache_dir is not None else default_cache_dir()
+    target = _artifact_cache_dir(entry, cache)
+    path, declared = target / name, target / f"{name}.md5"
+    if not refresh and path.exists() and declared.exists():
+        if _md5(path) != declared.read_text().strip():
+            raise ChecksumMismatchError(
+                f"cached model weights at {path} fail verification against "
+                f"the md5 their record declared. Fetch them again with "
+                f"refresh=True."
+            )
+        return read_model_weights(path)
+    files = _record_files(entry)
+    if name not in files:
+        tables = sorted(k for k in files if k.endswith("_SMME_weights.tsv"))
+        raise FetchError(
+            f"record {entry.record_id} has no file {name!r} (its weight "
+            f"tables: {tables})"
+        )
+    meta = files[name]
+    partial = target / f".partial.{name}"
+    try:
+        _download(meta["links"]["self"], partial, expected_size=meta.get("size"))
+        _verify_transport(partial, meta)
+        declared.write_text(str(meta["checksum"])[4:] + "\n")
+        partial.replace(path)
+    finally:
+        partial.unlink(missing_ok=True)
+    return read_model_weights(path)
+
+
 def list_cached(cache_dir: str | Path | None = None) -> list[dict[str, Any]]:
     """Cached artifacts: name, record, path, and size in bytes."""
     cache = Path(cache_dir) if cache_dir is not None else default_cache_dir()

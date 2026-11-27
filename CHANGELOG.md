@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+New: `fetch_model_weights(rcp)` gives the published climate model
+weights of an rcp from their Zenodo record, checked and cached, so
+products stop reading the table from paths of their own. New:
+`regroup` takes a reduced frame to coarser targets, a sum or a mean
+weighted by `target_basis`, before the statistics are pooled, as the
+country files are made from the states.
+
 **Where the statistics carry their counts they carry two, the samples
 behind a row in `n_members` and the climate models among them in
 `n_models`.** A warming level bin of four models over fifteen batches

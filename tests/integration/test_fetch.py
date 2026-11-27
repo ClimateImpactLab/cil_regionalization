@@ -354,3 +354,75 @@ class TestCache:
         assert [i["name"] for i in list_cached(cache)] == ["second"]
         assert clear_cache(cache) == 1
         assert list_cached(cache) == []
+
+
+class TestFetchModelWeights:
+    """`fetch_model_weights` takes the climate model weights of an rcp
+    from their published record, as every caller then reads the same
+    table."""
+
+    TSV = (
+        "quantile\tmodel\tweight\n"
+        "q0\tccsm4\t0.25\n"
+        "q1\tmiroc5*\t0.5\n"
+        "q2\tgfdl-cm3_89\t0.25\n"
+    ).encode()
+
+    @pytest.fixture()
+    def smme(self):
+        server = _Server({"rcp85_SMME_weights.tsv": self.TSV, "README.md": b"x"})
+        yield server
+        server.stop()
+
+    def test_it_reads_the_table_of_the_rcp_and_matches_the_names(self, smme, tmp_path):
+        from cil_regionalization.fetch import fetch_model_weights
+
+        weights = fetch_model_weights(
+            "rcp85", record=RECORD_ID, base_url=smme.base_url, cache_dir=tmp_path
+        )
+        attached = weights.attach(
+            pd.Series(["CCSM4", "MIROC5", "surrogate_GFDL-CM3_89"])
+        )
+        assert attached.tolist() == [0.25, 0.5, 0.25]
+        assert weights.sha256 == hashlib.sha256(self.TSV).hexdigest()
+
+    def test_a_second_call_reads_the_cache(self, smme, tmp_path):
+        from cil_regionalization.fetch import fetch_model_weights
+
+        options = dict(record=RECORD_ID, base_url=smme.base_url, cache_dir=tmp_path)
+        first = fetch_model_weights("rcp85", **options)
+        smme.stop()
+        again = fetch_model_weights("rcp85", **options)
+        assert again.weights == first.weights
+
+    def test_a_cached_table_that_changed_is_refused(self, smme, tmp_path):
+        from cil_regionalization.fetch import fetch_model_weights
+
+        options = dict(record=RECORD_ID, base_url=smme.base_url, cache_dir=tmp_path)
+        fetch_model_weights("rcp85", **options)
+        (cached,) = tmp_path.rglob("rcp85_SMME_weights.tsv")
+        cached.write_bytes(self.TSV.replace(b"0.25", b"0.35", 1))
+        with pytest.raises(ChecksumMismatchError, match="again with refresh=True"):
+            fetch_model_weights("rcp85", **options)
+        again = fetch_model_weights("rcp85", refresh=True, **options)
+        assert again.weights == (0.25, 0.5, 0.25)
+
+    def test_a_download_that_does_not_match_the_record_is_refused(self, smme, tmp_path):
+        from cil_regionalization.fetch import fetch_model_weights
+
+        smme.declared_md5["rcp85_SMME_weights.tsv"] = "0" * 32
+        with pytest.raises(ChecksumMismatchError, match="does not match the record"):
+            fetch_model_weights(
+                "rcp85", record=RECORD_ID, base_url=smme.base_url, cache_dir=tmp_path
+            )
+        assert not list(tmp_path.rglob("rcp85_SMME_weights.tsv"))
+
+    def test_an_rcp_the_record_has_no_table_of_is_refused(self, smme, tmp_path):
+        from cil_regionalization.fetch import fetch_model_weights
+
+        with pytest.raises(
+            FetchError, match=r"no file 'rcp45_SMME_weights.tsv'.*'rcp85"
+        ):
+            fetch_model_weights(
+                "rcp45", record=RECORD_ID, base_url=smme.base_url, cache_dir=tmp_path
+            )

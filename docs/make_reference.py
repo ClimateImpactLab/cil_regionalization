@@ -48,7 +48,10 @@ GROUPS = {
         "pooled_statistics",
         "mixture_quantile",
         "read_model_weights",
+        "fetch_model_weights",
         "ModelWeights",
+        "regroup",
+        "target_basis",
         "UnweightedModelWeightsWarning",
     ],
     "Warming levels": [
