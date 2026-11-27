@@ -450,6 +450,16 @@ def _plain_labels(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _reduce_block(block: tuple[int, int]) -> dict:
+    """The statistics of one block of targets, as `_pool_block` gives
+    them. A refusal names a target by its id fields."""
+    try:
+        return _pool_block(block)
+    except GroupError as error:
+        # the frames name a target by its ordinal, the reader by its id
+        raise error.naming(_by_id(_STATE["request"], error.group)) from None
+
+
+def _pool_block(block: tuple[int, int]) -> dict:
     request: ReduceRequest = _STATE["request"]
     first, stop = block
     root = Path(request.leaves_root)
@@ -553,22 +563,18 @@ def _reduce_block(block: tuple[int, int]) -> dict:
     with warnings.catch_warnings():
         # the parent says it once
         warnings.simplefilter("ignore", UnweightedModelWeightsWarning)
-        try:
-            stats = pooled_statistics(
-                combined,
-                sample_dims=list(request.sample_dims)
-                + ([request.time_col] if pooled else []),
-                value_col=request.value_col,
-                quantiles=list(request.quantiles),
-                include_mean=request.include_mean,
-                weight_col="model_weight" if weighted else None,
-                include_n_members=request.include_n_members,
-                quantile_method=request.quantile_method,
-                summation=request.summation,
-            )
-        except GroupError as error:
-            # the frame names a target by its ordinal, the reader by its id
-            raise error.naming(_by_id(request, error.group)) from None
+        stats = pooled_statistics(
+            combined,
+            sample_dims=list(request.sample_dims)
+            + ([request.time_col] if pooled else []),
+            value_col=request.value_col,
+            quantiles=list(request.quantiles),
+            include_mean=request.include_mean,
+            weight_col="model_weight" if weighted else None,
+            include_n_members=request.include_n_members,
+            quantile_method=request.quantile_method,
+            summation=request.summation,
+        )
     del combined
     stats = _plain_labels(stats)
     if count_members:

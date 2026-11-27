@@ -399,6 +399,7 @@ class TestParity:
             missing=missing,
             time_reduction=time_reduction,
         )
+        expected = _by_hand(joined, request, weighted)
         if (time_reduction, methods, weighted, missing) == (
             "per_year",
             ("lower_step", "exact"),
@@ -406,15 +407,8 @@ class TestParity:
             True,
         ):
             # In 2051 T1 has one member of positive weight, so the step
-            # has no member below any q and gives -inf, which "exact"
-            # refuses. Both sides have to.
-            with pytest.raises(ValueError, match="statistics are infinite"):
-                _by_hand(joined, request, weighted)
-            for backend in (_backend(), _one_group_a_block(request)):
-                with pytest.raises(ValueError, match="statistics are infinite"):
-                    backend.run(request)
-            return
-        expected = _by_hand(joined, request, weighted)
+            # has no member below any q and gives -inf, under either sum
+            assert (expected["value"] == -np.inf).any()
         # windows, bands, statistics: four targets in both windows, T4 in one
         if time_reduction == "per_year":
             # five years of four targets, and three of T4, in both bands
@@ -444,10 +438,8 @@ class TestParity:
         self, tmp_path, methods, weighted, n_members, time_reduction, special
     ):
         """A group whose members are all missing is a NaN row without
-        weights and an error with them. An infinite statistic is
-        returned under "lower_step" with the fast sum and refused under
-        "inverted_cdf" or "exact". Under "linear" the quantile next to
-        the infinity has no number and is refused."""
+        weights and an error with them. An infinite member is refused
+        under every quantile method and sum."""
         request, joined = build_request(
             tmp_path,
             weighted=weighted,
@@ -459,10 +451,7 @@ class TestParity:
         assert_same_statistics(
             _one_group_a_block(request), _one_group_a_block(request), request
         )
-        raises = (special == "all_nan" and weighted) or (
-            special == "infinite"
-            and (methods[0] in ("inverted_cdf", "linear") or methods[1] == "exact")
-        )
+        raises = (special == "all_nan" and weighted) or special == "infinite"
         if raises:
             for backend in (_backend(), _one_group_a_block(request)):
                 with pytest.raises(ValueError):
@@ -1157,14 +1146,11 @@ class TestRefusalsNameTheTarget:
         assert "target_ordinal" not in message
 
     @pytest.mark.parametrize(
-        "methods, words",
-        [
-            (("inverted_cdf", "fast"), "statistics are infinite"),
-            (("linear", "fast"), "interpolate next to an infinite member"),
-        ],
-        ids=["infinite", "interpolation"],
+        "methods",
+        [("inverted_cdf", "fast"), ("linear", "fast"), ("lower_step", "fast")],
+        ids=["inverted_cdf", "linear", "lower_step"],
     )
-    def test_an_infinity(self, tmp_path, methods, words):
+    def test_an_infinity(self, tmp_path, methods):
         request, _ = build_request(
             tmp_path,
             weighted=False,
@@ -1172,7 +1158,7 @@ class TestRefusalsNameTheTarget:
             special="infinite",
             methods=methods,
         )
-        with pytest.raises(ValueError, match=words) as refused:
+        with pytest.raises(ValueError, match="are infinite") as refused:
             _one_group_a_block(request, n_workers=2).run(request)
         message = str(refused.value)
         assert "'gid': 'T1'" in message

@@ -439,7 +439,7 @@ class TestLinear:
     def test_a_quantile_next_to_an_infinity_is_refused(self):
         """numpy's interpolation gives NaN there, even at the median of
         1, 2 and an infinity, and a NaN would read as a group with no
-        value. A group with no value still gives NaN."""
+        value. The infinite member is refused before it is reached."""
         frame = pd.concat(
             [
                 _members([1.0, 2.0, np.inf], target="a"),
@@ -448,8 +448,7 @@ class TestLinear:
         )
         with pytest.raises(
             ValueError,
-            match=r"1 linear quantiles interpolate next to an infinite member and "
-            r"have no value \(first: q50 of \{'target': 'a'\}\)",
+            match=r"1 values of 'value' are infinite \(first: \{'target': 'a'",
         ):
             pooled_statistics(
                 frame,
@@ -467,9 +466,6 @@ class TestLinear:
             summation="fast",
         )
         assert got["value"].isna().all()
-        # an infinity numpy does reach is returned, as with the fast sum
-        low = _pooled(_members([-np.inf, 1.0, 2.0]), [0.25], include_mean=False)
-        assert low == {"q25": -np.inf}
 
 
 class TestLowerStep:
@@ -564,15 +560,13 @@ class TestLowerStep:
         )
         assert got == {"mean": 2.5, "q95": 3.0}
 
-    def test_minus_infinity_is_returned_with_the_fast_sum_and_refused_with_exact(
-        self,
-    ):
-        """It is what the tool returned. Asked for with exact sums it is
-        an infinite statistic like any other."""
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
+    def test_minus_infinity_is_returned_under_either_sum(self, summation):
+        """It is what the tool returned, at or below 1/n with equal
+        weights, here 0.05 of three members."""
         frame = _members([1.0, 2.0, 3.0])
-        assert _pooled(frame, [0.05], quantile_method="lower_step")["q05"] == -np.inf
-        with pytest.raises(ValueError, match=r"statistics are infinite \(q05: 1"):
-            _pooled(frame, [0.05], quantile_method="lower_step", summation="exact")
+        got = _pooled(frame, [0.05], quantile_method="lower_step", summation=summation)
+        assert got["q05"] == -np.inf
 
     def test_a_nullable_value_column_gives_floats(self):
         frame = _members([1.0, 2.0, 3.0, 4.0])
@@ -917,58 +911,46 @@ class TestExactSummation:
 
 
 class TestInfiniteStatistics:
-    """Under "inverted_cdf" or "exact" an infinite statistic is
-    refused. An infinity in the data that reaches no statistic is not
-    an error."""
+    """An infinite member value is refused under every quantile method
+    and sum, and so is a statistic that comes out infinite, other than
+    the -inf of "lower_step" at or below its first step."""
 
     SETTINGS = [
-        {"summation": "exact"},
-        {"quantile_method": "inverted_cdf"},
-        {"quantile_method": "inverted_cdf", "summation": "exact"},
+        {"quantile_method": q, "summation": s}
+        for q in ("linear", "lower_step", "inverted_cdf")
+        for s in ("fast", "exact")
     ]
 
     @pytest.mark.parametrize("options", SETTINGS)
-    @pytest.mark.parametrize("values", [[np.inf, 1.0, 2.0], [-np.inf, 1.0, 2.0]])
+    @pytest.mark.parametrize("values", [[np.inf, 1.0, 2.0], [-np.inf, 1.0, -np.inf]])
     @pytest.mark.parametrize("weights", [None, [0.5, 0.25, 0.25]])
-    def test_an_infinite_mean_is_refused(self, options, values, weights):
+    def test_an_infinite_member_is_refused(self, options, values, weights):
+        """Failed under "lower_step" with the fast sum, which returned
+        the infinity, and with infinities of both signs, whose mean is
+        NaN."""
+        if weights is not None and options["quantile_method"] == "linear":
+            pytest.skip("linear has no weighted form")
         frame = _members(values, weights)
-        with pytest.raises(ValueError, match=r"1 statistics are infinite \(mean: 1"):
-            _pooled(frame, [], **options)
-        # "linear" and "lower_step" with the fast sum return it
-        assert np.isinf(_pooled(frame, [])["mean"])
+        with pytest.raises(ValueError, match=r"values of 'value' are infinite"):
+            _pooled(frame, [0.5], **options)
 
-    @pytest.mark.parametrize("options", SETTINGS)
-    def test_an_infinite_member_a_quantile_selects_is_refused(self, options):
-        """No sum is taken here. The largest member is infinite and
-        q100 returns it under "inverted_cdf". Under "linear" numpy's
-        interpolation next to it gives no number, and that is refused
-        whatever the sum."""
-        frame = _members([1.0, 2.0, np.inf])
-        message = (
-            r"statistics are infinite \(q100: 1"
-            if options.get("quantile_method") == "inverted_cdf"
-            else "interpolate next to an infinite member"
-        )
-        with pytest.raises(ValueError, match=message):
-            _pooled(frame, [0.5, 1.0], include_mean=False, **options)
-
-    def test_an_infinity_that_reaches_no_statistic_is_let_through(self):
-        """Cannot go red by reverting, because without the check
-        nothing is refused. It failed with the check put on the member
-        values instead of on the statistics."""
-        got = _pooled(
-            _members([1.0, 2.0, 3.0, np.inf]),
-            [0.5],
-            quantile_method="inverted_cdf",
-            summation="exact",
-            include_mean=False,
-        )
-        assert got == {"q50": 2.0}
+    def test_an_infinite_member_no_statistic_reaches_is_refused(self):
+        """Failed when only the statistics were checked, since the
+        median of 1, 2, 3 and an infinity is 2."""
+        with pytest.raises(ValueError, match=r"1 values of 'value' are infinite"):
+            _pooled(
+                _members([1.0, 2.0, 3.0, np.inf]),
+                [0.5],
+                quantile_method="inverted_cdf",
+                summation="exact",
+                include_mean=False,
+            )
 
     def test_an_infinity_in_a_year_no_window_covers_is_let_through(self):
-        """Data that never enters a result must not fail the run. Like
-        the test above this cannot go red by reverting. It failed with
-        the check put on every row of the value column."""
+        """Data that never enters a result must not fail the run. This
+        cannot go red by reverting, because without the check nothing is
+        refused. It failed with the check put on every row of the value
+        column."""
         frame = _timed()
         frame.loc[frame["year"] == 2059, "value"] = np.inf
         out = summarize_samples(
@@ -981,53 +963,41 @@ class TestInfiniteStatistics:
             summation="exact",
         )
         assert np.isfinite(out["value"]).all()
+        means = window_means(
+            frame, time_col="year", windows=[(2040, 2049)], summation="fast"
+        )
+        assert np.isfinite(means["value"]).all()
 
-    def test_the_window_mean_passes_an_infinity_on(self):
-        """`window_means` returns no statistic. With an infinite year
-        the member's mean is infinite under either summation, and it is
-        the statistics over the members that refuse it."""
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
+    def test_the_window_mean_refuses_an_infinity(self, summation):
+        """Failed with the member's mean passed on as an infinity."""
         frame = _timed()
         frame.loc[7, "value"] = -np.inf
-        kwargs = dict(time_col="year", windows=[(2040, 2059)])
-        exact = window_means(frame, summation="exact", **kwargs)
-        fast = window_means(frame, summation="fast", **kwargs)
-        assert (exact["value"] == -np.inf).sum() == 1
-        assert ((exact["value"] == -np.inf) == (fast["value"] == -np.inf)).all()
-        with pytest.raises(ValueError, match=r"statistics are infinite \(mean: 1"):
-            summarize_samples(
-                frame,
-                sample_dims=["draw"],
-                time_col="year",
-                window=(2040, 2059),
-                summation="exact",
-                quantile_method="linear",
+        with pytest.raises(ValueError, match=r"1 values of 'value' are infinite"):
+            window_means(
+                frame, time_col="year", windows=[(2040, 2059)], summation=summation
             )
 
-    def test_infinities_of_both_signs_have_no_sum(self):
-        """Their sum is not a number. The exact sum raises where numpy
-        returns NaN, which would pass for a group with no value."""
-        frame = _members([np.inf, 1.0, -np.inf])
-        with pytest.raises(ValueError, match="infinities of both signs"):
-            _pooled(frame, [], summation="exact")
-        with np.errstate(invalid="ignore"):
-            assert np.isnan(_pooled(frame, [])["mean"])
-
-    def test_an_overflow_is_refused(self):
+    def test_an_overflow_is_refused_under_either_sum(self):
         """Finite values whose sum, or whose product with the weight,
-        passes the largest float."""
+        passes the largest float. Failed under the fast sum, which
+        returned the infinity."""
         with pytest.raises(ValueError, match="overflows the largest float"):
             _pooled(_members([1e308, 1e308]), [], summation="exact")
-        with pytest.raises(ValueError, match="statistics are infinite"):
+        with pytest.raises(ValueError, match="arithmetic passed the largest float"):
             _pooled(_members([1e308, 1.0], [10.0, 1.0]), [], summation="exact")
-        assert _pooled(_members([1e308, 1e308]), []) == {"mean": np.inf}
+        with pytest.raises(ValueError, match=r"statistics are infinite \(mean: 1"):
+            _pooled(_members([1e308, 1e308]), [])
 
-    def test_the_minus_infinity_of_the_step_is_refused_too(self):
-        """ "lower_step" returns -inf below the first
-        step. Asked for together with exact sums it is an infinite
-        statistic like any other."""
+    @pytest.mark.parametrize("summation", ["fast", "exact"])
+    def test_the_minus_infinity_of_the_step_is_kept(self, summation):
+        """By its definition "lower_step" is -inf at or below its first
+        step, here the first member's share of 0.6. Failed under the
+        exact sum, which refused it."""
         frame = _members([1.0, 2.0, 3.0], [0.6, 0.2, 0.2])
-        with pytest.raises(ValueError, match=r"statistics are infinite \(q05: 1"):
-            _pooled(frame, [0.05], summation="exact")
+        got = _pooled(frame, [0.05, 0.6, 0.65], summation=summation)
+        assert got["q05"] == -np.inf and got["q60"] == -np.inf
+        assert got["q65"] == 1.0 and np.isfinite(got["mean"])
 
     def test_nan_is_left_alone(self):
         """A group with no value has no statistic, under any setting.
@@ -1037,7 +1007,6 @@ class TestInfiniteStatistics:
             [_members([1.0, 2.0], target="a"), _members([np.nan, np.nan], target="b")]
         )
         for options in self.SETTINGS:
-            options = {"quantile_method": "linear", "summation": "fast", **options}
             out = pooled_statistics(
                 frame, sample_dims=["draw"], quantiles=[0.5], **options
             )
@@ -1053,13 +1022,13 @@ class TestInfiniteStatistics:
                 frame,
                 sample_dims=["draw"],
                 quantiles=[1.0],
-                summation="exact",
-                quantile_method="inverted_cdf",
+                summation="fast",
+                quantile_method="lower_step",
             )
         message = str(error.value)
-        assert "2 statistics are infinite (mean: 1, q100: 1" in message
+        assert "1 values of 'value' are infinite" in message
         assert "'target': 'b'" in message
-        assert "summation='exact'" in message
+        assert "summation" not in message
 
 
 class TestBothHalves:

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**An infinite member value is refused under every quantile method and
+`summation`, and a statistic is refused when it comes out infinite,
+other than the `-inf` of `"lower_step"` at or below its first step,
+which is now written under either sum.** Before, `summation="exact"`
+and `"inverted_cdf"` refused every infinite statistic, the step's
+`-inf` among them, while `"linear"` and `"lower_step"` with the fast
+sum returned infinities that came from the data. `summation` now says
+how a mean is summed and nothing else. `window_means` refuses an
+infinite value in a window, where it passed an infinite mean on.
+
 **Every row `apply_weights` returns carries `weight_share`, the share
 of its target's weight basis behind the value, and the targets the
 weights have that are not in the output are listed with their reason

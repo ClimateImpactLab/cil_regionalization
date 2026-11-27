@@ -282,9 +282,7 @@ the computation:
 - `"linear"` interpolates between members. It is computed by numpy,
   so it is `numpy.quantile(method="linear")` and xarray's `.quantile`
   to the last bit. It has no weighted form and is refused with
-  weights. Where numpy's interpolation meets an infinite member it
-  gives NaN, even for a median of 1, 2 and an infinity, and such a
-  quantile is refused rather than written as a group with no value.
+  weights.
 - `"lower_step"` is the step of the historical extraction tool: the
   member one below the one whose cumulative weight share reaches q.
   Without weights every member counts the same, which is what that
@@ -317,8 +315,17 @@ fourth, and the fourth.
 Neither option has a default. `summarize_samples` and
 `pooled_statistics` take both, `window_means` takes `summation`, and a
 pipeline config sets them under `[stats]`. The manifest records both.
-Under `"inverted_cdf"` or `"exact"` a statistic that comes out
-infinite raises instead of being returned; NaN does not.
+`summation` says how a mean is summed and decides nothing else.
+
+An infinite member value is refused under every quantile method and
+sum, naming where it is, because an infinity in impact data means
+something upstream broke. A value in a year no window covers is not
+looked at. The one infinity a statistic can have is the `-inf` of
+`"lower_step"` at or below its first step, which it is by definition:
+with equal weights a quantile at or below 1/n of the members. It is
+written, and the member count beside it says why. Any other infinite
+statistic is the arithmetic passing the largest float, and is refused.
+A NaN is a group with no value, and is written.
 
 Files made before v0.6.0 had no such options. They are reproduced by
 `"lower_step"` if the run had weights and `"linear"` if it had none,

@@ -460,8 +460,8 @@ cumulative weight share reaches q, so never ``-inf``.
 ``summation`` is "fast" or "exact", and has no default. "fast" is
 the vectorised sum, whose last bits depend on the order of the
 rows. "exact" takes the means from exactly rounded sums, whatever
-the order. Under "inverted_cdf" or "exact" an infinite statistic
-raises.
+the order. An infinite member value raises, and so does a statistic
+that comes out infinite other than the step's ``-inf``.
 
 The statistics are float64 whatever the dtype of ``value_col``. A
 column of another dtype is widened before the window mean, and a
@@ -500,8 +500,7 @@ window covers.
 
 ``summation`` has no default. "exact" takes each mean from an
 exactly rounded sum, and "fast" is the pandas mean. An infinite
-value gives an infinite mean either way, and it is the statistics
-that refuse it.
+value in a window raises.
 
 The mean is float64 whatever the dtype of ``value_col``. A float32
 column is widened before the mean and not after, because a float32

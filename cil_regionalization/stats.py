@@ -31,8 +31,9 @@ sum of pandas and numpy, whose last bits depend on the order the rows
 arrive in. "exact" is the exactly rounded sum, which does not depend
 on it.
 
-Neither has a default. Under "inverted_cdf" or "exact" an infinite
-statistic is an error.
+Neither has a default. An infinite member value is refused under every
+method and summation. The one infinity a statistic can have is the
+``-inf`` of "lower_step" at or below its first step.
 """
 
 from __future__ import annotations
@@ -199,8 +200,8 @@ def summarize_samples(
     ``summation`` is "fast" or "exact", and has no default. "fast" is
     the vectorised sum, whose last bits depend on the order of the
     rows. "exact" takes the means from exactly rounded sums, whatever
-    the order. Under "inverted_cdf" or "exact" an infinite statistic
-    raises.
+    the order. An infinite member value raises, and so does a statistic
+    that comes out infinite other than the step's ``-inf``.
 
     The statistics are float64 whatever the dtype of ``value_col``. A
     column of another dtype is widened before the window mean, and a
@@ -263,6 +264,7 @@ def summarize_samples(
             f"window {window} on {time_col!r} selects no rows "
             f"(data spans {data[time_col].min()} to {data[time_col].max()})"
         )
+    _refuse_infinite_values(in_window, value_col)
 
     # A constant helper key lets the same groupby code serve inputs whose
     # every non-value column is a sample or time dimension.
@@ -322,7 +324,7 @@ def summarize_samples(
     out = out[_output_columns(identity, value_col, include_n_members)]
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
-    _refuse_infinite_statistics(out, value_col, quantile_method, summation)
+    _refuse_infinite_statistics(out, value_col, quantile_method)
     return out.reset_index(drop=True)
 
 
@@ -511,9 +513,6 @@ def _statistic_pieces(
             table = _equal_weight_quantiles(floats, gid, n_groups, quantiles)
         else:
             table = _linear_quantiles(floats, gid, n_groups, quantiles)
-            _refuse_nan_interpolation(
-                table, floats, gid, n_groups, keys[identity], quantiles
-            )
         stats += [
             (_quantile_label(q), lambda i=i: by_group(table[i]))
             for i, q in enumerate(quantiles)
@@ -778,38 +777,8 @@ def _linear_quantiles(
     return out
 
 
-def _refuse_nan_interpolation(
-    table: np.ndarray,
-    values: np.ndarray,
-    gid: np.ndarray,
-    n_groups: int,
-    keys: pd.DataFrame,
-    quantiles: Sequence[float],
-) -> None:
-    """Raise where a linear quantile came out NaN for a group that has
-    values. numpy's interpolation gives NaN when a member next to the
-    point it interpolates at is infinite, where pandas gave the
-    neighbour or an infinity, and a NaN would read as a group with no
-    value."""
-    counts = np.bincount(gid[~np.isnan(values)], minlength=n_groups)
-    bad = np.isnan(table) & (counts > 0)
-    if not bad.any():
-        return
-    row, group = np.argwhere(bad)[0]
-    raise GroupError(
-        f"{int(bad.sum())} linear quantiles interpolate next to an infinite "
-        f"member and have no value (first: {_quantile_label(quantiles[row])} "
-        f"of ",
-        keys.iloc[group].to_dict(),
-        "). An infinity in impact data means something upstream of the "
-        "statistics broke.",
-    )
-
-
 def _fsum(values: list[float]) -> float:
-    """The exactly rounded sum. An infinity sums to itself and is left
-    to `_refuse_infinite_statistics`. Infinities of both signs have no
-    such sum and raise here, and so do finite values whose sum passes
+    """The exactly rounded sum of finite values. Raises if it passes
     the largest float."""
     try:
         return math.fsum(values)
@@ -817,23 +786,22 @@ def _fsum(values: list[float]) -> float:
         raise ValueError(
             "summation='exact': a sum overflows the largest float"
         ) from None
-    except ValueError:
-        raise ValueError(
-            "summation='exact': a sum holds infinities of both signs, so "
-            "it has no value; something upstream of the statistics broke"
-        ) from None
 
 
 def _refuse_infinite_statistics(
-    out: pd.DataFrame, value_col: str, quantile_method: str, summation: str
+    out: pd.DataFrame, value_col: str, quantile_method: str
 ) -> None:
-    """Raise if a statistic is infinite under "inverted_cdf" or
-    "exact". NaN is left alone because a group with no value has no
-    statistic. "linear" and "lower_step" with the fast sum return
-    what comes out."""
-    if quantile_method != "inverted_cdf" and summation == "fast":
-        return
-    infinite = np.isinf(_float_values(out[value_col]))
+    """Raise if a statistic is infinite, other than a "lower_step"
+    quantile at or below its first step, which is ``-inf`` by its
+    definition. The members are finite by then, so any other infinity
+    is the arithmetic passing the largest float. NaN is left alone,
+    because a group with no value has no statistic."""
+    values = _float_values(out[value_col])
+    infinite = np.isinf(values)
+    if quantile_method == "lower_step":
+        infinite &= ~(
+            (out[_STATISTIC_COLUMN] != "mean").to_numpy() & (values == -np.inf)
+        )
     if not infinite.any():
         return
     counts = out.loc[infinite, _STATISTIC_COLUMN].value_counts(sort=False)
@@ -843,9 +811,22 @@ def _refuse_infinite_statistics(
         f"({', '.join(f'{label}: {n}' for label, n in counts.items())}; "
         f"first: ",
         first,
-        f"). With quantile_method={quantile_method!r} and "
-        f"summation={summation!r} an infinite statistic is refused. "
-        f"'linear' and 'lower_step' with summation='fast' return it.",
+        "). Every member is finite, so the arithmetic passed the largest float.",
+    )
+
+
+def _refuse_infinite_values(data: pd.DataFrame, value_col: str) -> None:
+    """Raise if a member value is infinite, under every quantile method
+    and summation, naming the first such row by its other columns."""
+    infinite = np.isinf(_float_values(data[value_col]))
+    if not infinite.any():
+        return
+    first = data.loc[infinite].iloc[0].drop(value_col).to_dict()
+    raise GroupError(
+        f"{int(infinite.sum())} values of {value_col!r} are infinite (first: ",
+        first,
+        "). An infinity in impact data means something upstream of the "
+        "statistics broke.",
     )
 
 
@@ -978,8 +959,7 @@ def window_means(
 
     ``summation`` has no default. "exact" takes each mean from an
     exactly rounded sum, and "fast" is the pandas mean. An infinite
-    value gives an infinite mean either way, and it is the statistics
-    that refuse it.
+    value in a window raises.
 
     The mean is float64 whatever the dtype of ``value_col``. A float32
     column is widened before the mean and not after, because a float32
@@ -1009,6 +989,12 @@ def window_means(
     if len(set(labels)) != len(labels):
         raise ValueError(f"duplicate window labels in request: {labels}")
 
+    _refuse_infinite_values(
+        data.loc[
+            np.logical_or.reduce([data[time_col].between(lo, hi) for lo, hi in windows])
+        ],
+        value_col,
+    )
     group = [c for c in data.columns if c not in (time_col, value_col)]
     full_key = group + [time_col]
     # The group codes are worked out once and serve the duplicate check
@@ -1146,6 +1132,7 @@ def pooled_statistics(
     if len(set(labels)) != len(labels):
         raise ValueError(f"duplicate statistic labels in request: {labels}")
 
+    _refuse_infinite_values(data, value_col)
     drop = sample_dims + [value_col]
     if weight_col is not None:
         drop = drop + [weight_col]
@@ -1183,7 +1170,7 @@ def pooled_statistics(
     out = out[_output_columns(identity, value_col, include_n_members)]
     if identity == ["_all"]:
         out = out.drop(columns=["_all"])
-    _refuse_infinite_statistics(out, value_col, quantile_method, summation)
+    _refuse_infinite_statistics(out, value_col, quantile_method)
     return out.reset_index(drop=True)
 
 
