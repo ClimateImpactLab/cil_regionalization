@@ -1,10 +1,9 @@
-"""Run manifest: provenance, costs, and counts written next to the output.
+"""The run manifest, a small JSON file written next to a weights file.
 
-A manifest is a small JSON sidecar. It carries the config hash, input
-identifiers (file checksums or BQ table ids), package versions, the
-backend used, fallback counts per weight, timing, and row counts. The
-goal is reproducibility-by-recognition: someone returning to a Parquet
-later should be able to tell what produced it, how, and how to redo it.
+It records the config hash, the input identifiers (file checksums or BQ
+table ids), the package versions, the backend, the fallback counts of
+each weight, the timing and the row counts, so that a reader of the
+weights file can tell what produced it and how to produce it again.
 """
 
 from __future__ import annotations
@@ -138,19 +137,18 @@ def collect_package_versions(
 
 
 def record_schema(manifest: Manifest, schema: OutputSchema) -> None:
-    """Copy the schema's column roles into the manifest.
-
-    Called by every backend after it resolves the OutputSchema, so a
-    written artifact carries enough structure to be reloaded and applied
-    without guessing column meanings.
-    """
+    """Copy the schema's id fields, source key columns and weight names
+    into the manifest, which `WeightsArtifact.load` needs to rebuild the
+    schema."""
     manifest.id_fields = list(schema.id_fields)
     manifest.source_key_columns = list(schema.source_units.key_columns)
     manifest.weight_names = list(schema.weight_names)
 
 
 def build_manifest(cfg: Config) -> Manifest:
-    """Initialise a Manifest from the config; backend code fills in the rest."""
+    """A Manifest holding what the config says of the run, for the backend
+    to fill in with the rest. A grid run's ``source_version`` is the
+    grid's own identity, as `GridSpec.source_version` writes it."""
     return Manifest(
         config_hash=hash_config(cfg),
         backend=cfg.backend.kind,

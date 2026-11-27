@@ -1,25 +1,18 @@
-"""Characterization comparison of our crop weights vs the legacy CSV.
+"""Compares this package's crop weights with the legacy weights CSV.
 
-Our crop weights are NOT expected to match the legacy file byte-for-byte.
-The legacy script uses planar-degree 'area' (a known bug), centroid-only
-raster handling in some paths, and a different fallback (the polylabel
-1e-5 hack vs our marked 'nan' policy). What is meaningful to check:
+The two are not expected to match byte for byte. The legacy script
+takes 'area' in planar degrees, a known bug, handles rasters by
+centroid only in some paths, and falls back to the polylabel 1e-5 hack
+where this package marks the weight 'nan'. The comparison takes the
+per-region weight shares, which cancel the difference in area units,
+and asks whether their spatial distribution across cells agrees,
+whether both sides find the same regions without cropland (NaN
+``cropwt`` in both), and whether each region's maximum-weight cell is
+the same cell. A moved maximum-weight cell is the sign of a real
+spatial disagreement. The report describes the differences and is not
+a pass or fail check.
 
-    1. After per-region sum-to-1 normalization, does the spatial
-       distribution of cropwt agree across cells? The normalization
-       cancels the area-unit difference and isolates whether the
-       SPATIAL allocation of weight is the same.
-    2. Do the two pipelines agree on which regions have zero cropland
-       (NaN cropwt in both files)?
-    3. For regions with non-zero crop, does the cell carrying the most
-       weight agree? Disagreement here is the real signal; a real
-       spatial bug looks like "the maximum-weight cell moved by N
-       pixels", not "the maximum-weight cell's weight is 0.41 vs 0.43".
-
-This module reports distributions; it does not assert pass/fail. The
-notebook + script wrap it for the RCC run.
-
-RCC env (use exactly this in every invocation)::
+On the RCC, run it in this environment::
 
     module load python
     source activate /project/cil/home_dirs/rcc/envs/climate_data_aggregation/
@@ -42,11 +35,12 @@ _COORD_ROUND = 4
 
 @dataclass(frozen=True)
 class ComparisonReport:
-    """Per-region characterization of our crop weights vs the legacy CSV.
+    """Per-region comparison of our crop weights with the legacy CSV.
 
-    Empty `mismatched_zero_set` and `mass_displaced_regions` indicate
-    the pipelines agree on the qualitative shape; the numeric `delta`
-    fields characterize the boundary noise.
+    Zero `n_regions_ours_nan_legacy_native` and
+    `n_regions_legacy_nan_ours_native` and an empty
+    `mass_displaced_regions` mean the two agree in shape, and the
+    `delta` fields measure the noise at boundaries.
     """
 
     weight: str  # "crop" by default
@@ -91,16 +85,17 @@ def compare_weights(
     weight: str = "crop",
     coord_round: int = _COORD_ROUND,
 ) -> ComparisonReport:
-    """Characterize our `weight`wt vs legacy `weight`wt across regions.
+    """A `ComparisonReport` of our ``<weight>wt`` against the legacy
+    ``<weight>wt`` across regions.
 
-    Both frames must follow the legacy 13-column schema (hierid,
-    pix_cent_x, pix_cent_y, ``<weight>``, ``<weight>wt``). Pass our
-    canonical frame through `legacy_export.to_legacy_frame` first.
-
-    Join key is ``(hierid, pix_cent_x, pix_cent_y)`` rounded to
-    `coord_round` decimals. Regions present in only one frame are
-    counted (NaN-mismatch buckets) but contribute neither to the
-    delta distribution nor the mass-displacement check.
+    Both frames are in the legacy layout with hierid, pix_cent_x,
+    pix_cent_y and ``<weight>wt``, so our canonical frame goes through
+    `legacy_export.to_legacy_frame` first. They are joined on
+    ``(hierid, pix_cent_x, pix_cent_y)`` with the coordinates rounded to
+    `coord_round` decimals. A region with a weight on one side only is
+    counted as a NaN mismatch and is left out of the differences and
+    the mass-displacement check. Raises if a frame lacks one of the
+    columns.
     """
     wt_col = f"{weight}wt"
     for f in (ours, legacy):
@@ -214,10 +209,6 @@ def compare_weights(
 
 
 def load_legacy_csv(path: str | Path) -> pd.DataFrame:
-    """Load a legacy 13-column weights CSV.
-
-    Trivial wrapper around `pd.read_csv`; exists so script and notebook
-    call sites are uniform and so a future legacy-format fork (different
-    column names) can land here without touching consumers.
-    """
+    """A legacy weights CSV, read by `pd.read_csv` as it is."""
+    # one place for a later legacy format with other column names
     return pd.read_csv(path)

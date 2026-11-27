@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+The documentation of `quantile_method` says which value estimates a
+quantile. `"inverted_cdf"` is the estimator and returns a value a
+member has. `"linear"` interpolates and can return a number no member
+holds. `"lower_step"` reproduces the historical extraction tool, one
+member below `"inverted_cdf"`, and is biased low.
+
 New: `fetch_model_weights(rcp)` gives the published climate model
 weights of an rcp from their Zenodo record, checked and cached, so
 products stop reading the table from paths of their own. New:

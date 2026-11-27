@@ -1,26 +1,13 @@
-"""Sum-to-1 validation + grid invariants of the output weights frame.
+"""Checks on a weights frame and on an application run.
 
-Both backends produce the same output schema. This module checks that
-every (group, weight) pair sums to 1 within the configured tolerance,
-where the group follows the schema's normalization direction (regions
-under per_destination, source units under per_source),
-AND that the cell coordinates respect the declared grid (no indices out
-of range, no centroids outside the convention's domain, no duplicate
-``(region, cell_ix, cell_iy)`` keys). The s51 antimeridian bug
-demonstrated that sum-to-1 alone cannot catch misallocation: the wrap-
-unaware SQL produced rows that summed to 1 per region per weight while
-silently routing populated cells away from their points.
-
-These checks return structured reports rather than asserting; the
-backends raise on a non-empty failures frame in their `compute()`
-methods.
-
-Beyond the weights frame itself, this module also validates application
-runs: `check_polygon_invariants` is the polygon-mode analogue of the grid
-invariants, `check_mass_balance` proves an aggregation conserved the
-quantity it aggregated, and `check_source_coverage` +
-`enforce_source_policies` account for every source unit that could not
-flow through a run.
+`check_sum_to_one` checks that every weight sums to 1 within each
+normalization group, a region under per_destination and a source unit
+under per_source. `check_grid_invariants` and `check_polygon_invariants`
+check the keys and cell coordinates, which sum-to-1 cannot see.
+`check_mass_balance` checks that an aggregation conserved its quantity,
+and `check_source_coverage` with `enforce_source_policies` accounts for
+the source units that could not take part in a run. The ``check_``
+functions return their failures in a report rather than raising them.
 """
 
 from __future__ import annotations
@@ -44,9 +31,10 @@ logger = logging.getLogger(__name__)
 class SumToOneReport:
     """Result of `check_sum_to_one`. `failures` is empty when everything is OK.
 
-    ``n_regions`` counts the groups the weights were summed within: regions
-    under per_destination normalization, source units under per_source.
-    ``failures`` carries the group columns plus 'weight', 'sum', 'deviation'.
+    ``n_regions`` is the number of groups the weights were summed within,
+    regions under per_destination normalization and source units under
+    per_source. ``failures``
+    carries the group columns plus 'weight', 'sum' and 'deviation'.
     """
 
     weight_names: tuple[str, ...]
@@ -76,19 +64,17 @@ def check_sum_to_one(
     schema: OutputSchema,
     tolerance: float = 1e-6,
 ) -> SumToOneReport:
-    """Return a SumToOneReport for `weights_frame` against `schema`.
+    """The SumToOneReport of `weights_frame`, each weight in
+    `schema.weight_names` summed within each normalization group of
+    `schema` and compared with 1 within `tolerance`.
 
-    For each weight in `schema.weight_names`, group by the schema's
-    normalization group (id fields under per_destination, source-unit key
-    columns under per_source) and verify the weight column sums to 1
-    within `tolerance`. Groups whose weights sum to 0 (the `zero` fallback
-    policy outcome) are reported as failures, by design. Groups whose
-    weights are entirely NaN (the `nan` fallback policy outcome) are NOT
-    flagged: `sum(min_count=1)` returns NaN for such groups and
-    `NaN > tolerance` is False, so the validator passes them through
-    silently. Downstream consumers handle NaN explicitly (legacy crop
-    weights backfill with `areawt` at aggregation time).
+    A group whose weights sum to 0, as the `zero` fallback leaves them,
+    fails. A group whose weights are all NaN, as the `nan` fallback
+    leaves them, passes. Raises if the frame has no column for a weight.
     """
+    # An all-NaN group sums to NaN under min_count=1, and NaN > tolerance
+    # is False, so it passes. Consumers fill NaN weights themselves, as
+    # legacy crop weights are filled with `areawt` at aggregation time.
     group_fields = list(schema.normalization_group)
     region_count = weights_frame[group_fields].drop_duplicates().shape[0]
     rows: list[pd.DataFrame] = []
@@ -155,13 +141,11 @@ def check_grid_invariants(
     schema: OutputSchema,
     grid: GridSpec,
 ) -> GridInvariantsReport:
-    """Enforce cell-coordinate invariants on the output.
-
-    Catches what sum-to-1 cannot: indices out of declared range,
-    centroids outside the convention's domain, duplicate
-    ``(region, cell_ix, cell_iy)`` keys (the antimeridian wrap collision
-    from the legacy SQL). Returns a structured report; the backends call
-    this in `compute()` and raise on any failure.
+    """The `GridInvariantsReport` of `weights_frame` on `grid`. Its
+    ``failures`` hold each row with a cell index out of range, a centroid
+    outside the grid's domain or a duplicated ``(region, cell_ix,
+    cell_iy)`` key, labelled in the column ``_invariant``. The backends
+    raise on any failure.
     """
     id_fields = list(schema.id_fields)
     rows: list[pd.DataFrame] = []
@@ -219,12 +203,12 @@ def check_grid_invariants(
 
 @dataclass(frozen=True)
 class PolygonInvariantsReport:
-    """Result of `check_polygon_invariants`. Everything empty means OK.
+    """Result of `check_polygon_invariants`, ``ok`` when it found nothing.
 
-    ``failures`` flags rows (null keys, duplicate keys, unknown source
-    units); ``missing_source_units`` lists expected source units with no
-    row at all, which cannot be flagged row-wise; ``sum_report`` is the
-    direction-aware sum-to-1 result over the same frame.
+    ``failures`` holds the rows with a null key, a duplicated key or an
+    unknown source unit. ``missing_source_units`` lists the expected
+    source units that have no row at all. ``sum_report`` is the sum-to-1
+    result over the same frame.
     """
 
     n_rows: int
@@ -271,24 +255,20 @@ def check_polygon_invariants(
     expected_source_ids: Iterable[tuple] | None = None,
     tolerance: float = 1e-6,
 ) -> PolygonInvariantsReport:
-    """Enforce key and coverage invariants on a polygon-mode weights frame.
+    """The `PolygonInvariantsReport` of a polygon-mode weights frame, for
+    either normalization direction.
 
-    The polygon analogue of `check_grid_invariants`, valid for either
-    normalization direction:
+    Its ``failures`` hold the rows with a null id field or source key,
+    labelled ``null_key``, the rows of a duplicated (id fields, source
+    unit) pair, labelled ``duplicate_key``, and the rows of a source unit
+    not in ``expected_source_ids``, labelled ``unknown_source_unit``. The
+    expected source units with no row are listed in
+    ``missing_source_units``, and the weights are checked to sum to 1
+    with `check_sum_to_one`.
 
-    - null values in id fields or source key columns (``null_key``),
-    - duplicate (id fields, source unit) pairs, which would double count
-      the pair's overlap (``duplicate_key``),
-    - source units in the frame that are not in ``expected_source_ids``
-      (``unknown_source_unit``, e.g. a stale crosswalk row),
-    - expected source units with no row at all (reported in
-      ``missing_source_units``; a source unit the weights silently lost),
-    - sum-to-1 per the schema's normalization group, via
-      `check_sum_to_one`.
-
-    ``expected_source_ids`` is the source-unit universe as an iterable of
-    id tuples (matching ``schema.source_units.key_columns`` order). Pass
-    None to skip the coverage checks when no universe is defined.
+    ``expected_source_ids`` is the source-unit universe as id tuples in
+    the order of ``schema.source_units.key_columns``. None skips the two
+    checks against it.
     """
     id_fields = list(schema.id_fields)
     source_keys = list(schema.source_units.key_columns)
@@ -337,12 +317,14 @@ def check_polygon_invariants(
 
 @dataclass(frozen=True)
 class MassBalanceReport:
-    """Result of `check_mass_balance`. `ok` means totals agree within tolerance.
+    """Result of `check_mass_balance`, ``ok`` when the totals and every
+    group agree within ``tolerance``.
 
-    ``source_total`` / ``target_total`` are the global sums;
-    ``failures`` holds one row per group out of tolerance (columns:
-    group, source_sum, target_sum, abs_error, rel_error), empty when no
-    grouping was requested or every group balances.
+    ``source_total`` and ``target_total`` are the global sums, and
+    ``rel_error`` is their relative difference. ``failures`` holds one row
+    per group out of tolerance, with the columns group, source_sum,
+    target_sum, abs_error and rel_error. It is empty when no grouping was
+    requested or every group balances.
     """
 
     source_total: float
@@ -391,32 +373,21 @@ def check_mass_balance(
     group_col: str | None = None,
     tolerance: float = 1e-6,
 ) -> MassBalanceReport:
-    """Check that aggregation conserved an extensive quantity.
+    """The `MassBalanceReport` of an extensive quantity aggregated from
+    ``source`` to ``target``.
 
-    ``source`` and ``target`` each carry one row per unit with the
-    quantity in ``value_col`` and, when ``group_col`` is given, a group
-    label (typically the country). The check compares the global sums and
-    each group's sums with relative tolerance
-    ``|source - target| / max(|source|, |target|)``. A group present on
-    only one side is compared against 0 on the other, so a wholly dropped
-    group is a full-size failure, not a silent absence.
+    Each frame has one row per unit with the quantity in ``value_col``
+    and, when ``group_col`` is given, a group label such as the country.
+    The global sums and each group's sums are compared with the relative
+    error ``|source - target| / max(|source|, |target|)``. A group on
+    only one side is compared with 0, so a dropped group fails in full.
+    NaN values are left out of the sums. Raises if a frame lacks
+    ``value_col`` or ``group_col``.
 
-    What a pass proves: the run moved the entire quantity from source
-    units to target units, globally and within every group. This is the
-    conservation property an extensive aggregation (a sum or a
-    per-source allocation) must have, and it catches dropped units,
-    zeroed rows, and double counting across groups.
-
-    What a pass does not prove: that the quantity was allocated to the
-    *right* targets within a group (any reshuffle inside a group
-    conserves the group sum); anything about intensive variables, whose
-    weighted means are not conserved quantities and must not be run
-    through this check; and losses that cancel between units inside one
-    group at the group level are only caught globally if they do not
-    cancel there too. NaN values are excluded from the sums (pandas
-    semantics), so a side that turned values into NaN shows up as a
-    deficit, but a side that was NaN in the source to begin with is not
-    counted as mass to conserve.
+    A pass says the quantity was conserved globally and within every
+    group, not that it went to the right targets within a group. An
+    intensive variable, whose weighted mean is not conserved, must not be
+    checked this way.
     """
     for name, df in (("source", source), ("target", target)):
         if value_col not in df.columns:
@@ -458,15 +429,14 @@ def check_mass_balance(
 
 @dataclass(frozen=True)
 class SourceCoverageReport:
-    """Which source units cannot flow through an application run, and why.
+    """Which source units cannot take part in an application run, and why.
 
     Id tuples follow the weight schema's source key column order.
-
-        unmatched        : in the data being aggregated, absent from the
-                           weights frame.
-        zero_weight      : in the weights frame, but every weight value is
-                           zero or NaN, so they carry no mass to any target.
-        absent_from_data : in the weights frame, absent from the data.
+    ``unmatched`` units are in the data being aggregated and not in the
+    weights frame. ``zero_weight`` units are in the weights frame with
+    every weight zero or NaN, so they carry no mass to any target.
+    ``absent_from_data`` units are in the weights frame and not in the
+    data.
     """
 
     unmatched: tuple[tuple, ...]
@@ -492,12 +462,14 @@ def check_source_coverage(
     weight_name: str,
     data_source_ids: Iterable[tuple],
 ) -> SourceCoverageReport:
-    """Partition source units into the three coverage cases.
+    """The `SourceCoverageReport` of ``weights_frame`` against the source
+    units of the data, for the weight ``weight_name``.
 
-    ``data_source_ids`` is the set of source-unit id tuples present in the
-    data being aggregated (tuple order matching
-    ``schema.source_units.key_columns``). The weight column checked for
-    zero mass is ``{weight_name}wt``.
+    ``data_source_ids`` holds the id tuples of the source units in the
+    data being aggregated, in the order of
+    ``schema.source_units.key_columns``. A zero-weight unit that is also
+    absent from the data is listed under both cases. Raises if the frame
+    has no column ``{weight_name}wt``.
     """
     source_keys = list(schema.source_units.key_columns)
     col = weight_column(weight_name)
@@ -529,14 +501,12 @@ def enforce_source_policies(
     policies: SourceUnitPolicies,
     manifest: Manifest | None = None,
 ) -> None:
-    """Apply the configured policy to each coverage case.
-
-    For every case: "error" raises, naming the case, the config key, the
-    count, and the first offending ids; "skip" logs a warning and
-    continues. When a manifest is given, all three counts and id lists
-    are recorded under ``manifest.source_coverage`` before any error is
-    raised, so even an aborted run documents what it found. Silent
-    dropping is not an option this function offers.
+    """Raises if a coverage case that has units is under the policy
+    "error", naming each such case, its count, its first ids and the
+    policy that would skip it. A case under "skip" is logged as a
+    warning. When ``manifest`` is given, the count and ids of every case
+    are recorded under ``manifest.source_coverage`` before anything is
+    raised.
     """
     cases: list[tuple[str, str, tuple[tuple, ...], str]] = [
         ("unmatched", policies.on_unmatched, coverage.unmatched, "on_unmatched"),

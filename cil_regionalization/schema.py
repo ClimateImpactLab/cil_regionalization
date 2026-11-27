@@ -1,38 +1,23 @@
-"""Canonical output schema both backends must produce.
+"""The column names, dtypes and order of a weights frame, the same for
+both backends.
 
-A single source of truth for column names, dtypes, and ordering so that
-local and BigQuery results can be compared row-for-row in Stage 4. Column
-naming follows the locked design decision:
+Each row pairs one region, named by the ``id_fields``, with one source
+unit of the geometry the weighted data lives on. A grid source unit is a
+cell keyed by integer ``(cell_ix, cell_iy)`` with its centroid alongside,
+and a polygon source unit is keyed by string id columns such as
+``hierid``. `SourceUnits` describes that layout, and `GRID_CELLS` is the
+grid case and the default.
 
-    {name}wt     normalized weight per (region, source unit)
-    {name}_raw   raw weight total used as the numerator
-    {name}_method per-region fallback label: native | area_fallback | zero | nearest_cell
+Each weight has three columns. ``{name}wt`` is the normalized weight of
+the row, ``{name}_raw`` the raw total used as its numerator, and
+``{name}_method`` how the weight of the row's group was found, one of
+native, area_fallback, zero, nan or nearest_cell.
 
-Source units
-------------
-Each output row pairs one region (the ``id_fields``) with one *source
-unit*: the unit of the geometry the weighted data lives on. For the grid
-backends the source unit is a grid cell, identified by integer
-``(cell_ix, cell_iy)`` with centroid metadata. A polygon source (for
-example impact regions keyed by ``hierid``, split onto administrative
-targets) identifies its units by string id columns instead. `SourceUnits`
-describes that layout; `GRID_CELLS` is the grid case and the default.
-
-Normalization direction
------------------------
-The same intersection geometry supports two weight normalizations, and
-they are not interchangeable:
-
-    per_destination : weights sum to 1 within each region, across the
-        source units covering it. Consumed as a weighted mean of an
-        intensive variable (the grid-to-IR climate case).
-    per_source : weights sum to 1 within each source unit, across the
-        regions it overlaps. Consumed as an allocation of an extensive
-        quantity (splitting one source unit's total across targets).
-
-The direction is part of the schema and is recorded in the manifest.
-Consumers must call `require_normalization` before applying a weights
-frame so that a file cannot be used for the wrong operation silently.
+Under per_destination normalization the weights sum to 1 within each
+region, for a weighted mean of an intensive variable. Under per_source
+they sum to 1 within each source unit, for an allocation of an extensive
+quantity. The direction is recorded in the manifest, and consumers call
+`require_normalization` before applying a weights frame.
 """
 
 from __future__ import annotations
@@ -58,13 +43,14 @@ CELL_DTYPES: dict[str, str] = {
 class SourceUnits:
     """Identifier layout for the source side of a weights frame.
 
-    ``key_columns`` identify one source unit (join and duplicate-check
-    keys). ``meta_columns`` are carried alongside but are not part of the
-    identity (the grid case carries cell centroids). ``dtype_items`` holds
-    (column, dtype) pairs for every column, as a tuple so the dataclass
-    stays frozen and hashable.
+    ``key_columns`` identify one source unit, and are the keys of joins
+    and duplicate checks. ``meta_columns`` are carried alongside but are
+    not part of the identity, as the grid case carries cell centroids.
+    ``dtype_items`` holds (column, dtype) pairs for every column.
     """
 
+    # dtype_items is a tuple, not a dict, so the dataclass stays frozen
+    # and hashable.
     key_columns: tuple[str, ...]
     dtype_items: tuple[tuple[str, str], ...]
     meta_columns: tuple[str, ...] = ()
@@ -118,11 +104,9 @@ def weight_dtypes(name: str) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class OutputSchema:
-    """Resolved column layout for one run: id fields + source units + weights.
-
-    Defaults reproduce the grid layout exactly: grid-cell source units and
-    per_destination normalization.
-    """
+    """Resolved column layout for one run, the id fields, then the source
+    units, then three columns for each weight. By default the source
+    units are grid cells and the normalization is per_destination."""
 
     id_fields: tuple[str, ...]
     weight_names: tuple[str, ...]
@@ -172,14 +156,15 @@ class OutputSchema:
 def require_normalization(recorded: str, required: Normalization) -> None:
     """Raise unless a weights artifact's recorded direction matches `required`.
 
-    ``recorded`` comes from the artifact (the schema of a live result, or
-    the ``normalization`` field of its manifest). ``required`` is the
-    direction the intended operation needs: ``per_destination`` for a
-    weighted mean of an intensive variable, ``per_source`` for allocating
-    an extensive quantity. The two are transposes over the same geometry;
-    applying one where the other is needed produces plausible-looking
-    wrong numbers, so the mismatch is an error, not a warning.
+    ``recorded`` comes from the artifact, from the schema of a live result
+    or the ``normalization`` field of its manifest. ``required`` is the
+    direction the intended operation needs, ``per_destination`` for a
+    weighted mean of an intensive variable and ``per_source`` for
+    allocating an extensive quantity.
     """
+    # The two are transposes over the same geometry, and applying one where
+    # the other is needed gives plausible wrong numbers, so a mismatch is
+    # an error and not a warning.
     if recorded == required:
         return
     raise ValueError(

@@ -1,12 +1,15 @@
-"""The pandas backend: statistics one block of targets at a time.
+"""The pandas backend, with the statistics taken one block of targets at
+a time.
 
-`stats.pooled_statistics` needs every member of a target at once and
-nothing of any other target. So the targets are cut into blocks of
-consecutive row groups, a worker reads one block from every leaf file,
-and no process ever holds more than its share of the memory budget.
-The numbers are those of `stats`, which this module calls and does not
-repeat.
+A block is a run of consecutive row groups, sized so that a worker is
+planned to hold no more than its share of ``memory_gb``. A worker reads
+its block from every leaf file and pools it with
+`stats.pooled_statistics`, so the numbers are those of `stats`.
 """
+
+# `stats.pooled_statistics` needs every member of a target at once and
+# nothing of any other target, which is why the targets can be taken a
+# block at a time.
 
 from __future__ import annotations
 
@@ -50,19 +53,19 @@ BYTES_PER_DIMENSION = 40
 
 
 def bytes_per_row(request: ReduceRequest) -> int:
-    """The bytes a block is planned to take for each row it keeps. A
-    dimension of the leaf travels with every row, so each one adds to
-    it."""
+    """The bytes a block is planned to take for each row it keeps,
+    `BYTES_PER_ROW` and `BYTES_PER_DIMENSION` more for each dimension
+    of the leaf."""
     return BYTES_PER_ROW + BYTES_PER_DIMENSION * len(request.dimensions)
 
 
 def kept_share(request: ReduceRequest) -> float:
     """The rows a block keeps of a row group, as a share of the group's
-    rows in the leaf files. A leaf's rows shrink to one a window where
-    they were one a time value, and each leaf counts by its own windows
-    and its own time values, since two leaves may differ in both. When
-    no window mean is taken a leaf keeps its rows inside its windows,
-    and a row inside two windows counts twice."""
+    rows in the leaf files. Under "window_mean" a leaf keeps its rows
+    at one time value once for each of its windows, counted by its own
+    windows and time values, since two leaves may differ in both.
+    Otherwise a leaf keeps its rows inside its windows, and a row inside
+    two windows counts twice."""
     kept = total = 0.0
     for leaf in request.leaves:
         if request.time_reduction != "window_mean":
@@ -84,7 +87,9 @@ def choose_blocks(
 ) -> list[tuple[int, int]]:
     """Consecutive row groups packed into blocks of at most
     ``bytes_per_worker``, as (first, stop) pairs, with a kept row
-    counted as ``row_bytes``. Groups that hold nothing are left out.
+    counted as ``row_bytes``. A block never starts on a group that holds
+    nothing, so the empty groups before the first that holds rows are
+    left out, and a later empty group joins the block before it.
     Raises if one group alone does not fit."""
     need = np.asarray(rows_per_group, dtype=np.float64) * share * row_bytes
     if len(need) and need.max() > bytes_per_worker:
@@ -217,8 +222,9 @@ class PandasBlocks(ReduceBackend):
 
 def _run_blocks(request: ReduceRequest, blocks, n_workers: int) -> list[dict]:
     """Every block's result, in any order. The first block that fails
-    stops the run. A worker that dies raises too, where a
-    `multiprocessing.Pool` would wait for it for ever."""
+    stops the run, and a worker that dies raises `RuntimeError`."""
+    # A process pool executor, because a `multiprocessing.Pool` would
+    # wait for ever for a worker that died.
     if n_workers == 1:
         _init_worker(request)
         results = []

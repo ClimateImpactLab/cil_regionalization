@@ -1,23 +1,13 @@
-"""Dask cluster context for the local backend.
+"""The Dask client the local backend spreads its per-region work over.
 
-Local-backend per-region work is embarrassingly parallel: each region's
-segment building hits an independent slice of the grid, and the raster
-zonal-stats step is per-segment. Wrapping that work in a Dask Client
-lets a single config switch fan it out across cores (LocalCluster) or
-across HPC nodes (SLURMCluster on the CIL 'cil' partition).
-
-The context manager is the only public seam. Callers do:
+`dask_client_for` is the one entry point, used as a context manager:
 
     with dask_client_for(cfg.backend.local) as client:
         ...                # `client` is None when dask = "off"
 
-so the serial path is a true no-op: no cluster is ever instantiated,
-no port is opened, no Dask import happens.
-
-SLURM defaults match the CIL 'cil' partition (64c / 251 GB / 2 nodes
-typical). The TOML's `n_workers`, `threads_per_worker`, `slurm_queue`,
-`slurm_walltime` override the defaults; everything else stays fixed
-to keep the surface area small.
+The config's `n_workers`, `threads_per_worker`, `slurm_queue` and
+`slurm_walltime` override the defaults. The cores and memory of a SLURM
+job are fixed to the CIL 'cil' partition.
 """
 
 from __future__ import annotations
@@ -50,19 +40,15 @@ _LOCAL_DEFAULT_THREADS = 1
 
 @contextlib.contextmanager
 def dask_client_for(opts: LocalBackendOptions) -> Iterator[Optional[object]]:
-    """Yield a Dask distributed Client, or None when dask is disabled.
+    """Yield a Dask distributed client, or None when ``opts.dask`` is
+    ``"off"``.
 
-    ``opts.dask``:
-        ``"off"``  -> yields ``None``; the caller runs serially. Dask is
-                       NOT imported, so this works on installs without the
-                       optional dependency.
-        ``"local"`` -> spins up a ``LocalCluster`` + ``Client``.
-        ``"slurm"`` -> spins up a ``dask_jobqueue.SLURMCluster`` shaped
-                       for the CIL 'cil' partition and scales to
-                       ``opts.n_workers`` jobs.
-
-    The cluster and client are closed deterministically on exit; no
-    background threads or sockets survive the ``with`` block.
+    Under ``"off"`` the caller runs serially and Dask is not imported, so
+    this works without the optional dependency. ``"local"`` starts a
+    ``LocalCluster`` on this machine. ``"slurm"`` starts a
+    ``dask_jobqueue.SLURMCluster`` on the CIL 'cil' partition and scales it
+    to ``opts.n_workers`` jobs. The client and cluster are closed when the
+    ``with`` block exits. Raises if ``opts.dask`` is any other value.
     """
     if opts.dask == "off":
         yield None

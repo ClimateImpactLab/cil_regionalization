@@ -1,31 +1,32 @@
-"""`cilreg` command-line entry point.
+"""The `cilreg` command line.
 
-Subcommands:
+``cilreg validate <config.toml>`` loads and validates a config, checks
+that the files it names exist, and prints a one-line summary. It
+computes nothing and uses no network.
 
-    cilreg validate <config.toml>
-        Load and validate the config, check that referenced files exist,
-        and print a one-line summary. No compute. No network.
+``cilreg run <config.toml> [--test-mode] [--legacy-csv]`` runs the
+configured backend, writes the weights and a manifest, and prints a
+summary with the sum-to-one status. `--test-mode` caps the local
+backend at the first `_TEST_MODE_REGION_CAP` regions, and on BigQuery
+it requires ``regions.keep`` to limit them. `--legacy-csv` also writes
+``weights_legacy.csv`` in the legacy layout.
 
-    cilreg run <config.toml> [--test-mode]
-        Load the config, dispatch to the configured backend, write results
-        and a manifest, then print a one-line summary plus the sum-to-1
-        report status. `--test-mode` caps the local backend to the first
-        three regions for fast smoke testing.
+``cilreg pipeline <pipeline.toml> [--dry-run] [--verify-leaves]
+[--stage all|aggregate|reduce]`` runs the Monte Carlo pipeline, as
+`python -m cil_regionalization.pipelines.montecarlo` does, which applies
+weights per leaf and then takes statistics.
 
-    cilreg pipeline <pipeline.toml> [--dry-run] [--stage all|aggregate|reduce]
-        Run the Monte Carlo pipeline (apply weights per leaf, then
-        statistics). Thin wrapper over
-        `python -m cil_regionalization.pipelines.montecarlo`.
+``cilreg regions find <pattern> <config.toml> [--limit N]`` prints the
+ids in the configured regions source that match a SQL LIKE pattern.
 
-    cilreg regions find <pattern> <config.toml>
-        LIKE-search the configured regions source for matching ids.
+``cilreg fetch <name> [--record ID] [--base-url URL] [--refresh]``
+fetches a published weight artifact from Zenodo, verifies it, caches it
+and prints a summary and the cached path. `--list` prints the names the
+registry knows, and `--registry` and `--cache-dir` name a local registry
+and a cache.
 
-    cilreg fetch <name> [--record ID] [--base-url URL] [--refresh]
-        Fetch a published weight artifact from Zenodo, verify it against
-        its manifest checksum, cache it, and print the cached path.
-
-    cilreg cache list | clear [--name NAME]
-        Show or remove cached fetched artifacts.
+``cilreg cache list`` and ``cilreg cache clear [--name NAME]`` show and
+remove cached weight artifacts.
 """
 
 from __future__ import annotations
@@ -357,13 +358,11 @@ def _cmd_run(
 
 
 def _cmd_regions_find(config_path: str, *, pattern: str, limit: int) -> int:
-    """SQL-LIKE search the configured regions source for matching ids.
-
-    Cheap, read-only. Helps users resolve hierids without guessing:
-    world-combo-2017 mixes bare ISO3, single-remainder-only suffixes,
-    and admin subdivisions across 252 prefixes. See
-    examples/configs/s51_test.toml for the naming patterns.
-    """
+    """Prints the ids in the configured regions source that match the SQL
+    LIKE ``pattern``, at most ``limit`` of them, and returns the exit
+    status. It only reads."""
+    # Resolves hierids without guessing. world-combo-2017 mixes bare
+    # ISO3 ids, single-remainder-only suffixes and admin subdivisions.
     cfg = load_config(config_path)
     primary = cfg.regions.id_fields[0]
     if cfg.regions.table is not None:

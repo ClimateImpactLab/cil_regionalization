@@ -1,23 +1,14 @@
-"""Two-source weights merge utility.
+"""Two-source weights merge utility, used by `examples/s51/merge.py`.
 
-The s51 deliverable is split across two runs: the canonical BigQuery run
-(24,361 valid hierids from the IR table) and the shapefile-source
-supplement run (the 17 NULL-in-IR hierids from the source shapefile).
-Both produce the same `OutputSchema`. This module combines them with
-hard invariants:
-
-- inputs' hierid sets are disjoint (a hierid must come from exactly one
-  source),
-- combined unique hierid count == ``expected_total`` (24,378),
-- the merged frame still satisfies sum-to-1 per region per weight,
-- a ``source`` column says which part a row came from (values:
-  ``"canonical"`` / ``"supplement"``),
-- the merged manifest records both source manifests' config hashes,
-  input identifiers, and per-source row counts so the merge is
-  reproducible.
-
-Used by `examples/s51/merge.py`; the function below is the unit-testable
-core.
+The s51 weights come from two runs of the same `OutputSchema`, the
+canonical BigQuery run over the hierids of the IR table and a supplement
+run from the source shapefile over the hierids whose IR geometry is
+NULL. `merge_weights` refuses inputs that share a hierid, that do not
+hold ``expected_total`` hierids between them, or whose merged weights
+no longer sum to 1 per region per weight. A ``source`` column says
+which part a row came from, ``"canonical"`` or ``"supplement"``, and the
+merged manifest records both inputs' config hashes, input identifiers
+and row counts.
 """
 
 from __future__ import annotations
@@ -56,10 +47,12 @@ def merge_weights(
     expected_total: int,
     tolerance: float = 1e-6,
 ) -> MergeResult:
-    """Combine the canonical BQ run with the shapefile-source supplement.
-
-    Hard invariants enforced; any failure raises with a precise message.
-    """
+    """The `MergeResult` of the canonical BQ run and the shapefile-source
+    supplement, whose frame has a ``source`` column for the part each row
+    came from. Raises if the two frames share a value of the first id
+    field, if they do not hold ``expected_total`` distinct values of it
+    between them, if a frame lacks a column of ``schema``, or if the
+    merged weights fail sum-to-1."""
     id_fields = list(schema.id_fields)
     primary = id_fields[0]
 

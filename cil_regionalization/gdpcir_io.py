@@ -1,18 +1,13 @@
-"""CMIP6 GDPCIR daily reader: local zarr mirror to per-year arrays.
+"""Reads CMIP6 GDPCIR daily zarr stores as per-year arrays for
+``derive_daily``, which takes them as it takes BCSD arrays.
 
-The GDPCIR product ships daily tasmax and tasmin as one zarr store per
-model, scenario and variable, on the same 0.25-degree center-registered
-grid as the CMIP5 BCSD archive, longitudes already in [-180,180)
-ascending, 365-day no-leap calendar. Unlike the BCSD reader this one
-has no conventions to reconcile; its job is to refuse anything that
-does not match the stated contract, loudly, per store:
-
-- longitude in [-180,180), strictly ascending, and latitude ascending;
-- exactly 365 days per requested year;
-- requested variable present.
-
-``derive_daily`` then consumes the year arrays exactly as it does for
-BCSD; nothing downstream knows which generation fed it.
+The GDPCIR product has one zarr store of daily tasmax or tasmin per
+model, scenario and variable. The stores are on the same 0.25-degree
+center-registered grid as the CMIP5 BCSD archive, with longitudes in
+[-180,180) ascending and a 365-day no-leap calendar. Nothing is
+converted. A store whose variable is missing, whose longitudes are
+outside [-180,180), or whose coordinates are not strictly ascending
+raises, and so does a year without exactly 365 days.
 """
 
 from __future__ import annotations
@@ -32,15 +27,19 @@ def _import_xarray():
 
 
 def open_gdpcir_daily(store: str, variable: str, **open_kwargs):
-    """Open one GDPCIR daily zarr store and verify its grid contract.
+    """One GDPCIR daily zarr store as an opened dataset, with values lazy
+    until sliced.
 
-    Returns the opened dataset; values stay lazy until sliced.
-
-    ``store`` is a local path or a URL. Pass ``open_kwargs`` to reach a
-    remote store: a STAC asset's own ``xarray:open_kwargs`` carry the
-    credential and the chunking, and ``engine`` is routed through
-    ``open_dataset`` because ``open_zarr`` rejects it.
+    ``store`` is a local path or a URL. ``open_kwargs`` reach a remote
+    store, and a STAC asset's own ``xarray:open_kwargs`` carry the
+    credential and the chunking. With ``open_kwargs`` the store is
+    opened by ``open_dataset``, with ``engine`` zarr unless given.
+    Raises if ``variable`` is missing, if a longitude is outside
+    [-180,180), or if longitudes or latitudes are not strictly
+    ascending.
     """
+    # open_zarr rejects an engine argument, so open_kwargs go through
+    # open_dataset
     xr = _import_xarray()
     if open_kwargs:
         kwargs = dict(open_kwargs)
@@ -64,11 +63,9 @@ def open_gdpcir_daily(store: str, variable: str, **open_kwargs):
 
 
 def gdpcir_year(ds, variable: str, year: int) -> np.ndarray:
-    """One calendar year as a (365, lat, lon) float32 array in Kelvin.
-
-    Refuses any year that does not hold exactly 365 days: the GDPCIR
-    calendar is no-leap, and a different count means a truncated or
-    mis-calendared store, not something to average around.
+    """One calendar year of ``variable`` as a (365, lat, lon) float32
+    array in Kelvin. Raises if the year does not hold exactly 365 days,
+    which means the store is truncated or not on the no-leap calendar.
     """
     sel = ds[variable].sel(time=slice(f"{year}-01-01", f"{year}-12-31"))
     if sel.sizes["time"] != 365:
@@ -94,15 +91,15 @@ def gdpcir_stac_assets(
     variables,
     collections=None,
 ) -> dict:
-    """Resolve GDPCIR assets on the Planetary Computer to signed stores.
+    """The signed store of each of ``variables`` for ``model`` and
+    ``experiment`` on the Planetary Computer, as
+    ``{variable: (href, open_kwargs)}`` ready for ``open_gdpcir_daily``.
 
-    Returns ``{variable: (href, open_kwargs)}`` ready for
-    ``open_gdpcir_daily``. The GDPCIR ensemble is split across three
-    collections by license, and one model can appear in more than one,
-    so all three are searched unless ``collections`` narrows it.
-
-    Signatures expire. Call this again for a long-running job rather
-    than holding its result for hours.
+    The GDPCIR ensemble is split across collections by license, and one
+    model can appear in more than one. All of them are searched unless
+    ``collections`` narrows it. The signatures expire, so a long-running
+    job should call this again rather than hold the result for hours.
+    Raises if a variable has no asset.
     """
     import planetary_computer
     import pystac_client

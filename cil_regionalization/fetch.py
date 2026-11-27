@@ -1,32 +1,29 @@
-"""Fetch published weight artifacts from Zenodo, verify, cache, load.
+"""Fetches published weight artifacts from Zenodo, verifies them,
+caches them and loads them.
 
-A published artifact is the pair a generation run writes: the weights
-parquet and its manifest sidecar. Records live on Zenodo, one record per
-target geometry version, with Zenodo's own record versioning carrying
-corrections. Which records exist is data, not code: the packaged
-``registry.toml`` maps short artifact names to record and file names,
-and a caller can extend or replace it with a local registry file (the
-``registry_path`` argument or the ``CIL_REGIONALIZATION_REGISTRY``
-environment variable) without any code change. A record identifier can
-also be given directly, bypassing the registry entirely.
+A published artifact is the weights parquet and the manifest sidecar a
+generation run writes. Each target geometry version has one Zenodo
+record, and a correction is a new version of that record. The packaged
+``registry.toml`` maps short artifact names to records and file names.
+A local registry file, given as the ``registry_path`` argument or the
+``CIL_REGIONALIZATION_REGISTRY`` environment variable, adds names to it
+or repoints them. A record identifier can also be given directly.
 
-Integrity has two layers, both required. The transport layer checks
-every downloaded file against the md5 that Zenodo's record metadata
-declares for it. The content layer checks the weights parquet against
-the SHA256 its own manifest recorded at write time (the ``outputs``
-field), which ties the downloaded bytes to the generation run rather
-than to whatever was uploaded. A failure at either layer deletes the
-partial download and raises; nothing unverified ever lands in the cache
-under its final name.
+Every downloaded file is checked against the md5 that Zenodo's record
+metadata declares for it. The weights parquet is also checked against
+the SHA256 its own manifest recorded at write time, in the ``outputs``
+field. A failure at either check deletes the partial download and
+raises, so no unverified file lands in the cache under its final name.
 
-The cache lives under ``~/.cache/cil_regionalization`` (respecting
-``XDG_CACHE_HOME``, overridable via the ``cache_dir`` argument or
-``CIL_REGIONALIZATION_CACHE``), one directory per record and artifact,
-holding the canonical ``weights.parquet`` and ``weights.manifest.json``
-that `WeightsArtifact.load` reads. Cached artifacts are re-verified
-against the cached manifest on every use; a corrupt cache entry raises
-instead of loading. ``list_cached`` and ``clear_cache`` (or
-``cilreg cache list|clear``) show and remove cache contents.
+The cache is ``~/.cache/cil_regionalization``, or
+``$XDG_CACHE_HOME/cil_regionalization``, unless the ``cache_dir``
+argument or ``CIL_REGIONALIZATION_CACHE`` names another. It holds one
+directory per record and artifact, with the ``weights.parquet`` and
+``weights.manifest.json`` that `WeightsArtifact.load` reads. A cached
+artifact is checked against its cached manifest on every use, and a
+corrupt one raises instead of loading. ``list_cached`` and
+``clear_cache``, or ``cilreg cache list|clear``, show and remove the
+cached weight artifacts.
 """
 
 from __future__ import annotations
@@ -53,9 +50,9 @@ from cil_regionalization.apply import WeightsArtifact
 
 
 def _ssl_context() -> ssl.SSLContext:
-    """An SSL context that finds a CA bundle on hosts whose OpenSSL has
-    none configured (some cluster environments). certifi's bundle is
-    used when available; otherwise the system default."""
+    """An SSL context with certifi's CA bundle when certifi is installed,
+    and the system default otherwise."""
+    # some cluster hosts have an OpenSSL with no CA bundle configured
     try:
         import certifi
 
@@ -86,7 +83,8 @@ class ChecksumMismatchError(FetchError):
 
 @dataclass(frozen=True)
 class RegistryEntry:
-    """One published artifact: where it lives and what its files are called."""
+    """One published artifact, with its record, the Zenodo instance it is
+    on, and the names of its weights and manifest files."""
 
     name: str
     record: str
@@ -108,13 +106,13 @@ def _packaged_registry_path() -> Path:
 
 
 def load_registry(registry_path: str | Path | None = None) -> dict[str, RegistryEntry]:
-    """Load the artifact registry: packaged entries, then overlays.
+    """The artifact registry, as a `RegistryEntry` for each name.
 
-    Order: the packaged ``registry.toml``, then the file named by the
+    It reads the packaged ``registry.toml``, then the file named by the
     ``CIL_REGIONALIZATION_REGISTRY`` environment variable if set, then
-    ``registry_path`` if given. Later entries replace earlier ones of the
-    same name, so a local registry can both add artifacts and repoint
-    existing names.
+    ``registry_path`` if given. A later entry replaces an earlier one of
+    the same name. Raises if a named registry file does not exist or an
+    entry has no 'record' field.
     """
     paths: list[Path] = [_packaged_registry_path()]
     env = os.environ.get("CIL_REGIONALIZATION_REGISTRY")
@@ -270,13 +268,15 @@ def fetch_weights(
     cache_dir: str | Path | None = None,
     refresh: bool = False,
 ) -> WeightsArtifact:
-    """Fetch a published weight artifact and return it ready to apply.
+    """The published weight artifact ``name`` as a `WeightsArtifact`
+    ready for `apply_weights`, verified and cached.
 
-    ``name`` is normally a registry name; with ``record`` given (a Zenodo
-    record id or DOI) the registry is bypassed and ``name`` only labels
-    the cache entry. The result is a `WeightsArtifact`, directly
-    consumable by `apply_weights`. ``refresh`` re-downloads even when a
-    verified cached copy exists.
+    ``name`` is a registry name. With ``record`` given, a Zenodo record
+    id or DOI, the registry is not read, ``name`` only labels the cache
+    entry, and ``parquet`` and ``manifest`` name the record's files.
+    ``refresh`` downloads again even when a verified cached copy exists.
+    Raises if ``name`` is in no registry, if a cached copy fails its
+    check, or if a download fails either checksum.
     """
     if record is not None:
         entry = RegistryEntry(
@@ -407,7 +407,8 @@ def fetch_model_weights(
 
 
 def list_cached(cache_dir: str | Path | None = None) -> list[dict[str, Any]]:
-    """Cached artifacts: name, record, path, and size in bytes."""
+    """The cached weight artifacts, each a dict of 'name', 'record',
+    'path' and 'size_bytes'. Cached model weights are not listed."""
     cache = Path(cache_dir) if cache_dir is not None else default_cache_dir()
     out: list[dict[str, Any]] = []
     if not cache.exists():
@@ -431,7 +432,8 @@ def list_cached(cache_dir: str | Path | None = None) -> list[dict[str, Any]]:
 
 
 def clear_cache(cache_dir: str | Path | None = None, *, name: str | None = None) -> int:
-    """Remove cached artifacts; all of them, or just ``name``. Returns count."""
+    """Removes the cached weight artifacts, or only those called ``name``,
+    and returns how many it removed. Cached model weights stay."""
     cache = Path(cache_dir) if cache_dir is not None else default_cache_dir()
     removed = 0
     for item in list_cached(cache):

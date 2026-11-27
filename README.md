@@ -276,25 +276,30 @@ dimension named `gcm` without weights warns once; filter
 `quantile_method` says how a quantile is computed, by the name of
 the computation:
 
-- `"linear"` interpolates between members. It is computed by numpy,
-  so it is `numpy.quantile(method="linear")` and xarray's `.quantile`
-  to the last bit. It has no weighted form and is refused with
-  weights.
-- `"lower_step"` is the step of the historical extraction tool: the
-  member one below the one whose cumulative weight share reaches q.
-  Without weights every member counts the same, which is what that
-  tool did when it was told to use no model weights. A quantile below
-  the first step is `-inf`, and the value of a member with weight zero
+- `"inverted_cdf"` is the estimator of a quantile, the standard
+  inverse of the empirical distribution (Hyndman and Fan type 1), the
+  smallest member value whose cumulative weight share reaches q. It is
+  the same with or without weights, always returns the value of a
+  member, and never that of a member whose weight is zero.
+- `"linear"` interpolates between two members, so it can return a
+  number no member holds. It is computed by numpy, so it is
+  `numpy.quantile(method="linear")` and xarray's `.quantile` to the
+  last bit. It has no weighted form and is refused with weights.
+- `"lower_step"` is for reproducing the historical extraction tool,
+  not for estimating a quantile. It returns the member one below the
+  one `"inverted_cdf"` returns, so it is biased low at every quantile,
+  except the median of members that count equally. Without weights
+  every member counts the same, which is what that tool did when it
+  was told to use no model weights. A quantile at or below the first
+  member's share is `-inf`, and the value of a member with weight zero
   can come back.
-- `"inverted_cdf"` is the standard inverse of the empirical
-  distribution (Hyndman and Fan type 1), the smallest member value
-  whose cumulative weight share reaches q. It is the same with or
-  without weights, never returns `-inf`, and never returns the value
-  of a member whose weight is zero.
+
+The names say what each computes, so pick by that, not by the name.
 
 With four members that count equally the three give three different
-95th percentiles: the third member, a value between the third and the
-fourth, and the fourth.
+95th percentiles. `"inverted_cdf"` gives the fourth member, `"linear"`
+a value between the third and the fourth, and `"lower_step"` the
+third.
 
 `summation` says how a mean is summed:
 

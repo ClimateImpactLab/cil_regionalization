@@ -1,67 +1,35 @@
-"""BigQuery backend: cross-region geometry stage + combined SQL + dry-run gate.
+"""The BigQuery backend, which computes grid weights in one BigQuery
+query and applies the fallback in Python to the downloaded rows.
 
-Edge-semantics asymmetry the SQL has to compensate for
--------------------------------------------------------
-The local backend's cells are planar lat/lon rectangles; their
-horizontal edges are constant-latitude lines (parallels), which is how
-the netCDF grid is defined. BigQuery GEOGRAPHY interprets the edge
-between two vertices as a geodesic, so a cell's constant-latitude edge
-bows poleward off the parallel for any segment longer than a fraction
-of a degree at mid-latitudes. A region whose boundary crosses a
-parallel ends up with a sliver of area on the wrong side in BQ vs the
-local backend; the gap is ~3e-3 in cross-backend areawt at 1deg/0.1deg
-mid-latitude resolution.
+BigQuery cannot join tables in different locations, and the regions table
+may sit apart from the weight tables. The backend reads the requested
+geometries in the regions table's location, or from a regions file, and
+loads them as WKT through a Parquet file on GCS into a temp table in the
+temp dataset. The temp dataset and every weight table must share a
+location. Raises, naming them and their locations, if they do not. No
+dataset is ever created. The temp table's name carries a hash of the
+geometries, so a run with the same geometries reuses a cached table. The
+table gets an expiry and is deleted after the run unless
+``backend.bigquery.cache_temp_tables`` is set.
 
-The fix is in the BQ backend, not the tolerance: the grid is
-parallel-bounded by definition, so BQ is the one slightly
-misrepresenting the cell. `_build_main_sql` densifies the
-constant-latitude edges with intermediate vertices spaced
-`backend.bigquery.densify_step` apart (default 0.1deg). Chord-vs-parallel
-error scales with the square of segment length, so 0.1deg pulls the
-residual to ~1e-5 or better. Meridian edges are geodesics in both
-backends and need no densification.
+The combined query is dry-run first. Raises if the estimate exceeds
+``backend.bigquery.dry_run_byte_ceiling``. The query's point-in-polygon
+join scans the whole weight table however few regions are requested, so
+a small run still estimates about a full scan.
 
-Residuals after the fix are dominated by:
-- spheroid (BQ ST_AREA) vs ellipsoid (pyproj.Geod); ~1e-5 relative,
-- region-boundary edges (planar shapely intersection vs spherical BQ
-  ST_INTERSECTION); ~1e-5 typical, larger when the boundary itself
-  is a long geodesic.
-
-The hard constraint
--------------------
-The clustered IR geometries on ``compute-impactlab`` live in ``us-west1``;
-the GPW population table lives in ``US``. BigQuery cannot join across
-locations, so we cannot point a single SELECT at both tables. The pipeline
-follows what the legacy scripts did for the same reason:
-
-1. **Resolve and assert locations.** Inspect the dataset location of the
-   IR table, every weight table, and the configured temp dataset. The
-   temp dataset and every weight table must share a location; otherwise
-   stop and report the mismatch with both dataset ids and their
-   locations. Create no datasets.
-2. **Fetch geometries client-side** from the IR dataset's location, with
-   the hierid filter applied. Tiny under test mode.
-3. **Stage the geometries to GCS** as JSONL and **load_job them into
-   the temp dataset** in the weights' location. Table name includes a
-   sha256 content hash of the geometry set so identical-input re-runs
-   skip the upload. Expiration is set as a backstop; the finally block
-   deletes the table unless ``cache_temp_tables`` is on.
-3. **Run the combined query** with ``location`` resolved at runtime,
-   joining the temp geometries table against the weight tables with the
-   locked FLOOR cell-binning formula. Dry-run gated against
-   ``backend.bigquery.dry_run_byte_ceiling`` (10 GB default).
-4. **Apply fallback Python-side** with the same Stage 1 functions the
-   local backend uses, on the downloaded frame.
-
-Cost note
----------
-``ST_CONTAINS(region, ST_GEOGPOINT(lon, lat))`` against the GPW points
-table scans the whole table no matter how few hierids the temp dataset
-holds; BQ cannot skip rows by spatial predicate at this scale without
-a geo-clustered source. The 10 GB ceiling is sized to admit one full
-GPW scan (~5.84 GB measured 2026-06-10); a tiny-hierid run will still
-report ~6 GB estimated. That is expected, not a bug.
+BigQuery takes a polygon edge as a geodesic, so the top and bottom edges
+of a cell would bow off their parallels. The query adds vertices along
+them at most ``backend.bigquery.densify_step`` degrees apart. What area
+difference remains against the local backend comes from BigQuery's earth
+model, which is not the WGS84 ellipsoid, and from region edges that are
+spherical in BigQuery and planar in the local backend.
 """
+
+# The densification lives in this backend, not in the comparison
+# tolerance, because the grid is bounded by parallels by definition and
+# BigQuery is the one drawing the cell wrong. The gap between a chord and
+# its parallel grows with the square of the chord's length, so short steps
+# close it.
 
 from __future__ import annotations
 
@@ -109,7 +77,9 @@ _LAT_ORIGIN = -90.0
 
 
 class BigQueryBackend(WeightsBackend):
-    """Cross-region BigQuery backend; Stage 1 fallback on the downloaded frame."""
+    """The backend that computes grid weights in BigQuery and applies the
+    fallback in Python to the downloaded rows. Raises on construction if
+    the ``bigquery`` extra is not installed."""
 
     def __init__(self) -> None:
         try:
@@ -243,27 +213,23 @@ class BigQueryBackend(WeightsBackend):
         weights: list[WeightSpec],
         cfg: Config,
     ) -> dict:
-        """Estimate the combined query's scan cost without executing it.
+        """The combined query's scan estimate, found without running it.
 
-        Performs every step a real `compute()` would, *except* the final
-        download:
+        It validates the inputs, resolves the locations, pre-checks the ids,
+        fetches the geometries and uploads the temp table as `compute` does,
+        then dry-runs the query. The temp table is deleted afterwards unless
+        ``backend.bigquery.cache_temp_tables`` is set. The estimate is not
+        compared with the byte ceiling, and a second non-area weight is not
+        refused, though the query covers only the first. Raises as
+        `compute` does on invalid inputs, mismatched locations and failed
+        pre-checks.
 
-            1. resolve locations,
-            2. fetch hierid-filtered geometries from IR,
-            3. upload them to the temp dataset (so the dry-run is realistic),
-            4. dry-run the combined query.
-
-        Returns a dict with at least ``bytes_estimate``, ``compute_location``,
-        ``temp_table``, ``cache_hit``. The temp table is left in place and
-        cleaned up only if `cfg.backend.bigquery.cache_temp_tables` is False;
-        in that case the caller can re-invoke compute() with the same cfg
-        which will detect the cache miss and re-upload, OR set
-        ``cache_temp_tables = True`` to keep the table for the real run.
-
-        Public method so example runners and notebooks can implement the
-        "print estimate, confirm interactively, then run" pattern without
-        reaching into backend internals.
+        Returns a dict with ``bytes_estimate``, ``compute_location``,
+        ``ir_location``, ``temp_table``, ``cache_hit``, ``n_regions``,
+        ``null_skipped`` and ``unknown_skipped``.
         """
+        # Public so runners and notebooks can print the estimate and ask
+        # before the real run, without reaching into backend internals.
         self._validate_inputs(regions, grid, weights, cfg)
         non_area = [w for w in weights if not w.is_area]
         client = self._bq.Client(project=cfg.backend.bigquery.project)
@@ -375,28 +341,21 @@ class BigQueryBackend(WeightsBackend):
         location: str,
         cfg: Config,
     ) -> tuple[list[str], list[str]]:
-        """Pre-check the requested set against the regions table.
+        """The requested ids whose geometry is NULL and those missing from
+        the regions table, as ``(null_skipped, unknown_skipped)``, each
+        sorted.
 
-        Returns ``(null_skipped, unknown_skipped)``.
-
-        Two failure modes share one query:
-
-        - **NULL geometry**; the id IS in the table but its geometry
-          column is NULL (the s51 IR table inherits 17 from the legacy
-          pipeline's ``SAFE.ST_GEOGFROMTEXT``).
-        - **Unknown id**; the id is in `regions.keep` but does not
-          appear in the table at all. Hardcoded ids like ``AND`` and
-          ``BMU`` survived migration to the clustered world-combo IR
-          where small territories are merged into agglomerations;
-          earlier runs silently dropped them because nothing checked
-          membership.
-
-        Policy applied per failure mode independently. Either
-        ``error`` raises; ``skip`` returns the list for the caller to
-        exclude AND record in the manifest. Both lists fully accounted
-        for in the runner's coverage check
-        ``output + null_skipped + unknown_skipped == requested``.
+        With no keep filter on the primary id there are no unknown ids, and
+        every NULL geometry in the table counts. A regions file is checked
+        in memory, where an empty geometry counts as NULL. Raises on
+        unknown ids under ``regions.on_unknown_id = "error"`` and on NULL
+        geometries under ``regions.on_null_geometry = "error"``. Under
+        ``"skip"`` the caller leaves the returned ids out and records them
+        in the manifest.
         """
+        # Unknown ids are checked because ids such as AND and BMU were
+        # merged into agglomerations in the clustered world-combo table,
+        # and earlier runs dropped them without a word.
         primary_id = regions.id_fields[0]
         if regions.gdf is not None:
             # Shapefile / GeoParquet source. Pre-check runs against the
@@ -482,13 +441,12 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         non_area_weights: list[WeightSpec],
         cfg: Config,
     ) -> tuple[str | None, str]:
-        """Return ``(ir_location, compute_location)``.
-
-        compute_location is shared by the temp dataset and every weight
-        table. A mismatch raises with both dataset ids and locations and
-        no workaround. When `regions.table` is unset (shapefile source for
-        the supplement run), `ir_location` returns None; there is no IR
-        dataset to read.
+        """The regions table's location and the compute location, as
+        ``(ir_location, compute_location)``. The compute location is the
+        temp dataset's, and every weight table must share it. Raises,
+        naming the temp dataset, each mismatched weight table and their
+        locations, if one does not. ``ir_location`` is None when the
+        regions come from a file.
         """
         bq_cfg = cfg.backend.bigquery
         if regions.table is not None:
@@ -534,11 +492,10 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         hierids: list[str] | None,
         primary_id: str,
     ) -> tuple[list[str], list[str]]:
-        """Detect NULL geometries and unknown ids from the in-memory gdf.
-
-        Mirrors the SQL pre-check semantics. Used by the supplement
-        run when ``regions.path`` (shapefile / geoparquet) is the
-        source instead of an IR BigQuery table.
+        """The requested ids with a missing or empty geometry and those
+        absent from the regions file, as ``(null_ids, unknown_ids)``, each
+        sorted, with the meaning of the SQL pre-check. With no ``hierids``
+        there are no unknown ids and every missing or empty geometry counts.
         """
         assert regions.gdf is not None  # narrowed by caller
         gdf = regions.gdf
@@ -572,12 +529,10 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         location: str,
         cfg: Config,
     ) -> pd.DataFrame:
-        """Fetch (id_fields[0], geometry as WKT) from the IR table.
-
-        Runs in the IR dataset's location (single-dataset query, no cross-
-        region join). ``ST_ASTEXT`` emits WKT strings; that's exactly the
-        format the JSONL load job needs to round-trip GEOGRAPHY into the
-        temp dataset.
+        """The primary id and the WKT geometry of each region in
+        ``hierids``, or of every region when it is None, leaving out NULL
+        geometries. The query runs in the regions table's location. Regions
+        from a file are taken from memory instead.
         """
         primary_id = regions.id_fields[0]
         if regions.gdf is not None:
@@ -602,13 +557,12 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         hierids: list[str] | None,
         primary_id: str,
     ) -> pd.DataFrame:
-        """Convert the in-memory gdf to the WKT-string shape the temp
-        upload expects. Filtered to ``hierids`` and to non-NULL/non-empty
-        geometries; geometries are NOT repaired here; repair already
-        happened in `RegionSet.from_config` under the configured
-        ``on_invalid_geometry`` policy, and the resulting per-hierid log
-        is surfaced via ``regions.repaired_ids`` so the manifest can
-        record it.
+        """The regions file's primary id, as a string, and WKT geometry of
+        each region in ``hierids``, or of every region when it is None,
+        leaving out missing and empty geometries. Geometries are not
+        repaired here. `RegionSet.from_config` has already repaired them
+        under ``on_invalid_geometry`` and listed them in
+        ``regions.repaired_ids``.
         """
         assert regions.gdf is not None
         gdf = regions.gdf
@@ -664,21 +618,16 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         cfg: Config,
         location: str,
     ) -> None:
-        """Stage geometries to GCS as **Parquet**, load_job into temp.
-
-        JSONL staging with multi-MB WKT rows (CAN.5 in the supplement
-        set is ~20 MB after `make_valid`) triggered deterministic BQ 500
-        ``internalError`` on the load job. Parquet handles large string
-        values without per-line JSON escaping; BigQuery loads it
-        natively and coerces the ``geometry`` STRING column into
-        GEOGRAPHY via the schema-declared target type.
-
-        Geometries are NEVER simplified; the BQ run consumes the
-        full make_valid output. The retry loop covers transient
-        service-side flakiness, with logs naming the BigQuery job_id
-        on every failure so a persistent issue can be escalated to
-        support with a concrete reference.
+        """Load ``geom_df`` into the temp table ``table_id`` through a
+        Parquet file staged under ``backend.bigquery.staging_uri``, keeping
+        the geometry as a WKT string for the query to parse. Geometries are
+        not simplified. The staged file is removed afterwards, and the table
+        expires after ``backend.bigquery.temp_table_expiration_hours``.
+        Transient load errors are retried. Raises if any geometry is NULL.
         """
+        # Parquet, not JSONL. JSONL staging of multi-megabyte WKT rows made
+        # the load job fail with a BigQuery 500 internalError every time,
+        # and Parquet carries large strings without per-line escaping.
         bq_cfg = cfg.backend.bigquery
         import gcsfs
         import pyarrow as pa
@@ -769,15 +718,14 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         job_config,
         location: str,
     ) -> None:
-        """Submit a load job with bounded retry-with-backoff.
-
-        Retries on transient service errors only (InternalServerError,
-        ServiceUnavailable, DeadlineExceeded). Schema mismatches and
-        other deterministic failures re-raise immediately. On every
-        retryable failure the BigQuery job_id is logged so a persistent
-        service-side issue can be escalated to support with a concrete
-        reference.
+        """Run the load job, retrying with exponential backoff on
+        InternalServerError, ServiceUnavailable and DeadlineExceeded, up to
+        ``_LOAD_MAX_ATTEMPTS`` attempts in all. Any other error is raised at
+        once. Each failure is logged with its BigQuery job id, and the last
+        transient error is raised when every attempt fails.
         """
+        # The job id is logged so a persistent service-side failure can be
+        # taken to support with a concrete reference.
         try:
             from google.api_core.exceptions import (
                 DeadlineExceeded,
@@ -872,33 +820,22 @@ WHERE it.{primary_id} IS NULL OR COALESCE(it.is_null, FALSE)
         weights: list[WeightSpec],
         cfg: Config,
     ) -> str:
-        """Cell binning + area + points join.
+        """The combined query, which returns each region's cells with
+        ``cell_lon``, ``cell_lat``, the intersection area ``area_raw`` and
+        the weight's raw sum, one row per cell of positive area. Only the
+        first non-area weight is included.
 
-        Antimeridian handling (the load-bearing piece):
-
-        BQ's ``ST_BOUNDINGBOX`` on a dateline-crossing GEOGRAPHY returns
-        an unwrapped longitude range, so a naive ``GENERATE_ARRAY`` over
-        FLOORed lon-indices produces ``ix`` values outside ``[0, n_ix)``
-        (e.g. ix=360, 464). Two problems:
-
-            (a) the same physical cell appears twice for ATA-style polar
-                regions (ix=0 AND ix=360 both produce a non-zero
-                intersection),
-            (b) for FJI / USA.2.69-style mid-latitude crossers, the
-                points CTE bins raw GPW longitudes in ``[-180, 180]`` to
-                wrapped indices, so the area-cell side at ix=360 never
-                joins with the points side at ix=0 and the eastern
-                hemisphere's population silently disappears.
-
-        Fix: wrap ``ix`` modulo ``n_ix`` at generation; cap the
-        ``GENERATE_ARRAY`` upper bound at ``ix_lo + n_ix - 1`` so we
-        never emit more than one full belt; ``GROUP BY (wrapped_ix,
-        cell_iy)`` and aggregate area_raw with ``MAX`` to dedupe the
-        rare wrap-collision (the same physical cell has the same
-        intersection area whether reached via ix=0 or ix=360, so MAX
-        is correct and not a double-count); apply the same wrap to the
-        points CTE so both sides share one key space.
+        ``ST_BOUNDINGBOX`` gives a dateline-crossing region an unwrapped
+        longitude range, so cell indices past ``n_ix`` come out of it. The
+        query wraps every ix modulo ``n_ix`` on both the cell side and the
+        points side, and covers at most one full belt of longitudes per
+        region. A cell reached twice through the wrap is counted once,
+        keeping its largest intersection area.
         """
+        # Without the wrap a polar region such as ATA would get the same
+        # cell twice, at ix 0 and ix 360, and a mid-latitude crosser such
+        # as FJI would lose population, because its cells at ix 360 never
+        # join the points, binned from [-180, 180] longitudes, at ix 0.
         import math
 
         non_area = [w for w in weights if not w.is_area]
@@ -1066,13 +1003,13 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
         return int(job.total_bytes_processed or 0)
 
     def _to_dataframe(self, job, cfg: Config) -> pd.DataFrame:
-        """Download a query result to pandas, respecting use_bqstorage.
-
-        Routing every download through one place keeps the
-        BigQuery-Storage opt-in honest. Default False: an install with
-        the `bigquery-storage` package present is inert, not a 403 trap
-        for accounts without `bigquery.readsessions.create`.
+        """The query result as a pandas frame, downloaded through the
+        BigQuery Storage API only when ``backend.bigquery.use_bqstorage``
+        is set.
         """
+        # Every download goes through here so the Storage API stays opt-in.
+        # Having the package installed must not turn it on, since accounts
+        # without bigquery.readsessions.create get a 403 from it.
         return job.to_dataframe(
             create_bqstorage_client=cfg.backend.bigquery.use_bqstorage
         )

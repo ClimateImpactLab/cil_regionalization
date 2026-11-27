@@ -1,21 +1,17 @@
-"""NetCDF leaf reader: flatten a dataset to the long form application takes.
+"""Reads NetCDF files into the long frames and cell tables that
+`apply_weights` takes.
 
-Optional dependency, handled the way the BigQuery backend handles its
-extra: importing this module is always safe, and the reader raises a
-message naming ``cil_regionalization[netcdf]`` when xarray is absent.
+Importing this module is always safe. A reader raises with a message
+naming ``cil_regionalization[netcdf]`` when xarray is absent.
 
-The reader is deliberately dumb. It selects the requested variables,
-flattens every dimension combination to one row, and renames the
-declared region dimension to the caller's region column. It does not
-sort, reindex, fill, or drop: values come out exactly as stored, NaN
-included, in the file's own coordinate order. If the region coordinate
-carries values the weights artifact does not know, the application
-layer's coverage check reports that; papering over it here would hide
-exactly the condition those checks exist to surface.
-
-Non-dimension coordinates on the selected variables (a scalar scenario
-label, for example) come along as columns and behave downstream like any
-other passthrough dimension.
+`read_netcdf_leaf` selects the requested variables, flattens every
+combination of dimensions to one row, and renames the declared region
+dimension to the caller's region column. It does not sort, reindex,
+fill or drop, so values come out as stored, NaN included, in the file's
+own coordinate order. A region the weights artifact does not know is
+reported by the coverage check in `apply_weights`. Non-dimension
+coordinates on the selected variables, such as a scalar scenario label,
+come along as columns and pass through like any other dimension.
 """
 
 from __future__ import annotations
@@ -50,41 +46,33 @@ def read_netcdf_leaf(
     region_labels: str | None = None,
     kind: str | None = None,
 ) -> pd.DataFrame:
-    """Read one NetCDF leaf into a long frame.
+    """One NetCDF leaf as a long frame, one row per combination of the
+    dimensions of ``variables``.
 
-    ``variables`` are the data variables to carry (one for extensive or
-    intensive application; numerator and denominator for ratio).
-    ``region_dim`` is the file's name for the region dimension, declared
-    in config rather than assumed; it is renamed to ``region_col``, the
-    weights artifact's source key column. Everything else flattens to
-    ordinary columns.
+    ``variables`` are the data variables to carry, one for extensive or
+    intensive application and the numerator and denominator for ratio.
+    ``region_dim`` is the file's name for the region dimension, and it
+    is renamed to ``region_col``, the weights artifact's source key
+    column. Some trees have no coordinate on the region dimension and
+    keep the region ids in a separate variable, as the mortality trees
+    do in ``regions``. ``region_labels`` names that variable, and its
+    values become the region coordinate. Without it such a region
+    column comes out as positional integers.
 
-    Some trees carry no coordinate on the region dimension and store
-    the region ids in a separate variable instead (the mortality trees
-    keep them in ``regions``). Without a coordinate the region column
-    would come out as positional integers, so ``region_labels`` names
-    that variable and its values become the region coordinate before
-    flattening. Declared like everything else: the reader does not
-    guess which variable holds the ids.
+    With ``kind="extensive"`` the read raises if a variable's ``units``
+    attribute contains a percent sign, since that variable is a ratio. A
+    ratio whose units have no percent sign, or that has no units, is not
+    caught. Also raises if a variable is missing, if ``region_dim`` is
+    not one of their dimensions, if ``region_labels`` is missing or not
+    on ``region_dim`` alone, or if ``region_col`` is already a column.
 
-    ``kind`` optionally names the aggregation kind the caller intends,
-    enabling the units backstop: a variable whose ``units`` attribute
-    contains a percent sign is a ratio, and summing a ratio across
-    regions is meaningless, so reading it under ``kind="extensive"``
-    raises. This catches exactly one failure (percent-labeled ratios
-    declared extensive, like a "% GDP" levels file); it cannot catch
-    ratios with percent-free unit strings, missing units attributes, or
-    the same mistake arriving through parquet and csv leaves, which
-    carry no units metadata. The kind declaration itself remains the
-    caller's responsibility.
-
-    In the mortality and labor Monte Carlo trees, the effect of
-    climate change is ``rebased`` from a ``...-combined.nc4`` file
-    minus ``rebased`` from its ``-histclim`` sibling; the value on its
-    own is not it. No adaptation is the exception and stands alone.
-    The Climate Impact Lab memo "The art of rebasing and histclim" has
-    the reasoning; the Mexico example (examples/rates) shows the
-    subtraction.
+    In the mortality and labor Monte Carlo trees the effect of climate
+    change is ``rebased`` from a ``...-combined.nc4`` file minus
+    ``rebased`` from its ``-histclim`` sibling, and the value of one
+    file alone is not it. No adaptation is the exception and stands
+    alone. The Climate Impact Lab memo "The art of rebasing and
+    histclim" gives the reasoning, and the Mexico example in
+    examples/rates shows the subtraction.
     """
     xr = _import_xarray()
     variables = list(variables)
@@ -149,51 +137,41 @@ def read_netcdf_grid(
     lon: str = "lon",
     grid: "str | GridSpec | None" = None,
 ) -> tuple[pd.DataFrame, str]:
-    """Read a NetCDF on a regular lat-lon grid into a cell table.
+    """``(cells, grid)`` from a NetCDF on a regular lat-lon grid.
 
-    Returns ``(cells, grid)``. ``cells`` has one row per cell and
-    slice, with ``cell_ix`` and ``cell_iy`` on the grid, one column per
-    variable, and any other dimension (time, say) as a column, as
-    `read_netcdf_leaf` does. ``grid`` is the identity string, for
-    example ``grid-0.25deg-center-[-180,180)``; pass it to
-    `apply_weights` as ``data_version``.
+    ``cells`` has one row per cell and slice, with ``cell_ix`` and
+    ``cell_iy`` on the grid, one column per variable, and any other
+    dimension, such as time, as a column. ``grid`` is the identity
+    string, for example ``grid-0.25deg-center-[-180,180)``, to pass to
+    `apply_weights` as ``data_version``. ``lat`` and ``lon`` name the
+    file's 1-D coordinate variables, each the coordinate of a dimension
+    of the same name, and every variable must have both.
 
-    ``lat`` and ``lon`` name the file's 1-D coordinate variables, each
-    the coordinate of a dimension of the same name; every variable must
-    have both. Coordinate names are never guessed.
+    The grid is ``grid`` if given, as the identity string or a generated
+    `GridSpec`, and otherwise `infer_grid_version` derives it from the
+    coordinates. With ``grid``, longitudes are wrapped into its
+    convention, so a [0,360) file can be put on a [-180,180) grid. The
+    indices come from each row's own coordinates, so the order of the
+    axes does not matter, and nothing is regridded or snapped.
 
-    The grid is ``grid`` if given, as the identity string or a
-    `GridSpec`, and otherwise derived from the coordinates
-    (`infer_grid_version`). With ``grid``, longitudes are wrapped into
-    its convention, so a [0,360) file can be put on a [-180,180) grid.
-    Either way each coordinate is mapped to its cell index and back to a
-    centroid, and the read raises if any value is not a cell centre on
-    that grid. No data is moved or reordered: indices come from each
-    row's own coordinates, so the order of the axes does not matter.
-    Nothing is regridded or snapped.
+    A file whose longitudes all lie in [0,180], such as a cut of Europe,
+    Asia or Africa, fits both longitude conventions and needs ``grid``.
+    Without it the error prints the two calls that would work. Without
+    ``grid``, a file whose latitude and longitude steps differ also
+    raises, since a grid identity holds one resolution.
 
-    A subset whose longitudes all lie in [0,180], such as a cut of
-    Europe, Asia or Africa, always needs ``grid``. The same coordinates
-    are valid on both longitude conventions, so nothing in the file can
-    say which one your weights were built on. The error for this case
-    is not a bug; it prints the two calls that would work. A file with a
-    coordinate beyond 180 or below 0 is not affected.
-
-    Limit: cells must be square. The grid identity holds one
-    resolution, so a file whose latitude and longitude steps differ
-    raises instead of being read. The identity's spelling is fixed by
-    the weight files already on Zenodo. Allowing two steps would change
-    `GridSpec`, `GridConfig`, the manifest, `validate` and the BigQuery
-    backend, and would still not read Gaussian grids or grids with
-    latitude points on the poles, whose latitude step does not divide
-    180 degrees.
-
-    Cells masked (NaN) in every slice are left out, as
-    `DailyGrid.to_cells` does, so `apply_weights` reports a weighted
-    cell that has no data instead of averaging around it. A cell masked
-    in some slices and not others raises. Two coordinates that land on
-    the same cell (a longitude of both -180 and 180) raise.
+    Cells masked (NaN) in every slice are left out, as in
+    `DailyGrid.to_cells`, and `apply_weights` reports a weighted cell
+    that has no data. Raises if a variable or coordinate is missing, if
+    any coordinate is not a cell centre on the grid, if two coordinates
+    land on one cell, such as longitudes of both -180 and 180, or if a
+    cell is masked in some slices and not others.
     """
+    # The identity's spelling is fixed by the weight files already on
+    # Zenodo. Allowing two steps would change GridSpec, GridConfig, the
+    # manifest, validate and the BigQuery backend, and would still not
+    # read Gaussian grids or grids with latitude points on the poles,
+    # whose latitude step does not divide 180 degrees.
     xr = _import_xarray()
     from cil_regionalization.grid import (
         AmbiguousLongitudeConvention,

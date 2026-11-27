@@ -55,12 +55,14 @@ def regroup(
     value a group and every other column, so that a country is the sum
     or the mean of its states in each window and sample member.
 
-    "extensive" sums the values, and needs no ``basis``. "intensive"
+    "extensive" sums the values and takes no ``basis``. "intensive"
     takes the mean weighted by each target's basis, the frame
     `target_basis` gives, over the targets with a value. A group with no
-    value is NaN. ``summation`` is "fast" or "exact", as for the
-    statistics. Raises if ``by`` is not among ``id_fields``, or a row's
-    target has no basis."""
+    value is NaN, and so is an intensive group whose targets with a
+    value have a basis of zero. ``summation`` is "fast" or "exact", as
+    for the statistics. Raises if ``by`` is not among ``id_fields``, if
+    ``basis`` is given for "extensive" or left out for "intensive", or
+    if a row's target has no basis."""
     from cil_regionalization.stats import check_summation
 
     check_summation(summation)

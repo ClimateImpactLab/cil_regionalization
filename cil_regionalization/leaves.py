@@ -255,9 +255,12 @@ def _string_array(column: pd.Series) -> pa.Array:
 
 
 def _dimension_array(name: str, column: pd.Series) -> pa.Array:
-    """A leaf's own dimension as an Arrow array. Integers and floats
-    keep their width. Raises on a dtype that pandas 2 and pandas 3 write
-    differently."""
+    """A leaf's own dimension as an Arrow array. Integers, floats and
+    booleans keep their width, and plain strings become Arrow strings.
+    Raises on any other dtype, such as a categorical, datetime or
+    nullable one."""
+    # a categorical, datetime or nullable column is refused because
+    # pandas 2 and pandas 3 write it differently
     dtype = column.dtype
     if isinstance(dtype, np.dtype) and dtype.kind in "iufb":
         return pa.array(column.to_numpy())
@@ -320,7 +323,8 @@ def write_leaf(
     identity: dict,
     targets_per_group: int = TARGETS_PER_GROUP,
 ) -> WrittenLeaf:
-    """Write one aggregated leaf.
+    """Write one aggregated leaf and return what was written, for the
+    leaves manifest.
 
     ``frame`` is what `apply_weights` returned. The file has an int32
     `ORDINAL_COLUMN` first, then the columns of ``frame`` in their
@@ -328,7 +332,8 @@ def write_leaf(
     the next multiple and is empty where the leaf has none of them.
     ``identity`` goes into the footer with the layout. The file is
     written under a temporary name and renamed, so a file under ``path``
-    is always whole.
+    is always whole. Raises if the value column is not float64, or a
+    row names a target the table does not have.
     """
     path = Path(path)
     if ORDINAL_COLUMN in frame.columns:

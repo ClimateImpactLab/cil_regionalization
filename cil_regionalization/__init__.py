@@ -1,42 +1,56 @@
-"""Public API surface for cil_regionalization.
+"""Public API of cil_regionalization.
 
-What a consumer of published weights touches, in call order:
+`fetch_weights` downloads a published weights artifact, verifies it,
+caches it and loads it. `fetch_model_weights` does the same for the
+published climate model weights, and `list_cached` and `clear_cache`
+show and remove cached artifacts. `WeightsArtifact` is the loaded
+weights, and `WeightsArtifact.from_table` builds one from a weight table
+produced elsewhere.
 
-    fetch_weights       download a published artifact, verify, cache, load
-    read_netcdf_grid    a lat-lon NetCDF to the cell table apply_weights takes
-    apply_weights       aggregate source-level data to the artifact's targets
-    summarize_samples   window means and pooled statistics over MC draws
-    read_model_weights  the climate model weights those statistics take
-    read_gmst           a table of global mean temperature by member
-    assign_warming_levels   the warming level of each member in a period
+`read_netcdf_grid` reads a lat-lon NetCDF to the cell table
+`apply_weights` takes, and `read_netcdf_leaf` reads a NetCDF leaf to a
+long frame. `apply_weights` aggregates source-level data to the
+artifact's targets, and `SourceUnitPolicies` says what it does with
+source units it cannot use. `regroup` sums or averages targets into
+groups, such as states into countries, and `target_basis` gives each
+target's weight basis for the average.
 
-`window_means` and `pooled_statistics` are the two halves of
-`summarize_samples`, for pipelines that reduce time per leaf before
-pooling.
+`summarize_samples` takes window means and then pooled statistics over
+the sample members. `window_means` and `pooled_statistics` are its two
+halves, for pipelines that reduce time per leaf before pooling.
+`read_model_weights` reads the climate model weights those statistics
+take, as `ModelWeights`, and `UnweightedModelWeightsWarning` is the
+warning given when models are pooled without them. `mixture_quantile`
+is the quantile of a weighted mixture of normal distributions.
 
-plus `WeightsArtifact` (the loaded weights; `WeightsArtifact.from_table`
-builds one from a weight table produced elsewhere), the schema types
-`OutputSchema`, `SourceUnits` and `GRID_CELLS` for constructing one by
-hand, and, for weight generation, `generate_weights` with
-`Config` / `load_config` (and `SumToOneError`, `WeightsResult`), as well
-as the `cilreg` CLI. Everything not exported here is internal and may
+`read_gmst` reads a table of global mean temperature by member as a
+`GMSTTable`. `assign_warming_levels` gives the warming level of each
+member in each `Period`, as `WarmingLevels`, and its `windows_of` gives
+a member's levels as `LevelWindow`.
+
+`read_gradient_leaf`, `aggregate_gradient`, `window_gradient` and
+`delta_method` carry delta-method gradients from a leaf to a mean and
+standard deviation per target.
+
+`generate_weights` makes weights from a `Config`, which `load_config`
+reads from TOML. It returns a `WeightsResult` and raises `SumToOneError`
+when the weights fail the sum-to-one check. `OutputSchema`,
+`SourceUnits` and `GRID_CELLS` are the schema types for building an
+artifact by hand. The `cilreg` command runs generation, the Monte Carlo
+pipeline and fetching. Everything not exported here is internal and may
 change without notice.
 
-Package import does two small env-repairs so CLI, notebooks, and library
-users all get a working geospatial stack without per-process incantations:
-
-1. PROJ_LIB / PROJ_DATA pointed at this env's share/proj when one
-   exists (conda layouts), or cleared when they point outside this env
-   (pip venvs, where each wheel bundles its own PROJ data and
-   self-locates once the variables are unset). Either stale state comes
-   from inheriting another installation's environment and breaks CRS
-   construction, with "Invalid projection: EPSG:4326" or "proj.db lacks
-   DATABASE.LAYOUT.VERSION" depending on the direction of the mismatch.
-2. The GDAL 4.0 FutureWarning about UseExceptions is suppressed (or, if
-   the osgeo binding is present, UseExceptions is called explicitly).
-   Notebook and CLI output stay clean of the upstream warning.
+Importing the package repairs two parts of the environment. When this
+environment's share/proj holds a proj.db, PROJ_LIB is set to it, and
+PROJ_DATA too unless already set. Otherwise a PROJ_LIB or PROJ_DATA that
+points outside this environment is removed, and each wheel finds its own
+PROJ data. When the osgeo binding is installed, GDAL's UseExceptions is
+called, and otherwise GDAL's FutureWarning about it is suppressed.
 """
 
+# A PROJ_LIB or PROJ_DATA inherited from another installation breaks CRS
+# construction, with "Invalid projection: EPSG:4326" or "proj.db lacks
+# DATABASE.LAYOUT.VERSION" depending on the direction of the mismatch.
 from __future__ import annotations
 
 import importlib.metadata as _metadata

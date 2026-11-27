@@ -1,87 +1,49 @@
-"""Monte Carlo aggregation pipeline: apply weights per leaf, then statistics.
+"""Monte Carlo aggregation pipeline, with weights applied leaf by leaf and
+statistics taken over the pooled leaves.
 
-Composes the library core and adds no mathematics. The sequence:
+The tree of leaves is declared in the config, as an ordered list of
+level names and the values each level takes. Every declared leaf has to
+be on disk before any work starts. Each leaf is read, given to
+`apply.apply_weights` with the configured kind, weight, version and
+policies, and reduced to its window means by `stats.window_means`. Its
+level values go on the reduced rows as columns. Coverage and mass
+balance are checked leaf by leaf as in a direct call, and a failing
+leaf fails the run. The reduced leaves are then pooled, and
+`stats.pooled_statistics` takes the statistics once, with the window
+label as an ordinary identity column. The statistics file and its
+manifest are written only after every leaf has succeeded, with the rows
+sorted by `_ordered` whatever order the leaves were pooled in.
 
-    1. Resolve the declared tree of Monte Carlo leaves. The directory
-       grammar is configuration: an ordered list of level names and the
-       expected values per level. The historical batch/rcp/gcm/iam/ssp
-       layout is one instance of the pattern; nothing here knows those
-       names, the depth, or the order.
-    2. Fail before any work if a declared leaf is missing on disk.
-    3. Per leaf: read the frame and run `apply.apply_weights` with the
-       configured kind, weight, versions, and policies. Coverage and mass
-       balance run per leaf exactly as they do for a direct library call,
-       and a failing leaf fails the run. Optionally write the aggregated
-       leaf, mirrored under the output directory, in the layout of the
-       `leaves` module. Then take the window
-       mean (`stats.window_means`) over the configured windows, collapsing
-       the time dimension to the window count before anything is pooled,
-       and attach the leaf's level values as columns to the reduced rows.
-    4. Concatenate the reduced leaves and run `stats.pooled_statistics`
-       once, with the window label as an ordinary identity dimension;
-       write the combined statistics plus a pipeline manifest recording
-       every leaf and its accounting. The rows are sorted (`_ordered`),
-       whatever order the leaves were pooled in.
+Without a ``[weights]`` section the run is a passthrough. The tree
+walk, the subtraction, the window means and the statistics are the
+same, with no spatial aggregation. The rows are the leaf's own regions,
+keyed by the column ``data.region_col`` names, and there is no coverage
+or mass balance. A ratio is refused, since its numerator is divided by
+its denominator at an aggregation target.
 
-Passthrough: leaving the ``[weights]`` section out entirely runs the
-same tree walk, subtraction, window reduction, and pooled statistics
-with no spatial aggregation at all. The leaf's own regions are the
-output rows, keyed by the column ``data.region_col`` names (there is
-no artifact to name it), and no coverage or mass-balance accounting
-exists because no weights were applied. This produces the statistics
-one step before any aggregated product: if a pattern in an aggregated
-map looks odd, the passthrough twin says whether it came from the
-weighting or from the data. Ratios stay out of passthrough: dividing
-numerator by denominator happens at an aggregation target, and without
-weights there is no such step.
+In this flow each leaf is reduced to its window means as it is
+aggregated, so the windows are fixed before the first leaf is read.
+Other windows take a new run, or a run of stage ``reduce`` if the
+leaves were kept.
 
-The window mean moves before concatenation purely for memory: it is
-computed per sample member either way, so the staging is provably
-equivalent (the equivalence is a pinned test, not an assumption) while
-shrinking the pooled frame by the ratio of years to windows, about 45
-fold for 90 years and two windows. The consequence is that the window
-bounds are final before any leaf is processed; the reduced frames carry
-no time dimension, so a different window means a rerun, or a run of
-the reduce stage if the leaves were kept, and
-`stats.window_means` refuses already reduced input rather than silently
-relabeling it. The statistics ordering itself is unchanged: spatial
-aggregation per draw, then window mean, then statistics over the pooled
-sample.
-
-A run either completes every declared leaf or raises naming what
-finished and what did not; there is no silently partial output. The
-statistics file is written only after every leaf succeeded.
-
-Memory at scale, measured rather than estimated: a full mortality ADM2
-run (about 4,000 leaves by 42,726 targets, roughly 500 million member
-rows) peaked at 188.3 GB resident in the parent process at the
-pooled-statistics stage. Requests of 128 GB died three times at that
-scale before the instrumented run produced the number. Size ADM2-scale
-requests at 224 GB or more, and read the memory[...] lines the run
-prints before trusting any smaller figure.
-
-Dry run resolves the tree and reports the plan (leaves, their paths,
-missing entries, output locations) without creating or writing anything.
-
-Stages. ``--stage aggregate`` runs steps 1 to 3 without the window mean
-and stops. It writes the leaf files and their manifest,
+Stages. ``--stage aggregate`` writes the leaf files and their manifest,
 ``leaves/<stem>.leaves.manifest.json``, and no statistics. The manifest
 is written before the first leaf, marked incomplete, and again when
 every leaf has succeeded. ``--stage reduce`` takes the statistics from
 leaf files written before. It checks them against their manifest, asks
-a backend of the `reduce` package for the statistics, and opens neither
-the source tree nor the weights. The windows, the quantiles and
-everything else under ``[stats]`` can differ from the run that wrote
-the leaves. The default stage, ``all``, runs everything in one process
-and holds every reduced leaf at once.
+a backend of the `reduce` package for the statistics, never opens the
+source tree and reads the weights artifact only to hash it. The
+windows, the quantiles and everything else under ``[stats]`` can differ
+from the run that wrote the leaves. The default stage, ``all``, runs
+everything in one process and holds every reduced leaf at once.
 
 Time reduction. ``stats.time_reduction`` says what happens to the
 years of a member. Under "window_mean" each member's window is reduced
-to its mean first, as described above. Under "pooled" no mean is taken:
-every year of a member inside a window is a member of the sample, so
-the statistics are over models, draws and years together. Under
-"per_year" no mean is taken either, and the year stays in the output:
-the statistics are over the members within each year of
+to its mean first, as described above. Under "pooled" no mean is
+taken, and every year of a member inside a window is a member of the
+sample, so the statistics are over models, draws and years together.
+Under "per_year" no mean is taken either, and the year stays in the
+output, so the statistics are over the members within each year of
 ``stats.years``. The rows of the last two are the leaves' own rows, far
 too many to hold at once, so their statistics always come from the
 leaf files, one block of targets at a time. Stage ``all`` then writes
@@ -97,21 +59,33 @@ a period and left out of the periods in which it has none. This also
 runs from the leaf files under every stage, so one aggregation serves
 every level, every period and both ways of reducing.
 
-Per-capita to total conversion is deliberately outside: leaves must
-already carry the extensive quantity to aggregate. The hook for such a
-conversion is the step that produces the tree this pipeline reads.
+The leaves must already carry the extensive quantity to aggregate. A
+per-capita value is turned into a total by the step that writes the
+tree.
 
-Parallelism is explicit: ``run.n_workers`` above 1 processes leaves in a
-multiprocessing pool. The weights artifact is shipped to workers per
-task, which is acceptable at current artifact sizes and revisitable if
-profiling ever says otherwise.
+With ``run.n_workers`` above 1 the leaves are processed in a
+multiprocessing pool, and each worker loads the weights artifact once.
+A dry run resolves the tree and reports the plan, with the leaves,
+their paths, the missing ones and the output files, and creates or
+writes nothing.
 
-Entry point: ``python -m cil_regionalization.pipelines.montecarlo
-<config.toml> [--dry-run] [--stage all|aggregate|reduce]
-[--verify-leaves]``. Job submission is
-out of scope; a scheduler template that calls this entry point lives
-under ``examples/``.
+The entry point, which a scheduler template under ``examples/`` calls::
+
+    python -m cil_regionalization.pipelines.montecarlo <config.toml>
+        [--dry-run] [--stage all|aggregate|reduce] [--verify-leaves]
 """
+
+# The window mean is taken before the leaves are pooled to save memory.
+# It is taken per sample member either way, so the statistics are the
+# same, which a test pins, and the pooled frame shrinks by the ratio of
+# years to windows.
+#
+# Memory at scale, measured: a full mortality ADM2 run (about 4,000
+# leaves by 42,726 targets, roughly 500 million member rows) peaked at
+# 188.3 GB resident in the parent process at the pooled-statistics
+# stage, and requests of 128 GB died three times at that scale. Size
+# ADM2-scale requests at 224 GB or more, and read the memory[...] lines
+# the run prints before trusting any smaller figure.
 
 from __future__ import annotations
 
@@ -182,13 +156,15 @@ class WeightsRef(_Strict):
 class TreeConfig(_Strict):
     """Declared layout of the Monte Carlo tree.
 
-    ``levels`` names the directory levels in path order; each level
-    becomes a column on the aggregated output. ``expect`` declares the
-    values per level, and the expected leaf set is their full cross
-    product: a leaf path is ``root/<v1>/.../<vN>/filename``. Anything
-    declared but absent on disk fails the run before any processing.
-    ``exclude`` takes cells out of that product. A cell has one value
-    for each level, and ``"*"`` stands for every value of its level.
+    ``levels`` names the directory levels in path order, and a level
+    that is not a sample dimension becomes a column of the statistics.
+    ``expect`` gives the values of each level, and the leaves are every
+    combination of them, each at ``root/<v1>/.../<vN>/filename``.
+    ``exclude`` takes cells out of those combinations. A cell has one
+    value for each level, and ``"*"`` stands for every value of its
+    level. ``subtract_filename`` names a sibling file whose values are
+    taken off the leaf's, row for row. A declared leaf that is not on
+    disk fails the run before any work.
     """
 
     root: str = Field(min_length=1)
@@ -233,15 +209,17 @@ class TreeConfig(_Strict):
 class DataConfig(_Strict):
     """What a leaf contains and how to aggregate it.
 
-    ``format`` is declared, never inferred from the file extension:
-    inference invites a mismatch between what a user thinks is being
-    read and what is read. For ``netcdf`` leaves (the ``[netcdf]``
-    optional extra), ``value_col`` names the data variable and
-    ``region_dim`` names the file's region dimension, which the reader
-    maps to the weights artifact's source key column. Every other
-    dimension passes through exactly as a parquet column would.
+    ``format`` is declared and never inferred from the file extension.
+    For ``netcdf`` leaves, which need the ``[netcdf]`` extra,
+    ``value_col`` names the data variable and ``region_dim`` the file's
+    region dimension. The reader turns it into the source key column of
+    the weights artifact, or into ``region_col`` in a run without
+    weights. Every other dimension passes through as a parquet column
+    would.
     """
 
+    # Inferring the format from the extension invites a mismatch between
+    # what a user thinks is being read and what is read.
     format: Literal["parquet", "csv", "netcdf"] = "parquet"
     value_col: str = "value"
     denominator_col: Optional[str] = None
@@ -318,12 +296,9 @@ class WarmingLevelsConfig(_Strict):
 class StatsConfig(_Strict):
     """Statistics stage.
 
-    ``windows`` is final before any leaf is processed: each leaf is
-    reduced to window means as it is aggregated, and the reduced frames
-    carry no time dimension. Changing the windows afterwards is a rerun,
-    not a reprocessing of reduced data, and the reduction step refuses
-    already reduced input by construction. If the leaves were kept, the
-    reduce stage takes other windows from them.
+    Under stage ``all`` with "window_mean" each leaf is reduced to its
+    window means as it is aggregated, so other ``windows`` take a new
+    run, or a run of the reduce stage over leaves that were kept.
     """
 
     sample_dims: list[str] = Field(min_length=1)
@@ -340,11 +315,11 @@ class StatsConfig(_Strict):
     # whatever the config says where a run pools fewer leaves than were
     # aggregated or takes warming levels.
     include_n_members: bool = False
-    # How a quantile is computed. "linear" interpolates between members
-    # and has no weighted form, "lower_step" is the extraction tool's
-    # step, with equal weights when there are no model weights, and
-    # "inverted_cdf" is the standard inverse of the empirical
-    # distribution. How a mean is summed. "fast" is the vectorised sum,
+    # How a quantile is computed. "inverted_cdf" is the estimator, the
+    # standard inverse of the empirical distribution. "linear"
+    # interpolates between two members and has no weighted form.
+    # "lower_step" reproduces the extraction tool, one member below the
+    # standard inverse, and is biased low. How a mean is summed. "fast" is the vectorised sum,
     # whose last bits depend on the order the workers hand their leaves
     # back in, and "exact" is the exactly rounded one. Neither has a
     # default, and the manifest records both. See
@@ -507,14 +482,13 @@ class StatsConfig(_Strict):
 
 
 class PipelineOutputConfig(_Strict):
-    """Where results land. ``stem`` names the statistics and manifest
-    files, so several runs can share one directory. ``write_reduced``
-    keeps the pooled window-mean frame (one row per target, window,
-    and sample member), which downstream regrouping needs; per-draw
-    quantities cannot be recovered from the statistics file.
-    ``write_leaves`` keeps every aggregated leaf with its years, under
-    ``leaves/``. It is off unless asked for, because the leaves take
-    far more disk than the statistics. ``leaves_stem`` names the leaves
+    """Where the results are written. ``stem`` names the statistics and
+    manifest files, so several runs can share one directory.
+    ``write_reduced`` also writes the pooled window means, one row a
+    target, window and sample member, which `regroup` works on.
+    ``write_leaves`` keeps every aggregated leaf with its years under
+    ``leaves/``. It is off unless asked for, because the leaves take far
+    more disk than the statistics. ``leaves_stem`` names the leaves
     manifest, and is ``stem`` unless set, so a product with other
     windows can take its own stem and reduce the leaves of another."""
 
@@ -530,9 +504,9 @@ class RunConfig(_Strict):
 
 
 class MonteCarloPipelineConfig(_Strict):
-    """``weights`` is optional: without it the pipeline runs in
-    passthrough, producing statistics per source region with no spatial
-    aggregation (see the module docstring)."""
+    """The config of a pipeline run. Without ``weights`` the run is a
+    passthrough, with statistics per source region and no spatial
+    aggregation."""
 
     weights: Optional[WeightsRef] = None
     tree: TreeConfig
@@ -620,12 +594,12 @@ class MonteCarloPipelineConfig(_Strict):
 
 
 def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
-    """Load and validate a pipeline TOML; resolve relative paths.
+    """The validated config of a pipeline TOML.
 
     ``weights.dir``, ``tree.root``, ``output.dir``,
     ``stats.model_weights`` and ``stats.warming_levels.gmst`` given as
-    relative paths resolve against the config file's directory, matching
-    `config.load_config`.
+    relative paths resolve against the config file's directory, as in
+    `config.load_config`. Raises if the file does not exist.
     """
     p = Path(path).resolve()
     if not p.exists():
@@ -655,7 +629,8 @@ def load_pipeline_config(path: str | Path) -> MonteCarloPipelineConfig:
 
 @dataclass(frozen=True)
 class Leaf:
-    """One unit of work: level values plus the resolved paths."""
+    """One unit of work, its level values and its resolved paths.
+    ``output_path`` is None when the run writes no leaf file."""
 
     values: tuple[str, ...]
     path: Path
@@ -668,7 +643,8 @@ class Leaf:
 
 @dataclass(frozen=True)
 class PipelinePlan:
-    """What a run would do. Produced by dry run; consumed by execution."""
+    """What a run would do. A dry run returns it, and a run carries it
+    out."""
 
     leaves: list[Leaf]
     missing: list[Leaf]
@@ -709,10 +685,10 @@ class PipelineResult:
 
 
 def resolve_plan(cfg: MonteCarloPipelineConfig, stage: Stage = "all") -> PipelinePlan:
-    """Expand the declared tree into leaves; report missing ones.
-
-    Touches nothing: no directories are created and no files written.
-    """
+    """The plan of a run, with every declared leaf and those missing on
+    disk. Under stage "reduce" a leaf is missing if its leaf file is,
+    and otherwise if its source file or its subtract file is. Nothing is
+    created or written."""
     root = Path(cfg.tree.root)
     out_root = Path(cfg.output.dir)
     value_lists = [cfg.tree.expect[level] for level in cfg.tree.levels]
@@ -786,12 +762,14 @@ def run_pipeline(
     stage: Stage = "all",
     verify_leaves: bool = False,
 ) -> PipelinePlan | PipelineResult:
-    """Run the pipeline, or return the plan untouched when ``dry_run``.
-    ``stage="aggregate"`` writes the leaf files and their manifest and
-    stops, and the result's ``stats`` is then None. ``stage="reduce"``
-    takes the statistics from leaf files written before and opens
-    neither the source tree nor the weights. ``verify_leaves`` makes it
-    hash every leaf file first, which reads all of them."""
+    """The result of a run, or under ``dry_run`` its plan, with nothing
+    written. ``stage="aggregate"`` writes the leaf files and their
+    manifest and stops, and the result's ``stats`` is then None.
+    ``stage="reduce"`` takes the statistics from leaf files written
+    before, never opens the source tree and reads the weights artifact
+    only to hash it. ``verify_leaves`` goes with stage "reduce" alone
+    and hashes every leaf file first, which reads all of them. Outside
+    a dry run, raises if a declared leaf is missing or any leaf fails."""
     _check_stage(cfg, stage)
     if verify_leaves and stage != "reduce":
         raise ValueError(
@@ -1113,8 +1091,8 @@ def _leaf_targets(report) -> dict:
 def _split_targets(outcomes: list[dict]) -> Optional[dict]:
     """The targets every leaf leaves out, by reason, with the basis the
     shares are taken against, or None if no leaf was weighted. Each
-    outcome keeps only the targets it leaves out besides, and its
-    partial ones."""
+    outcome's ``target_coverage`` is rewritten in place to the targets
+    it leaves out that not every leaf does, and its partial ones."""
     reports = [
         o["target_coverage"] for o in outcomes if o.get("target_coverage") is not None
     ]
@@ -1242,7 +1220,9 @@ def _model_weights_record(
     model_weights: Optional[ModelWeights],
     leaves: list[list[str]],
 ) -> Optional[dict]:
-    """What the leaves were given, not what the config declares."""
+    """The manifest record of the model weights, taken from the members
+    of the pooled leaves and not from the values the config declares.
+    None without model weights."""
     if model_weights is None:
         return None
     level = cfg.tree.levels.index(cfg.stats.model_weight_level)
@@ -1357,8 +1337,9 @@ def _aggregation_identity(
     cfg: MonteCarloPipelineConfig, artifact: WeightsArtifact, sha256: dict
 ) -> dict:
     """What decides the content of an aggregated leaf, apart from the
-    leaf itself. It holds no path. A path says where something was, and
-    the hashes say what it was."""
+    leaf itself. It holds the hashes of the weights artifact and no
+    path."""
+    # A path says where something was, and the hashes say what it was.
     return {
         **_config_identity(cfg),
         "artifact": {
@@ -1514,8 +1495,9 @@ def _finish_leaves(
 
 def _load_leaves_document(path: Path) -> tuple[dict, str]:
     """The leaves manifest and the SHA256 of its bytes. Raises if it is
-    missing, which is what a directory of old leaf files looks like, or
-    if the run that wrote it did not finish."""
+    missing, as it is beside leaf files of the old layout, if the run
+    that wrote it did not finish, or if its layout version is not the
+    one this library reads."""
     if not path.exists():
         raise ValueError(
             f"stage 'reduce' reads the leaves manifest {path}, and it is not "
@@ -1596,10 +1578,12 @@ def _reduce_request(
     """The request for the declared leaves, and the reasons, if any, the
     member counts are switched on whatever the config says.
 
-    ``windows_of`` gives a leaf's own windows from its level values. It
-    is the list in ``stats.windows`` for every leaf unless given. With
-    ``warming`` a leaf has the periods in which its member is at a
-    level, each under a label that names the period and the level.
+    ``windows_of`` gives a leaf's own windows from its level values, and
+    every leaf has the spans of `_windows` unless it is given. With
+    ``warming`` it is not used, and a leaf has the periods in which its
+    member is at a level, each under a label that names the period and
+    the level. Raises if a declared leaf is not in the manifest, or a
+    window of a leaf has no row in it.
     """
     time_col = cfg.stats.time_col
     columns = [c["name"] for c in document["schema"]]
@@ -1930,13 +1914,13 @@ def _run_reduce(
     warming=_UNREAD,
     stage: str = "reduce",
 ) -> PipelinePlan | PipelineResult:
-    """Pass 2. The statistics come from leaf files a run of stage
-    'aggregate' or 'all' wrote, checked against their manifest first.
-    The source tree is not opened, and neither is the weights artifact
-    beyond hashing it if it is still there. ``model_weights`` and
-    ``warming`` are the model weights and the warming levels if the
-    caller has read them, and ``stage`` the stage the manifest
-    records."""
+    """The result of taking the statistics from leaf files that a run of
+    stage 'aggregate' or 'all' wrote, checked against their manifest
+    first, or under ``dry_run`` the plan with what the checks found.
+    The source tree is not opened, and the weights artifact is only
+    hashed, if it is still there. ``model_weights`` and ``warming`` are
+    passed when the caller has read them already, and ``stage`` is the
+    stage the manifest records."""
     leaves_dir = plan.leaves_manifest_path.parent
     document, document_sha256 = _load_leaves_document(plan.leaves_manifest_path)
     if "target_coverage" not in document:
@@ -2160,9 +2144,12 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
     """``frame`` in the order it is written in. Rows go by the
     statistic as requested, then each tree level by its declared
     values, then the window as configured, or the year ascending when
-    each year is kept, then the target's id fields ascending. Together
-    those name a row, so the order is total and does not depend on the
-    order the leaves were pooled in."""
+    each year is kept, then the other columns ascending in the order of
+    the frame's columns, such as the target's id fields, leaving out the
+    value, the counts, the share and the model weight. Together those
+    name a row, so the order does not depend on the order the leaves
+    were pooled in. Raises if a declared column holds a value the config
+    does not declare."""
     if cfg.stats.time_reduction == "per_year":
         first, last = cfg.stats.years
         time = {cfg.stats.time_col: list(range(first, last + 1))}
@@ -2238,8 +2225,9 @@ def _current_rss_gb() -> Optional[float]:
 
 
 def _cgroup_gb() -> Optional[float]:
-    """The job cgroup's memory charge in GB, the number the OOM killer
-    compares against the limit; includes every worker and page cache."""
+    """The memory charged to the job's cgroup in GB, which the OOM
+    killer compares with the limit, or None outside a cgroup. It
+    includes every worker and the page cache."""
     for path in (
         "/sys/fs/cgroup/memory.current",
         "/sys/fs/cgroup/memory/memory.usage_in_bytes",
@@ -2287,7 +2275,9 @@ def _init_worker(
 def _read_leaf(
     path: Path, data_cfg: DataConfig, artifact: Optional["WeightsArtifact"]
 ) -> pd.DataFrame:
-    """Read one leaf in the declared format; no inference from extensions."""
+    """One leaf, read in the declared format whatever its extension.
+    Raises for a NetCDF leaf if the artifact keys its sources by more
+    than one column."""
     if data_cfg.format == "parquet":
         return pd.read_parquet(path)
     if data_cfg.format == "csv":
@@ -2322,12 +2312,12 @@ def _read_leaf(
 def _subtract_leaf(
     frame: pd.DataFrame, path: Path, data_cfg: DataConfig, artifact: "WeightsArtifact"
 ) -> pd.DataFrame:
-    """Difference a second file's values from the first, row for row.
-
-    The effect of climate change in the projection trees is the
-    scenario file minus its histclim sibling; this performs that
-    subtraction before any weighting. The two files must cover the
-    same rows: every key of one present in the other, no duplicates.
+    """``frame`` with the values of the file at ``path`` taken off, row
+    for row, in a float64 value column. In the projection trees this is
+    the scenario file minus its histclim sibling, before any weighting.
+    Raises if the two files differ in columns, if a key repeats in
+    either, or if a row of ``frame`` has no match in the file. Rows of
+    the file with no match in ``frame`` are dropped.
     """
     other = _read_leaf(path, data_cfg, artifact)
     keys = [c for c in frame.columns if c != data_cfg.value_col]
@@ -2351,19 +2341,18 @@ def _subtract_leaf(
 
 
 def _process_leaf(task: tuple) -> dict:
-    """Apply weights to one leaf (unless passthrough), then reduce it
-    to window means unless the stage stops before that. The leaf's
-    level values go on the reduced rows, never on the frame the weights
-    are applied to. An aggregated leaf file has them in its footer and
-    its path, and a passthrough one as columns.
-
-    Returns accounting, never raises. Module-level and tuple-argument so
-    a multiprocessing pool can run it; errors come back as strings so
-    the parent can report a partial run coherently instead of losing the
-    traceback to a worker crash. The optional per-leaf output on disk is
-    the full aggregated frame (years intact); only the in-memory frame
-    handed back for pooling is reduced.
+    """The accounting of one leaf, with the weights applied unless the
+    run is a passthrough, and its window means under "frame" unless
+    the job stops before them. It never raises, and an error comes back
+    as text under "error". A leaf file written here keeps every year,
+    and only the frame handed back is reduced. The level values go on
+    the reduced rows and never on the frame the weights are applied to.
+    An aggregated leaf file has them in its footer and its path, and a
+    passthrough one as columns.
     """
+    # Module-level, with one tuple argument, so that a multiprocessing
+    # pool can run it. An error comes back as text so that the parent can
+    # report a partial run, where a worker crash would lose the traceback.
     leaf, levels, data_cfg, weight, policies, stats_cfg, job = task
     artifact = _WORKER_STATE["artifact"]
     try:

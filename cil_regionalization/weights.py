@@ -1,9 +1,7 @@
-"""Runtime weight descriptors.
+"""Runtime weight descriptors built from `WeightConfig`.
 
-Wraps `WeightConfig` with derived flags so backends can dispatch without
-re-checking the config rules. The area weight is special-cased: it has no
-external input and is always available, so several places need to short-
-circuit on `is_area`.
+The area weight needs no raster or table and is always available.
+`WeightSpec.is_area` marks it.
 """
 
 from __future__ import annotations

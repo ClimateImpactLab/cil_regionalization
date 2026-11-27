@@ -1,86 +1,46 @@
-"""Local backend: per-region segment building + zonal stats + fallback.
+"""The local backend, which cuts regions against grid cells or source
+polygons in this process and sums rasters over the pieces.
 
-For each region:
+In grid mode a region that touches both -180 and 180 is first split at
+lon 0. Each region is then cut against the grid cells its bbox covers. A
+cell inside the region is kept whole, and a cell on its boundary is
+replaced by its intersection with the region. Each piece, a segment, gets
+its geodesic area on the WGS84 ellipsoid. Under
+``backend.coverage = "exact_fraction"`` a raster weight sums each pixel
+times the fraction of it inside the segment, and under
+``"pixel_centroid"`` it sums the pixels whose centre lies inside. The area weight normalizes the segment areas,
+and every other weight goes through `apply_fallback` with its policy, as
+in the BigQuery backend. A region with no positive-area cell gets one
+synthesized row. The result is the `OutputSchema` frame and a manifest
+with each weight's fallback counts and the run's row counts.
 
-    1. Walk only the grid cells whose bbox overlaps the region's bbox
-       (`grid.index_range_for_bbox`, no global enumeration).
-    2. Use shapely 2 vectorized predicates to split those cells into
-       interior (region fully contains the cell) and boundary (region only
-       partially overlaps). Interior segments equal the cell; boundary
-       segments are `region.intersection(cell)`. This split avoids
-       computing intersections for cells that don't need them, which is
-       what `refs/intersect_zonalstats_par.py` does too.
-    3. Compute geodesic area on every segment via `pyproj.Geod` (WGS84).
-       Raw lon/lat degree areas are NOT used; that was a known bug in
-       the legacy script.
+Polygon mode, chosen by declaring ``[source]`` in place of ``[grid]``,
+cuts each region against the source polygons a spatial index finds for
+it, and normalizes in the configured direction. It does not split at the
+antimeridian, so both layers must use the [-180, 180] longitude form,
+with dateline crossers stored as multipolygons touching both sides. A
+geometry past the lon/lat domain by more than a small tolerance raises.
 
-Per non-area weight:
-
-    4. With `backend.coverage = "exact_fraction"`, use exactextract to
-       sum pixel values weighted by the fraction of each pixel inside
-       the segment. With `coverage = "pixel_centroid"`, the legacy
-       semantics, sum only pixels whose center is inside the segment.
-    5. Hand the resulting raw frame to `apply_fallback` with the
-       per-weight policy. The same fallback logic the BigQuery backend
-       uses (Stage 3) is run here so the cross-backend output is
-       comparable up to the exact-vs-centroid boundary difference.
-
-Per area weight:
-
-    6. Run `compute_native_weights` on the geodesic-area column.
-
-The result is the canonical `OutputSchema` frame plus a manifest with
-fallback counts per weight and row counts per region.
-
-Polygon mode
-------------
-Declaring ``[source]`` instead of ``[grid]`` swaps the source side: the
-candidate enumeration comes from a spatial index over a second polygon
-layer instead of grid bbox arithmetic, and segments are
-region-by-source-polygon intersections. Everything downstream is the
-same machinery: geodesic areas, exactextract or centroid zonal sums per
-segment for every declared raster weight, fallback, normalization in the
-configured direction, and validation (`check_polygon_invariants` plus
-sum-to-1 in place of the grid invariants).
-
-Two deliberate choices, stated here because they differ from the
-reference IR-to-ADM implementation this mode replaces:
-
-- Areas are geodesic on the WGS84 ellipsoid (`pyproj.Geod`), exactly as
-  in grid mode. The reference implementation reprojected to Mollweide
-  and used planar areas; a projected equal-area CRS is a compromise the
-  geodesic computation does not need, and using one engine for both
-  modes keeps cross-mode results comparable.
-- There is no antimeridian split in polygon mode. The grid split exists
-  because cell index arithmetic must not wrap; polygon-to-polygon
-  intersection involves no index arithmetic, and two layers in the
-  canonical [-180, 180] representation (dateline crossers stored as
-  multipolygons touching both sides, as world-combo does) intersect
-  correctly as they are. What polygon mode does require is that both
-  layers actually use that representation, so geometries with
-  coordinates outside the lon/lat domain are rejected up front.
-
-One underlying fact, three symptoms
------------------------------------
-Impact-region boundaries were built from administrative geometry, so in
-real data the source and target boundaries run along each other for
-thousands of kilometers, and every coincidence produces floating point
-residue in the intersection. That single fact shows up three ways:
-
-- shared borders appear in segments as LineString parts, making them
-  GeometryCollections (handled by `_as_multipolygons`),
-- nested source units acquire near-zero-weight sliver pieces in
-  neighboring targets, inflating raw straddler counts far above the
-  material count,
-- some slivers are degenerate enough (sub-square-millimeter multi-part
-  residue) to crash exactextract's traversal (handled by
-  `_apply_min_segment_area`).
-
-These are one phenomenon with one rationale, not three unrelated
-workarounds: geometry below physical measurement meaning is boundary
-noise, dropped where found, with every drop accounted for in the
-manifest.
+In both modes a segment's line and point parts are dropped, and segments
+below ``backend.local.min_segment_area_m2`` are dropped and recorded in
+the manifest.
 """
+
+# Polygon mode differs on purpose from the reference IR-to-ADM
+# implementation it replaces. Areas are geodesic on WGS84 as in grid mode,
+# where the reference used planar Mollweide areas, so the two modes stay
+# comparable. There is no antimeridian split, since that split exists only
+# because cell index arithmetic must not wrap, and polygons in the
+# canonical [-180, 180] form intersect correctly as they are.
+#
+# Region boundaries were built from administrative geometry, so source and
+# target boundaries run along each other for long distances and every
+# coincidence leaves floating point residue. It shows up as line parts that
+# make segments GeometryCollections (`_as_multipolygons`), as near-zero
+# slivers of nested source units in neighbouring targets, and as residue
+# degenerate enough to crash exactextract (`_apply_min_segment_area`).
+# Geometry below any physical meaning is boundary noise, dropped where
+# found, with every drop recorded in the manifest.
 
 from __future__ import annotations
 
@@ -271,7 +231,14 @@ class LocalBackend(WeightsBackend):
         weights: list[WeightSpec],
         cfg: Config,
     ) -> WeightsResult:
-        """Polygon mode: source units come from ``[source]``, not a grid."""
+        """The weights in polygon mode, with the source units read from the
+        ``[source]`` layer in place of a grid. A source unit whose covered
+        share of its own area is below ``source.coverage_threshold`` is
+        listed in the manifest's ``partial_coverage``. Raises if the region and
+        source id fields share a column, if a geometry lies outside the
+        lon/lat domain, if a source unit overlaps no region under
+        ``source.on_zero_overlap = "error"``, or if the polygon invariants
+        fail."""
         t0 = time.perf_counter()
         src_cfg = cfg.source
         assert src_cfg is not None
@@ -480,26 +447,14 @@ _ANTIMERIDIAN_TOUCH_EPS = 1.0  # degrees of slack on touching +/-180
 def _split_at_antimeridian(
     geom: "shapely.Geometry",
 ) -> list["shapely.Geometry"]:
-    """Split a geometry at lon=0 when it actually crosses the antimeridian.
+    """The geometry's western and eastern parts, cut at lon 0, when its
+    bbox comes within ``_ANTIMERIDIAN_TOUCH_EPS`` degrees of both -180 and
+    180, or the geometry alone otherwise.
 
-    The grid lives in `[-180, 180)` and never wraps. A polygon in canonical
-    [-180, 180) representation that crosses the dateline has vertices very
-    close to BOTH the western (-180) and eastern (+180) boundaries; the
-    canonical representation forces the eastern half to wrap back as
-    near-(-180) coordinates and the western half stays near (+180).
-
-    The criterion here is therefore "bbox touches both +/-180 within
-    `_ANTIMERIDIAN_TOUCH_EPS`", NOT merely "bbox wider than 180deg".
-    A genuinely wide non-crossing region (geometrically impossible in
-    canonical coords, but a defensive guard against malformed inputs)
-    will not be split. A pole-surrounding region (Antarctica) does touch
-    both boundaries and is split too; the two halves remain disjoint in
-    cells, so the result stays correct.
-
-    Splitting at lon=0 leaves each piece in one hemisphere; both halves
-    fit within [-180, 180) and round-trip correctly through the planar
-    intersection logic that follows. `check_grid_invariants` catches any
-    regression that would produce overlapping cells.
+    A dateline crosser in the [-180, 180) form touches both edges. A
+    geometry whose bbox is wider than 180 degrees without touching both is
+    left whole. A region around a pole, such as Antarctica, is split too. The two parts
+    cover disjoint cells, so their segments never share a cell.
     """
     minx, miny, maxx, maxy = geom.bounds
     touches_west = minx < -180.0 + _ANTIMERIDIAN_TOUCH_EPS
@@ -521,19 +476,15 @@ def _build_segments(
     grid: GridSpec,
     client: object | None = None,
 ) -> gpd.GeoDataFrame:
-    """Per-region interior/boundary split, vectorised over candidate cells.
+    """The segments of every region on ``grid``, as a GeoDataFrame in
+    EPSG:4326 with the id fields, the cell columns, ``is_interior``, the
+    geometry and its geodesic ``area_raw`` in square metres. Only segments
+    with positive area are kept.
 
-    Dateline-crossing regions (bbox spans >180deg lon) are split at
-    lon=0 before cell enumeration; each half stays within the grid's
-    [-180, 180) domain. Segments from both halves accumulate under the
-    same region id; `check_grid_invariants` would catch any duplicate
-    (region, cell_ix, cell_iy) keys, which there shouldn't be since
-    the two halves cover disjoint ix ranges.
-
-    When ``client`` is a Dask distributed Client, regions are partitioned
-    into roughly equal chunks (one per worker, plus some headroom for
-    load balancing) and dispatched concurrently. The serial branch is
-    a bitwise-identical no-op for the no-client case.
+    A region whose bbox comes within a degree of both -180 and 180 is
+    split at lon 0 first, and both parts add segments under its id. With a
+    Dask ``client`` the regions are dealt round-robin into several chunks
+    per worker and built on the workers.
     """
     id_fields = list(regions.id_fields)
     pairs = [(ids, geom) for ids, geom in regions.iter_regions()]
@@ -580,7 +531,9 @@ def _build_segments(
 def _chunk_pairs(
     pairs: list[tuple[dict, object]], n_chunks: int
 ) -> list[list[tuple[dict, object]]]:
-    """Round-robin partition. Avoids putting all big polygons in one chunk."""
+    """``pairs`` dealt round-robin into at most ``n_chunks`` lists, with
+    empty lists left out."""
+    # round-robin, so the big polygons do not all land in one chunk
     chunks: list[list] = [[] for _ in range(n_chunks)]
     for i, pair in enumerate(pairs):
         chunks[i % n_chunks].append(pair)
@@ -592,11 +545,10 @@ def _build_segments_for_pairs(
     id_fields: list[str],
     grid: GridSpec,
 ) -> list[pd.DataFrame]:
-    """Pure: run the per-region segment build over a list of (ids, geom).
-
-    Returns a list of per-region DataFrames; concatenation is the caller's
-    job. Pulled out of ``_build_segments`` so a Dask worker can be handed
-    a chunk and produce its share independently.
+    """The segment frames of a list of (ids, geometry) pairs, one for each
+    region part with a positive-area segment, for the caller to
+    concatenate. It has no side effects, so a Dask worker can run it on
+    one chunk.
     """
     pieces: list[pd.DataFrame] = []
     for ids, region_geom in pairs:
@@ -667,14 +619,15 @@ def _apply_min_segment_area(
     group_fields: list[str],
     min_area_m2: float,
 ) -> tuple[gpd.GeoDataFrame, dict]:
-    """Drop segments below the area threshold; account for every drop.
+    """The segments whose ``area_raw`` is at least ``min_area_m2`` square
+    metres, and a stats dict for the manifest. A threshold of zero or less
+    keeps every segment.
 
-    ``group_fields`` names the units the discarded-share accounting is
-    computed per: the source unit ids in polygon mode, the region ids in
-    grid mode. The returned stats carry the drop count, the largest
-    share of any unit's intersected area that was discarded, and any
-    unit that lost every piece (expected never; loudly visible if a
-    threshold change ever makes it happen).
+    The stats hold the threshold, the number of segments dropped, the
+    largest share of any unit's intersected area that was dropped, and the
+    units that lost every segment, which should never happen.
+    ``group_fields`` names the units, the source ids in polygon mode and
+    the region ids in grid mode.
     """
     stats: dict = {
         "threshold_m2": min_area_m2,
@@ -716,20 +669,14 @@ def _apply_min_segment_area(
 
 
 def _as_multipolygons(geoms: np.ndarray) -> np.ndarray:
-    """Normalize segment geometries to MultiPolygon for zonal operations.
-
-    Where a source boundary runs exactly along a region boundary, which
-    real admin-derived layers do constantly, the intersection contains
-    the shared border as LineString (and occasionally Point) parts next
-    to the polygon parts, making the segment a GeometryCollection.
-    exactextract requires a homogeneous geometry column, so every
-    segment is promoted to MultiPolygon and non-polygonal parts are
-    discarded. Discarding them is safe for the same reason the
-    zero-area segment drop is: lines and points carry zero geodesic
-    area and cover zero raster pixels, so no computed quantity changes.
-    Segments reach this helper only after the positive-area filter, so
-    every one of them has at least one polygonal part.
+    """Each segment as a MultiPolygon, with the line and point parts of a
+    GeometryCollection dropped. Raises if a segment has no polygonal part,
+    which cannot happen to a segment of positive area.
     """
+    # A source boundary running along a region boundary leaves the shared
+    # border in the intersection as line or point parts next to the polygon
+    # parts. exactextract needs a single geometry type, and those parts have
+    # no area and cover no pixel, so dropping them changes nothing computed.
     out = np.empty(len(geoms), dtype=object)
     for i, g in enumerate(geoms):
         if isinstance(g, shapely.MultiPolygon):
@@ -767,18 +714,13 @@ _LONLAT_DOMAIN_EPS = 1e-4
 def _check_lonlat_domain(
     gdf: gpd.GeoDataFrame, id_fields: list[str], label: str
 ) -> list[dict]:
-    """Reject geometries with coordinates outside the lon/lat domain.
-
-    Polygon mode has no antimeridian split, so its correctness rests on
-    both layers using the canonical [-180, 180] representation. A
-    geometry stored with extended longitudes (lon > 180, the style the
-    grid path splits and repairs) would silently intersect with nothing;
-    better to name it and stop.
-
-    Returns the units that are within tolerance but past the exact
-    domain edge, each with its overshoot in degrees, so the caller can
-    record the admitted noise in the manifest.
+    """The units of ``gdf`` past the lon [-180, 180] or lat [-90, 90] edge
+    by no more than ``_LONLAT_DOMAIN_EPS``, each as its ids and its
+    ``overshoot_degrees``, for the manifest. Raises, naming the units, if
+    any geometry is past an edge by more.
     """
+    # Polygon mode has no antimeridian split, so a geometry stored with
+    # longitudes past 180 would intersect nothing and no error would say so.
     bounds = gdf.geometry.bounds
     overshoot = (
         pd.concat(
@@ -816,14 +758,17 @@ def _build_segments_polygons(
     source_set: RegionSet,
     client: object | None = None,
 ) -> gpd.GeoDataFrame:
-    """Per-region source-polygon intersection via a spatial index.
+    """The segments of every region against the source layer, as a
+    GeoDataFrame in EPSG:4326 with the region and source id fields,
+    ``is_interior``, the geometry and its geodesic ``area_raw`` in square
+    metres.
 
-    The polygon counterpart of `_build_segments`: candidates come from an
-    STRtree query over the source layer instead of grid bbox arithmetic.
-    Sources fully contained in a region keep their own geometry; boundary
-    candidates get the explicit intersection. Zero-area touches drop, as
-    in grid mode. When a Dask client is given, regions are chunked
-    round-robin exactly as in grid mode; each chunk builds its own index.
+    The candidates for a region come from a spatial index query on the
+    source layer. A source polygon inside the region keeps its own
+    geometry, any other candidate is replaced by its intersection with the
+    region, and only pieces with positive area are kept. With a Dask
+    ``client`` the regions are dealt round-robin into chunks as in grid
+    mode, and each chunk builds its own index.
     """
     id_fields = list(regions.id_fields)
     source_id_fields = list(source_set.id_fields)
@@ -868,10 +813,10 @@ def _build_polygon_segments_for_pairs(
     src_gdf: gpd.GeoDataFrame,
     source_id_fields: list[str],
 ) -> list[pd.DataFrame]:
-    """Pure: per-region polygon segments for a list of (ids, geom).
-
-    Mirrors `_build_segments_for_pairs` so a Dask worker can process a
-    chunk independently; the STRtree is built once per invocation.
+    """The polygon segment frames of a list of (ids, geometry) pairs, one
+    for each region with a positive-area segment, for the caller to
+    concatenate. It has no side effects, so a Dask worker can run it on
+    one chunk. The source layer's spatial index is built once per call.
     """
     sindex = src_gdf.sindex
     src_geoms = np.asarray(src_gdf.geometry.values, dtype=object)
@@ -914,16 +859,14 @@ def _compute_raw_for_weight(
     *,
     source_key_columns: tuple[str, ...] | list[str] = ("cell_ix", "cell_iy"),
 ) -> pd.DataFrame:
-    """Return per-segment raw totals for one weight under the chosen coverage.
+    """Each segment's raw total of the weight's raster under ``coverage``,
+    as the id fields, ``source_key_columns`` and a column ``raw``.
 
-    For ``spec.kind == "point_sum"`` the raster is summed directly. For
-    ``"area_weighted_sum"`` (crop weight) the raster is treated as
-    pixel-wise FRACTION and a derived raster
-    ``fraction * geodesic_pixel_area_m2`` is materialised once per run;
-    the rest of the path is identical so exact_fraction / pixel_centroid
-    coverage modes apply unchanged. The zonal machinery is agnostic to
-    what a segment is: grid cells and polygon source units differ only in
-    ``source_key_columns``.
+    A ``"point_sum"`` weight sums the pixel values. An
+    ``"area_weighted_sum"`` weight, the crop weight, reads its raster as a
+    fraction and sums the fraction times each pixel's geodesic area in
+    square metres. Either coverage mode applies to both. Raises if the
+    weight has no raster.
     """
     raster_path = spec.require_raster()
     keys = id_fields + list(source_key_columns)
@@ -940,19 +883,16 @@ _AREA_WEIGHTED_CACHE: dict[tuple[str, float], str] = {}
 
 
 def _materialize_area_weighted_raster(fraction_path: str) -> str:
-    """Write a derived GeoTIFF of ``fraction * pixel_geodesic_area_m2``.
+    """The path of a temporary GeoTIFF holding each pixel's fraction times
+    its geodesic area in square metres, for the fraction raster at
+    ``fraction_path``.
 
-    The source raster's per-row geodesic pixel area is computed once
-    (one ``pyproj.Geod.geometry_area_perimeter`` call per row; area
-    is longitude-invariant for a regular lat/lon grid, so each row's
-    pixels share the same area). The derived raster is cached by
-    ``(source_path, mtime)`` for the lifetime of the process so a
-    repeated run within one process re-uses the same file.
-
-    Crop note: the input MUST be a fraction raster (e.g. Ramankutty
-    cropland2000_area.tif, values in [0, 1]); the ``_ha`` derivative
-    is already (fraction x area in km^2) and feeding it here would
-    double-multiply.
+    Every pixel in a row gets the area of that row's latitude band, which
+    holds for a north-up lon/lat raster. Nodata pixels stay nodata. The
+    file is cached for the life of the process by source path and
+    modification time. The input must be a fraction raster with values in
+    [0, 1], such as Ramankutty's cropland2000_area.tif. Its ``_ha``
+    derivative already holds area and would be multiplied by it twice.
     """
     src_path = str(Path(fraction_path).resolve())
     mtime = Path(src_path).stat().st_mtime
@@ -1029,7 +969,9 @@ def _zonal_sum_centroid(
     segments: gpd.GeoDataFrame,
     id_cols: list[str],
 ) -> pd.DataFrame:
-    """Sum of pixel values whose centroid falls inside each segment (legacy)."""
+    """Each segment's sum of the pixel values whose centre lies inside it,
+    skipping nodata, as ``id_cols`` and a column ``raw``, for
+    ``coverage = "pixel_centroid"``. A segment outside the raster gets 0."""
     raws: list[float] = []
     with rasterio.open(raster_path) as src:
         nodata = src.nodata

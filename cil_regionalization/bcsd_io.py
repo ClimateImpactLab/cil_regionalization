@@ -1,36 +1,22 @@
-"""NASA BCSD daily reader and grid-scale derived climate variables.
+"""Reads NASA BCSD daily files and derives climate variables from them
+per grid cell and year.
 
-The BCSD daily archive holds one grid in two dressings: the baseline
-GCM files use longitudes in [0,360) with a ``time`` dimension, the
-pattern (surrogate) files use [-180,180) with a ``day`` dimension.
-``read_bcsd_daily`` normalizes both to [-180,180) ascending with a
-``time`` dimension, deciding by coordinate values rather than by which
-tree the file came from, and proves every roll by value identity: the
-value at one probe cell after rolling must equal the value at that
-cell's pre-roll longitude. A roll that shifted the globe by half fails
-the identity immediately rather than corrupting every downstream
-number silently.
+The baseline GCM files use longitudes in [0,360) and a ``time``
+dimension, and the pattern (surrogate) files use [-180,180) and a
+``day`` dimension. ``read_bcsd_daily`` returns both on longitudes in
+[-180,180) ascending, judged from the coordinate values.
 
-Calendars differ across the baseline GCMs: some files are no-leap
-(``noleap``, ``365_day``) and some are Gregorian (``gregorian``,
-``standard``, ``proleptic_gregorian``) with 366 days in leap years.
-When the time dimension carries a CF time coordinate, the reader
-decodes it with the file's own calendar and drops Feb 29 by date,
-never by position. This is the rule the lab's earlier BCSD transforms
-applied. The reader does not check how many days remain unless asked
-to (``require_full_year=True``); ``derive_daily`` already requires 365
-downstream. Any other calendar raises;
-``360_day`` raises explicitly because no rule has been decided for it.
-The pattern files carry an integer day index with no reference date,
-so there is nothing to decode and they pass through unchanged.
+Some baseline GCM files are no-leap (``noleap``, ``365_day``) and some
+are Gregorian (``gregorian``, ``standard``, ``proleptic_gregorian``)
+with 366 days in leap years. A CF time coordinate is decoded with the
+file's own calendar and Feb 29 is dropped by date, never by position.
+Any other calendar raises, ``360_day`` included. The pattern files carry
+an integer day index with no reference date and pass through undecoded.
 
-``derive_daily`` computes the derived variables per grid cell and
-year, before any spatial step: means from (tasmax + tasmin) / 2,
-threshold counts from the extreme the threshold belongs to (days
-below 32F from tasmin, days above 95F from tasmax), and the number of
-days entering each count. Counting after averaging would give a
-different and wrong answer, so nothing here accepts aggregated input:
-the arrays are (time, lat, lon).
+``derive_daily`` takes daily (time, lat, lon) grids, never aggregated
+ones. It gives the means of (tasmax + tasmin) / 2, the days below 32F
+counted from tasmin and the days above 95F counted from tasmax, and how
+many days went into each.
 """
 
 from __future__ import annotations
@@ -63,14 +49,12 @@ def _import_netcdf4():
 
 @dataclass(frozen=True)
 class DailyGrid:
-    """One file's worth of daily values on the normalized grid.
+    """One file's daily values on longitudes in [-180,180).
 
-    ``values`` is (time, lat, lon) float32 with masked cells as NaN,
-    ``lat`` and ``lon`` are ascending cell centers with lon in
-    [-180,180). ``dates`` is the decoded date of each time step as
-    datetime64[D], Feb 29 already removed, so a caller can group by
-    month without rebuilding the calendar; None when the file carries
-    no decodable time coordinate (the pattern files' day index).
+    ``values`` is (time, lat, lon) float32 with masked cells as NaN, and
+    ``lat`` and ``lon`` are ascending cell centers. ``dates`` is the date
+    of each time step as datetime64[D] with Feb 29 removed, or None when
+    the file has no decodable time coordinate, as in the pattern files.
     """
 
     values: np.ndarray
@@ -79,20 +63,19 @@ class DailyGrid:
     dates: np.ndarray | None = None
 
     def to_cells(self, fields, grid: str = BCSD_GRID):
-        """Per-cell arrays as the table `apply_weights` takes.
+        """Per-cell arrays as the table `apply_weights` takes, one row per
+        grid cell with ``cell_ix`` and ``cell_iy`` on ``grid`` and one
+        column per field.
 
-        ``fields`` maps a column name to a (lat, lon) array on this
-        grid, for example a variable computed from ``values``. The
-        result has one row per grid cell, with ``cell_ix`` and
-        ``cell_iy`` on ``grid`` and one column per field. Cells where
-        any field is NaN are left out; `apply_weights` raises if a
-        weighted cell is missing, so nothing is dropped silently.
-
-        Every latitude and longitude must be a cell centre on ``grid``,
-        or this raises. An index computed from the wrong origin, or from
-        cell edges instead of centres, would otherwise move every value
-        one cell over with no error.
+        ``fields`` maps a column name to a (lat, lon) array on this grid,
+        for example a variable computed from ``values``. Cells where any
+        field is NaN are left out, and `apply_weights` raises if a
+        weighted cell is missing. Raises if a field is not (lat, lon) or
+        if any latitude or longitude is not a cell centre on ``grid``.
         """
+        # An index computed from the wrong origin, or from cell edges
+        # instead of centres, would otherwise move every value one cell
+        # over with no error.
         import pandas as pd
 
         from cil_regionalization.grid import GridSpec
@@ -144,12 +127,13 @@ class DailyGrid:
 
 
 def _decode_dates(ds, time_dim: str, path: str):
-    """Decoded dates of the time dimension, or None if it has none.
+    """The calendar name and an object array of the cftime dates of the
+    time dimension, one per step, or None when it has no coordinate
+    variable with units of the CF form '<unit> since <reference>'.
 
-    A time dimension decodes when its coordinate variable has units of
-    the CF form '<unit> since <reference>'. A missing calendar
-    attribute means 'standard', the CF default. Returns the calendar
-    name and an object array of cftime dates, one per time step.
+    A missing calendar attribute means 'standard', the CF default.
+    Raises if the calendar is '360_day' or any other not in
+    ``ACCEPTED_CALENDARS``.
     """
     if time_dim not in ds.variables:
         return None
@@ -185,22 +169,24 @@ def read_bcsd_daily(
     *,
     require_full_year: bool = False,
 ) -> DailyGrid:
-    """Read one BCSD daily file and normalize its conventions.
+    """``variable`` of one BCSD daily file as a `DailyGrid` on longitudes
+    in [-180,180) ascending.
 
-    Handles both longitude conventions and both time dimension names
-    by inspecting coordinates, not the path. The longitude roll is
-    verified by value identity at a probe cell on every call. When the
-    time dimension has a CF time coordinate it is decoded with the
-    file's calendar and Feb 29 is dropped by date; see the module
-    docstring for the calendar rule.
+    The longitude convention and the time dimension, ``time`` or
+    ``day``, are read from the coordinates, not the path. A CF time
+    coordinate is decoded with the file's calendar and Feb 29 is dropped
+    by date. ``require_full_year`` also requires exactly 365 days to
+    remain after the drop, in a file with a decoded time coordinate.
 
-    ``require_full_year`` additionally requires exactly 365 days to
-    remain after the drop, raising with the file and the count if not,
-    so a production recipe fails at read time rather than in
-    ``derive_daily``. It applies to files with a decoded time
-    coordinate; the default keeps the reader's earlier behaviour of
-    not checking the count.
+    Raises if the variable does not end in (lat, lon) with exactly one
+    time dimension, if the calendar is not supported, if the time
+    coordinate and the variable differ in length, if latitudes are not
+    ascending, if longitudes repeat after the roll, or if the roll fails
+    its value check at a probe cell.
     """
+    # Dropping Feb 29 by date is the rule the lab's earlier BCSD
+    # transforms applied. require_full_year fails a production recipe at
+    # read time rather than in derive_daily.
     netCDF4 = _import_netcdf4()
     with netCDF4.Dataset(path) as ds:
         dims = ds.variables[variable].dimensions
@@ -283,16 +269,17 @@ def read_bcsd_daily(
 
 @dataclass(frozen=True)
 class DerivedYear:
-    """Per-cell derived variables for one calendar year.
+    """Per-cell derived variables for one calendar year, each a (lat, lon)
+    array.
 
-    Every array is (lat, lon). Means are in degrees Celsius, computed
-    from (tasmax + tasmin) / 2 because the archive carries no daily
-    tas; counts come from the extreme their threshold is defined on:
-    ``days_below_32F`` from tasmin, ``days_above_95F`` from tasmax.
-    ``n_days`` is the number of days entering the counts and the
-    annual mean (365 in this archive; no leap years).
+    The means are in degrees Celsius, of (tasmax + tasmin) / 2.
+    ``days_below_32F`` is counted from tasmin and ``days_above_95F`` from
+    tasmax. ``n_days`` is the number of days in the counts and the
+    annual mean, and ``n_days_jja`` and ``n_days_djf`` the number in each
+    seasonal mean.
     """
 
+    # the archive carries no daily tas, so the means are of the midpoint
     tas_annual: np.ndarray
     tas_jja: np.ndarray
     tas_djf: np.ndarray
@@ -321,15 +308,18 @@ def derive_daily(
     tasmin: np.ndarray,
     december_prev: np.ndarray | None,
 ) -> DerivedYear:
-    """Derived variables for one year of daily grids, per cell.
+    """The `DerivedYear` of one year of daily grids.
 
     ``tasmax`` and ``tasmin`` are (365, lat, lon) in Kelvin on the
-    no-leap calendar. ``december_prev`` is the preceding year's
-    December of (tasmax + tasmin) / 2, needed because DJF for year y
-    takes December of y - 1; pass None for a first year and the DJF
-    mean covers January and February only, which the caller should
-    treat as a spin-up year, not a product year.
+    no-leap calendar. ``december_prev`` is the preceding year's December
+    of (tasmax + tasmin) / 2, from `december`, since DJF of a year takes
+    the December before it. With None the DJF mean covers January and
+    February only, and the year is a spin-up year, not a product year.
+    A cell-day with tasmin above tasmax is swapped before counting.
+    Raises unless both arrays are (365, lat, lon) of one shape.
     """
+    # Counting after averaging would give a different and wrong answer,
+    # so this takes daily grids per cell, before any spatial step.
     if tasmax.shape != tasmin.shape or tasmax.shape[0] != 365:
         raise ValueError(
             f"expected matching (365, lat, lon) arrays; got "

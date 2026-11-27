@@ -1,37 +1,16 @@
 """Prepare target geometry layers by dissolving a finer polygon layer.
 
-The polygon weight engine takes any target geometry file with declared id
-fields. Sources like the combined GADM file ship every admin level in one
-layer at the deepest granularity, so the per-level target files have to
-be dissolved out first. This module is that step: generic, keyed on
-caller-declared columns, with the same discipline the rest of the repo
-applies to geometry work.
+Sources like the combined GADM file ship every admin level in one layer
+at the deepest granularity, and the target file of each level is
+dissolved out of it on the key columns the caller declares. A dissolve
+raises if a key column is missing or null, if the dissolved keys are not
+unique, or if the total planar area changes by more than a tolerance, as
+it does when pieces of the source overlap each other. Invalid source
+geometries are repaired with `shapely.make_valid` first, and counted.
 
-Guarantees per dissolve:
-
-- key columns must exist and carry no nulls (offenders are named),
-- the dissolved keys are unique by construction and verified anyway,
-- total planar area is conserved within a stated tolerance, which is the
-  proof that no geometry was lost or double-merged. Planar (coordinate
-  unit) area is the right conservation metric here: dissolving is a
-  union, so the metric only has to be consistent before and after, and
-  planar area is cheap at this scale. Geodesic areas belong to the
-  weight engine, not to layer preparation. Note the converse: inputs
-  whose pieces overlap each other lose area under union, and this check
-  reports exactly that instead of hiding it.
-- invalid source geometries are repaired with `shapely.make_valid`
-  before union, and the repair count is recorded, mirroring the
-  `regions.py` policy of loud rather than silent repair.
-
-`prepare_target_layers` orchestrates several levels from one source read
-and writes GeoParquet plus a JSON provenance manifest (source path and
-checksum, feature counts, per-level unit counts and area accounting,
-version label, package versions), so what was produced is inspectable
-later without rerunning.
-
-Display-name columns are carried as attributes for orientation only.
-Whatever encoding state they are in comes along verbatim; they are never
-keys, and nothing downstream may join on them.
+`prepare_target_layers` dissolves several levels from one read of the
+source and writes GeoParquet files and a JSON provenance manifest. Name
+columns are carried verbatim for orientation only, and are never keys.
 """
 
 from __future__ import annotations
@@ -50,9 +29,12 @@ from cil_regionalization.manifest import collect_package_versions, hash_file
 
 
 def _planar_area(geometry: gpd.GeoSeries) -> pd.Series:
-    """Planar area in coordinate units, silencing the geographic-CRS
-    warning: planar area is the intended conservation metric here (see
-    the module docstring), not an accident."""
+    """Planar area in coordinate units, without the warning geopandas
+    gives for a geographic CRS."""
+    # Planar area is the conservation metric on purpose. Dissolving is a
+    # union, so the metric only has to be consistent before and after,
+    # and planar area is cheap at this scale. Geodesic areas belong to the
+    # weight engine, not to layer preparation.
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore", message=".*geographic CRS.*", category=UserWarning
@@ -82,7 +64,8 @@ class DissolveReport:
 
 @dataclass(frozen=True)
 class LevelSpec:
-    """One target level: output name, key columns, carried name columns."""
+    """One target level, with its output name, its key columns and the
+    name columns it carries."""
 
     name: str
     key_columns: tuple[str, ...]
@@ -96,11 +79,13 @@ def dissolve_layer(
     name_columns: Sequence[str] = (),
     area_rel_tol: float = 1e-6,
 ) -> tuple[gpd.GeoDataFrame, DissolveReport]:
-    """Dissolve `gdf` to one row per key combination.
+    """Dissolve `gdf` to one row per key combination, returned with its
+    `DissolveReport`.
 
-    Name columns are aggregated by first value per unit. Raises if key
-    columns are missing or null, if the dissolved keys are not unique, or
-    if total planar area is not conserved within `area_rel_tol`.
+    Name columns are aggregated by first value per unit. Raises if a key
+    or name column is missing, if a key is null, if the dissolved keys
+    are not unique, or if total planar area is not conserved within
+    `area_rel_tol`.
     """
     keys = list(key_columns)
     names = [c for c in name_columns if c not in keys]
@@ -210,30 +195,28 @@ def prepare_target_layers(
     """Read `source_path` once, dissolve each level, write GeoParquet.
 
     ``drop_query`` optionally names source features to exclude before
-    dissolving, as a pandas query over the key and name columns (only
-    columns declared by some level are read, so the query may reference
-    only those). It
-    exists for documented source defects (features whose area duplicates
-    other features would otherwise break area conservation); the query
-    and the number of dropped features are recorded in the manifest, so
-    an exclusion is always a visible editorial decision, never a silent
-    one.
+    dissolving, as a pandas query. Only the columns some level declares
+    are read, so the query may use only those. ``repair`` optionally
+    edits the source frame before ``drop_query`` and dissolving, as a
+    callable taking and returning the frame, and must not change the
+    number of features. It comes with ``repair_record``, a JSON
+    serializable account of what was changed, on how many rows and on
+    what evidence. The manifest records the query, the number of
+    features it dropped and the repair record as given.
 
-    ``repair`` optionally edits the source frame before ``drop_query``
-    and dissolving: a callable taking and returning the frame. It exists
-    for documented source defects that dropping cannot fix (a key field
-    left blank on features whose correct value the source itself
-    states). A repair must come with ``repair_record``, a JSON
-    serializable account of what was changed, on how many rows, and on
-    what evidence; the record goes into the manifest verbatim. A repair
-    without a record, or a record without a repair, is refused: edits to
-    source data are visible editorial decisions or they do not happen.
-
-    Returns the provenance manifest (also written to
-    ``<out_dir>/targets.manifest.json``): source identity and checksum,
-    per-level counts and area accounting, the version label to use as
-    ``regions.version`` in weight configs, and package versions.
+    Returns the provenance manifest, also written to
+    ``<out_dir>/targets.manifest.json``, with the source identity and
+    checksum, per-level counts and area accounting, the version label to
+    use as ``regions.version`` in weight configs, and package versions.
+    Raises if only one of ``repair`` and ``repair_record`` is given, if
+    the source has no CRS, if ``repair`` changes the number of features,
+    or if ``drop_query`` matches nothing.
     """
+    # drop_query and repair exist for documented source defects, such as
+    # features whose area duplicates others or a key field left blank on
+    # features whose correct value the source itself states. Both are
+    # recorded so that every edit to source data is a visible editorial
+    # decision, never a silent one.
     if (repair is None) != (repair_record is None):
         raise ValueError(
             "prepare_target_layers: repair and repair_record come together; "

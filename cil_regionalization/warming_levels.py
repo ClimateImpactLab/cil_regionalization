@@ -9,9 +9,11 @@ in no band gives the member no level in that period.
 
 Nothing here smooths. The series is taken as it is in the table, and
 the caller has to say how it was smoothed, so the record of a run says
-so too. The reference period and the offset have no default, because
-the offset is only right for one reference period and one baseline.
+so too. The reference period and the offset have no default.
 """
+
+# The reference period and the offset have no default because the
+# offset is only right for one reference period and one baseline.
 
 from __future__ import annotations
 
@@ -54,8 +56,7 @@ class Period:
     """A calendar period. ``gmst_span`` is the years the temperature is
     averaged over to pick a member's level, and ``impact_span`` the
     years of the impacts that go under that level. Both include their
-    first and last year. They are given apart because a product may
-    average its impacts over other years than its temperature."""
+    first and last year, and the two may differ."""
 
     gmst_span: tuple[int, int]
     impact_span: tuple[int, int]
@@ -353,13 +354,14 @@ def assign_warming_levels(
     ``smoothing`` says how the series in the table was smoothed, in
     words, and goes into the record as it is. Nothing is smoothed
     here. ``surrogates`` is "exclude" or "include" and has no default.
-    Excluded, a surrogate model is at no level, since its series was
-    built to span the distribution of warming under weights that a
-    warming level does not use. ``members`` are the members assessed,
-    every member of the table if it is left out. Raises if one of them
-    has no row, or lacks a value for a year of the reference period or
-    of a ``gmst_span``.
+    Excluded, a surrogate model is at no level. ``members`` are the
+    members assessed, every member of the table if it is left out.
+    Raises if one of them has no row, or lacks a value for a year of
+    the reference period or of a ``gmst_span``.
     """
+    # A surrogate model can be excluded because its series was built to
+    # span the distribution of warming under weights that a warming
+    # level does not use.
     if surrogates not in SURROGATES:
         raise ValueError(
             f"surrogates has to be 'exclude' or 'include'; got {surrogates!r}"
