@@ -2,9 +2,20 @@
 a time.
 
 A block is a run of consecutive row groups, sized so that a worker is
-planned to hold no more than its share of ``memory_gb``. A worker reads
-its block from every leaf file and pools it with
-`stats.pooled_statistics`, so the numbers are those of `stats`.
+planned to hold no more than its share of ``memory_gb``, or of the size
+``targets_per_block`` declares. A worker reads its block from every leaf
+file and pools it with `stats.pooled_statistics`, so the numbers are
+those of `stats`.
+
+The size of a block rests on an estimate of the bytes a kept row takes,
+calibrated on resident memory. The first block is built alone, in a
+worker of its own, and measured as the growth of that worker's peak
+resident memory, and the manifest records the estimate and the
+measurement side by side. A run sized by the estimate is refused when
+the measurement of a block large enough to judge is more than twice the
+estimate. In a single process that has already done other work the peak
+cannot be put down to the block, so there is no measurement and no
+judgement.
 """
 
 # `stats.pooled_statistics` needs every member of a target at once and
@@ -13,6 +24,7 @@ its block from every leaf file and pools it with
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sys
 import warnings
@@ -50,6 +62,38 @@ from cil_regionalization.stats import (
 # it had to be costs opens.
 BYTES_PER_ROW = 240
 BYTES_PER_DIMENSION = 40
+# The kept rows a first block needs for its measurement to be judged.
+# Below it the fixed cost of pooling a block outweighs what its rows
+# take, and the measurement is recorded and not judged.
+JUDGED_ROWS = 100_000
+# A first block is refused when it takes more than this many times the
+# estimate a kept row. It is a tolerance on a measure with known noise,
+# not a correction of the estimate. One synthetic first block, measured
+# in one fresh worker after another, read from a fifth of the estimate
+# to nine tenths of it. Memory sampled through the block peaked where
+# the measure did, so the spread is in what the block holds resident and
+# not in the reading. Twice refuses a block far heavier than the
+# estimate and not that spread. The manifest records the measure of
+# every run, so runs on real data can tighten it.
+REFUSED_ABOVE = 2
+# The unit ru_maxrss counts in, bytes on macOS and kibibytes on Linux.
+# On a platform not listed the peak is not read, rather than guessed.
+_RU_MAXRSS_UNIT = {"darwin": 1, "linux": 1024}
+# Why a first block run in the process that planned the run has no
+# measurement.
+_SHARED_PEAK = (
+    "the first block ran in the process that planned the run, whose peak "
+    "resident memory includes what it did before, so the block's share of "
+    "the peak cannot be told"
+)
+# Why a worker whose peak did not rise has none either. A forked worker
+# starts from what it inherited, and a block lighter than that leaves
+# the peak where it was.
+_FLAT_PEAK = (
+    "the worker's peak resident memory did not rise above the peak it "
+    "started from, so the block weighed less than what the worker inherited "
+    "and the peak says nothing of it"
+)
 
 
 def bytes_per_row(request: ReduceRequest) -> int:
@@ -110,6 +154,22 @@ def choose_blocks(
     return blocks
 
 
+def fixed_blocks(rows_per_group, groups_per_block: int) -> list[tuple[int, int]]:
+    """Consecutive row groups in blocks of ``groups_per_block``, as
+    (first, stop) pairs. The empty groups before the first that holds
+    rows are left out, as in `choose_blocks`, and the last block may be
+    shorter."""
+    rows = np.asarray(rows_per_group, dtype=np.float64)
+    held = np.flatnonzero(rows > 0)
+    if not len(held):
+        return []
+    start, end = int(held[0]), len(rows)
+    return [
+        (first, min(first + groups_per_block, end))
+        for first in range(start, end, groups_per_block)
+    ]
+
+
 class _TooSmall(ValueError):
     def __init__(self, largest_group: float) -> None:
         super().__init__(largest_group)
@@ -123,19 +183,43 @@ class PandasBlocks(ReduceBackend):
         self.options = options or PandasReduceOptions()
 
     def check_options(self) -> None:
-        if self.options.memory_gb is None:
+        if self.options.memory_gb is None and self.options.targets_per_block is None:
             raise ValueError(
                 "reducing leaves by blocks needs a memory budget. Set "
                 "[reduce.pandas] memory_gb to what all the workers may "
-                "hold together."
+                "hold together, or declare the size of a block in "
+                "targets_per_block."
             )
 
     def _plan(self, request: ReduceRequest) -> dict:
         self.check_options()
         n_workers = self.options.n_workers or request.n_workers
-        per_worker = self.options.memory_gb * 1e9 / n_workers
         share = kept_share(request)
         row_bytes = bytes_per_row(request)
+        kept = np.asarray(request.rows_per_group, dtype=np.float64) * share
+        declared = self.options.targets_per_block
+        if declared is not None:
+            per_group = request.footer["targets_per_group"]
+            if declared % per_group:
+                raise ValueError(
+                    f"[reduce.pandas] targets_per_block = {declared} is not a "
+                    f"whole number of the leaves' row groups, which hold "
+                    f"{per_group} targets each"
+                )
+            blocks = fixed_blocks(request.rows_per_group, declared // per_group)
+            return {
+                "by": "declared",
+                "blocks": blocks,
+                "n_workers": max(1, min(n_workers, len(blocks))),
+                "per_worker_gb": None,
+                "share": share,
+                "row_bytes": row_bytes,
+                "rows_in_largest_block": int(
+                    max((kept[a:b].sum() for a, b in blocks), default=0)
+                ),
+                "groups_in_largest_block": max((b - a for a, b in blocks), default=0),
+            }
+        per_worker = self.options.memory_gb * 1e9 / n_workers
         try:
             blocks = choose_blocks(request.rows_per_group, share, per_worker, row_bytes)
         except _TooSmall as error:
@@ -148,8 +232,8 @@ class PandasBlocks(ReduceBackend):
                 f"smallest budget that runs with {n_workers} workers is "
                 f"{needed:.3g} GB."
             ) from None
-        kept = np.asarray(request.rows_per_group, dtype=np.float64) * share
         return {
+            "by": "estimate",
             "blocks": blocks,
             "n_workers": max(1, min(n_workers, len(blocks))),
             "per_worker_gb": per_worker / 1e9,
@@ -165,29 +249,23 @@ class PandasBlocks(ReduceBackend):
         plan = self._plan(request)
         per_group = request.footer["targets_per_group"]
         n_blocks, n_leaves = len(plan["blocks"]), len(request.leaves)
-        return {
-            "kind": self.kind,
-            "engine": collect_package_versions(("pandas", "numpy", "pyarrow")),
-            "options": {
-                "memory_gb": self.options.memory_gb,
-                "n_workers": plan["n_workers"],
-            },
-            "blocks": n_blocks,
-            "targets_in_largest_block": plan["groups_in_largest_block"] * per_group,
-            "rows_in_largest_block": plan["rows_in_largest_block"],
-            "opens_per_leaf": n_blocks,
-            "opens": n_blocks * n_leaves,
-            "per_worker_gb": plan["per_worker_gb"],
-            "bytes_per_row": plan["row_bytes"],
-            "kept_share": plan["share"],
-            "text": [
+        declared = plan["by"] == "declared"
+        if declared:
+            budget = (
+                f"reduce: pandas, blocks of {self.options.targets_per_block} "
+                f"targets as declared, over {plan['n_workers']} workers"
+            )
+            sized = (
+                "  sized as declared, not from memory_gb. The first block is "
+                "measured, and the measurement is recorded and not judged."
+            )
+        else:
+            budget = (
                 f"reduce: pandas, {self.options.memory_gb:g} GB over "
                 f"{plan['n_workers']} workers, "
-                f"{plan['per_worker_gb']:.3g} GB a worker",
-                f"  {n_blocks} blocks of up to "
-                f"{plan['groups_in_largest_block'] * per_group} targets and "
-                f"{plan['rows_in_largest_block']:,} rows",
-                f"  {n_blocks} opens a leaf, {n_blocks * n_leaves:,} in all",
+                f"{plan['per_worker_gb']:.3g} GB a worker"
+            )
+            sized = (
                 f"  sized at {plan['row_bytes']} bytes a row, "
                 + (
                     f"{BYTES_PER_ROW} and {BYTES_PER_DIMENSION} for each "
@@ -200,19 +278,64 @@ class PandasBlocks(ReduceBackend):
                 f"{', each with its year' if request.time_reduction != 'window_mean' else ''}. "
                 f"The rows of a "
                 f"group are known summed over the leaves, so this takes "
-                f"every leaf to spread its rows over the groups alike.",
+                f"every leaf to spread its rows over the groups alike. The "
+                f"first block is measured in a worker of its own, and the run "
+                f"is refused if it takes more than {REFUSED_ABOVE} times that."
+            )
+        return {
+            "kind": self.kind,
+            "engine": collect_package_versions(("pandas", "numpy", "pyarrow")),
+            "options": {
+                "memory_gb": self.options.memory_gb,
+                "targets_per_block": self.options.targets_per_block,
+                "n_workers": plan["n_workers"],
+            },
+            "blocks": n_blocks,
+            "targets_in_largest_block": plan["groups_in_largest_block"] * per_group,
+            "rows_in_largest_block": plan["rows_in_largest_block"],
+            "opens_per_leaf": n_blocks,
+            "opens": n_blocks * n_leaves,
+            "per_worker_gb": plan["per_worker_gb"],
+            "bytes_per_row": plan["row_bytes"],
+            "kept_share": plan["share"],
+            "text": [
+                budget,
+                f"  {n_blocks} blocks of up to "
+                f"{plan['groups_in_largest_block'] * per_group} targets and "
+                f"{plan['rows_in_largest_block']:,} rows",
+                f"  {n_blocks} opens a leaf, {n_blocks * n_leaves:,} in all",
+                sized,
             ],
         }
 
     def run(self, request: ReduceRequest) -> tuple[pd.DataFrame, dict]:
         plan = self._plan(request)
-        results = _run_blocks(request, plan["blocks"], plan["n_workers"])
+        if plan["by"] == "declared":
+            warnings.warn(
+                f"[reduce.pandas] targets_per_block = "
+                f"{self.options.targets_per_block} declares the size of a "
+                f"block, so the blocks are not sized from a memory budget, "
+                f"and the measurement of the first block is recorded and not "
+                f"judged",
+                UserWarning,
+                stacklevel=2,
+            )
+        sizing: dict = {}
+
+        def judge(first: dict) -> None:
+            sizing.update(_block_size_record(request, plan, first))
+            if sizing["refused"]:
+                raise ValueError(_too_heavy(request, plan, sizing))
+
+        results = _run_blocks(request, plan["blocks"], plan["n_workers"], judge)
         frames = [r["stats"] for r in results if len(r["stats"])]
         if not frames:
             raise ValueError("reduce: the leaves hold no row inside any window")
         stats = pd.concat(frames, ignore_index=True)
+        sizing.pop("refused", None)
         report = {
             **{k: v for k, v in self.describe(request).items() if k != "text"},
+            "block_size": sizing,
             "failed_opens": sum(r["failed_opens"] for r in results),
             "max_worker_peak_gb": max(r["peak_gb"] for r in results),
             "rows_pooled": sum(r["rows"] for r in results),
@@ -220,40 +343,166 @@ class PandasBlocks(ReduceBackend):
         return stats[request.columns], report
 
 
-def _run_blocks(request: ReduceRequest, blocks, n_workers: int) -> list[dict]:
-    """Every block's result, in any order. The first block that fails
-    stops the run, and a worker that dies raises `RuntimeError`."""
+def _block_size_record(request: ReduceRequest, plan: dict, first: dict) -> dict:
+    """The manifest's account of how the blocks were sized, the estimate
+    and the measurement of the first block side by side, and whether the
+    run is refused for it. Without a measurement the run is not
+    judged."""
+    rows, growth = first["rows"], first["resident_growth_bytes"]
+    unavailable = first["measure_unavailable"]
+    measured = growth / rows if rows and growth is not None else None
+    judged = (
+        plan["by"] == "estimate"
+        and unavailable is None
+        and measured is not None
+        and rows >= JUDGED_ROWS
+    )
+    return {
+        "by": plan["by"],
+        "targets_per_block": (
+            plan["groups_in_largest_block"] * request.footer["targets_per_group"]
+            if plan["by"] == "declared"
+            else None
+        ),
+        "estimate_bytes_per_row": plan["row_bytes"],
+        "measured_bytes_per_row": measured,
+        "measured_rows": rows,
+        "measured_growth_bytes": growth,
+        "worker_setup_peak_bytes": first["worker_setup_peak_bytes"],
+        "peak_after_block_bytes": first["peak_after_block_bytes"],
+        "measured_block": list(first["block"]),
+        "start_method": first["start_method"],
+        "measure": (
+            "the growth of the peak resident memory, ru_maxrss, of the worker "
+            "that built the first block, from the peak once it had set itself "
+            "up and before it read the block, to the end of the block"
+        ),
+        "unavailable": unavailable,
+        "judged": judged,
+        "judged_from_rows": JUDGED_ROWS,
+        "refused_above": REFUSED_ABOVE,
+        "refused": judged and measured > REFUSED_ABOVE * plan["row_bytes"],
+    }
+
+
+def _too_heavy(request: ReduceRequest, plan: dict, sizing: dict) -> str:
+    """The refusal of a run whose first block took more than
+    `REFUSED_ABOVE` times the estimate, with the largest declared block
+    that fits at the measured size."""
+    per_group = request.footer["targets_per_group"]
+    first, stop = sizing["measured_block"]
+    targets = (stop - first) * per_group
+    per_target = sizing["measured_growth_bytes"] / targets
+    fits = int(plan["per_worker_gb"] * 1e9 // per_target) // per_group * per_group
+    way_out = (
+        f"At the measured size a block of {fits} targets fits a worker."
+        if fits
+        else f"At the measured size not one row group of {per_group} targets "
+        f"fits a worker, so memory_gb has to be raised."
+    )
+    return (
+        f"reduce: the first block, row groups {first} to {stop - 1}, took "
+        f"{sizing['measured_bytes_per_row']:.0f} bytes a kept row over "
+        f"{sizing['measured_rows']:,} rows, more than {REFUSED_ABOVE} times "
+        f"the {sizing['estimate_bytes_per_row']} bytes a row the blocks were "
+        f"sized at, so a block can take more than a worker's "
+        f"{plan['per_worker_gb']:.3g} GB. No statistics were written. The "
+        f"measure is the growth of the worker's peak resident memory over "
+        f"the block. Declare the size of a block in "
+        f"[reduce.pandas] targets_per_block, in place of memory_gb. "
+        f"{way_out}"
+    )
+
+
+def _run_blocks(request: ReduceRequest, blocks, n_workers: int, judge) -> list[dict]:
+    """Every block's result, in any order. The first block is built
+    alone and measured, and handed to ``judge``, which may raise, before
+    any other is. The first block that fails stops the run, and a
+    worker that dies raises `RuntimeError`."""
     # A process pool executor, because a `multiprocessing.Pool` would
     # wait for ever for a worker that died.
+    if not blocks:
+        return []
+    first, rest = blocks[0], blocks[1:]
     if n_workers == 1:
-        _init_worker(request)
-        results = []
-        for block in blocks:
+        _init_worker(request, own_process=False)
+        results = [_measured_block(first)]
+        results[0]["start_method"] = None
+        judge(results[0])
+        _log_block(results, len(blocks))
+        for block in rest:
             results.append(_reduce_block(block))
             _log_block(results, len(blocks))
         return results
     results = []
+    # the platform's own, fork on Linux, named so the manifest can say it
+    context = multiprocessing.get_context()
     executor = ProcessPoolExecutor(
-        max_workers=n_workers, initializer=_init_worker, initargs=(request,)
+        max_workers=n_workers,
+        mp_context=context,
+        initializer=_init_worker,
+        initargs=(request,),
     )
     try:
-        futures = {executor.submit(_reduce_block, block): block for block in blocks}
+        results.append(_collect(executor.submit(_measured_block, first), first))
+        results[0]["start_method"] = context.get_start_method()
+        judge(results[0])
+        _log_block(results, len(blocks))
+        futures = {executor.submit(_reduce_block, block): block for block in rest}
         for future in as_completed(futures):
-            first, stop = futures[future]
-            try:
-                results.append(future.result())
-            except BrokenProcessPool:
-                raise RuntimeError(
-                    f"reduce: a worker died while row groups {first} to "
-                    f"{stop - 1} were being reduced, most likely killed for "
-                    f"memory. No statistics were written. Raise "
-                    f"[reduce.pandas] memory_gb only if the node has it. "
-                    f"Otherwise lower it, which makes the blocks smaller."
-                ) from None
+            results.append(_collect(future, futures[future]))
             _log_block(results, len(blocks))
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     return results
+
+
+def _collect(future, block) -> dict:
+    first, stop = block
+    try:
+        return future.result()
+    except BrokenProcessPool:
+        raise RuntimeError(
+            f"reduce: a worker died while row groups {first} to "
+            f"{stop - 1} were being reduced, most likely killed for "
+            f"memory. No statistics were written. Raise "
+            f"[reduce.pandas] memory_gb only if the node has it. "
+            f"Otherwise lower it, which makes the blocks smaller."
+        ) from None
+
+
+def _measured_block(block: tuple[int, int]) -> dict:
+    """`_reduce_block`, with the growth of the process's peak resident
+    memory over the block under 'resident_growth_bytes', or None and the
+    reason under 'measure_unavailable'. The growth is taken from the peak
+    once the worker has set itself up and before it reads the block, so
+    what the worker holds for every block, its imports and its target
+    table, is outside it."""
+    setup = _peak_resident_bytes()
+    result = _reduce_block(block)
+    peak = _peak_resident_bytes()
+    growth, unavailable = _growth(setup, peak, _STATE["own_process"])
+    result.update(
+        worker_setup_peak_bytes=setup,
+        peak_after_block_bytes=peak,
+        resident_growth_bytes=growth,
+        measure_unavailable=unavailable,
+    )
+    return result
+
+
+def _growth(
+    started: int | None, peak: int | None, own_process: bool
+) -> tuple[int | None, str | None]:
+    """The growth of the peak resident memory over the first block, or
+    None and why it cannot be read off the peak."""
+    if not own_process:
+        return None, _SHARED_PEAK
+    if started is None or peak is None:
+        return None, f"the unit of ru_maxrss on {sys.platform} is not known here"
+    if peak <= started:
+        return None, _FLAT_PEAK
+    return peak - started, None
 
 
 def _log_block(results: list[dict], n_blocks: int) -> None:
@@ -269,7 +518,11 @@ def _log_block(results: list[dict], n_blocks: int) -> None:
 _STATE: dict = {}
 
 
-def _init_worker(request: ReduceRequest) -> None:
+def _init_worker(request: ReduceRequest, own_process: bool = True) -> None:
+    """Load what every block needs. ``own_process`` is False where the
+    blocks run in the process that planned the run, whose peak resident
+    memory is not the worker's own."""
+    _STATE.update(own_process=own_process)
     targets = leaf_format.TargetTable.read(
         Path(request.leaves_root) / request.targets_file
     )
@@ -281,11 +534,23 @@ def _init_worker(request: ReduceRequest) -> None:
     _STATE.update(request=request, targets=targets)
 
 
-def _peak_gb() -> float:
+def _peak_resident_bytes() -> int | None:
+    """This process's peak resident memory in bytes, from ru_maxrss, or
+    None on a platform whose unit of it is not in `_RU_MAXRSS_UNIT`."""
     import resource
 
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak / 1e6 if sys.platform.startswith("linux") else peak / 1e9
+    unit = next(
+        (u for name, u in _RU_MAXRSS_UNIT.items() if sys.platform.startswith(name)),
+        None,
+    )
+    if unit is None:
+        return None
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+
+
+def _peak_gb() -> float:
+    peak = _peak_resident_bytes()
+    return float("nan") if peak is None else peak / 1e9
 
 
 def _leaf_rows(

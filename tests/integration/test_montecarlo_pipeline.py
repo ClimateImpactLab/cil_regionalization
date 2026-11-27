@@ -2722,6 +2722,41 @@ _METHODS_AND_WEIGHTS = pytest.mark.parametrize(
 _ONE_GROUP_GB = 7000e-9
 
 
+@pytest.fixture
+def spawned_workers():
+    """Workers started by spawn, for a test that reads a worker's real
+    peak resident memory over its first block. A forked worker starts
+    from what it inherited. Runs keep the platform's own start method."""
+    import multiprocessing
+
+    before = multiprocessing.get_start_method(allow_none=True)
+    multiprocessing.set_start_method("spawn", force=True)
+    yield
+    multiprocessing.set_start_method(before, force=True)
+
+
+@pytest.fixture
+def forked_workers_with_a_rising_peak(monkeypatch):
+    """Forked workers, which keep what a test puts in, reading a peak
+    resident memory that rises with every reading. A block this small
+    can leave the real peak where the worker's setup put it, and then
+    there is nothing to judge."""
+    import multiprocessing
+
+    from cil_regionalization.reduce import pandas_blocks
+
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("needs forked workers")
+    readings = itertools.count(1)
+    monkeypatch.setattr(
+        pandas_blocks, "_peak_resident_bytes", lambda: 10**9 + 10**4 * next(readings)
+    )
+    before = multiprocessing.get_start_method(allow_none=True)
+    multiprocessing.set_start_method("fork", force=True)
+    yield
+    multiprocessing.set_start_method(before, force=True)
+
+
 def _same_frames(one: pd.DataFrame, two: pd.DataFrame) -> None:
     """Equal with their dtypes and row order, and to the bit."""
     pd.testing.assert_frame_equal(one, two, check_exact=True)
@@ -2990,8 +3025,162 @@ class TestReduce:
         assert manifest["reduce"]["blocks"] == 2
         assert manifest["reduce"]["options"] == {
             "memory_gb": 2 * _ONE_GROUP_GB,
+            "targets_per_block": None,
             "n_workers": 2,
         }
+
+    @pytest.mark.usefixtures("spawned_workers")
+    def test_the_estimate_and_the_measurement_are_recorded_side_by_side(
+        self, weights_dir, tmp_path
+    ):
+        """The first block is built alone in a worker and measured as the
+        growth of its peak resident memory over the block. A block this
+        small can fit in memory the setup freed, and then the peak does
+        not rise and the record says so. Either way it is below what is
+        judged, so it is recorded and not judged. It went red with
+        nothing measured."""
+        from cil_regionalization.reduce.pandas_blocks import _FLAT_PEAK
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        got = self._reduce(raw, memory_gb=2 * _ONE_GROUP_GB, n_workers=2)
+        _same_frames(got.stats, whole.stats)
+        sizing = json.loads((out / "again.manifest.json").read_text())["reduce"][
+            "block_size"
+        ]
+        assert sizing["by"] == "estimate" and sizing["targets_per_block"] is None
+        assert sizing["estimate_bytes_per_row"] == 280
+        assert sizing["measured_rows"] == 24 and sizing["measured_block"] == [0, 1]
+        assert sizing["start_method"] == "spawn" and "ru_maxrss" in sizing["measure"]
+        setup = sizing["worker_setup_peak_bytes"]
+        after = sizing["peak_after_block_bytes"]
+        assert after >= setup > 0
+        if sizing["unavailable"] is None:
+            assert sizing["measured_growth_bytes"] == after - setup > 0
+            assert (
+                sizing["measured_bytes_per_row"] == sizing["measured_growth_bytes"] / 24
+            )
+        else:
+            assert after == setup and sizing["unavailable"] == _FLAT_PEAK
+            assert sizing["measured_growth_bytes"] is None
+        assert sizing["judged"] is False and sizing["judged_from_rows"] == 100_000
+        assert "refused" not in sizing
+
+    def test_in_one_process_the_block_is_not_measured_nor_judged(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """The process planned the run before, so its peak is not the
+        block's. Even with every block judged and the estimate set below
+        anything a block takes, the run goes through, and the manifest
+        says why there is no number."""
+        from cil_regionalization.reduce import pandas_blocks
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        monkeypatch.setattr(pandas_blocks, "JUDGED_ROWS", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_ROW", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_DIMENSION", 0)
+        got = self._reduce(raw, memory_gb=_ONE_GROUP_GB, n_workers=1)
+        _same_frames(got.stats, whole.stats)
+        sizing = json.loads((out / "again.manifest.json").read_text())["reduce"][
+            "block_size"
+        ]
+        assert sizing["measured_bytes_per_row"] is None
+        assert sizing["measured_growth_bytes"] is None
+        assert sizing["measured_rows"] == 48
+        assert sizing["judged"] is False and sizing["start_method"] is None
+        assert sizing["unavailable"] == (
+            "the first block ran in the process that planned the run, whose "
+            "peak resident memory includes what it did before, so the "
+            "block's share of the peak cannot be told"
+        )
+
+    @pytest.mark.usefixtures("forked_workers_with_a_rising_peak")
+    def test_a_first_block_heavier_than_the_estimate_is_refused(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """In a worker, with every block judged, and the estimate set at
+        one byte a row, below anything a block takes. Nothing is written.
+        It went red with the run let through."""
+        from cil_regionalization.reduce import pandas_blocks
+
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        monkeypatch.setattr(pandas_blocks, "JUDGED_ROWS", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_ROW", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_DIMENSION", 0)
+        # a row group of 24 rows at a byte a row fits 30 bytes, and two do
+        # not, so there are two blocks and the first goes to a worker
+        with pytest.raises(ValueError) as error:
+            self._reduce(raw, memory_gb=2 * 30e-9, n_workers=2)
+        message = str(error.value)
+        assert message.startswith(
+            "reduce: the first block, row groups 0 to 0, took "
+        ), message
+        assert (
+            "bytes a kept row over 24 rows, more than 2 times the 1 bytes a "
+            "row the blocks were sized at, so a block can take more than a "
+            "worker's"
+        ) in message
+        assert "No statistics were written." in message
+        assert "growth of the worker's peak resident memory over the block" in message
+        assert (
+            "Declare the size of a block in [reduce.pandas] targets_per_block"
+            in message
+        )
+        assert not (out / "again.parquet").exists()
+
+    @pytest.mark.usefixtures("forked_workers_with_a_rising_peak")
+    def test_a_first_block_within_the_estimate_is_judged_and_runs(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        from cil_regionalization.reduce import pandas_blocks
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        monkeypatch.setattr(pandas_blocks, "JUDGED_ROWS", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_ROW", 10**12)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_DIMENSION", 0)
+        # one row group a worker, so two blocks and a worker for the first
+        got = self._reduce(raw, memory_gb=2 * 30e3, n_workers=2)
+        _same_frames(got.stats, whole.stats)
+        sizing = json.loads((out / "again.manifest.json").read_text())["reduce"][
+            "block_size"
+        ]
+        assert sizing["judged"] is True and sizing["start_method"] == "fork"
+        # the peak the fixture puts in, read in the worker
+        assert sizing["measured_growth_bytes"] % 10**4 == 0
+
+    @pytest.mark.parametrize("n_workers", [1, 2])
+    @pytest.mark.usefixtures("spawned_workers")
+    def test_a_declared_block_size_is_used_warned_and_recorded(
+        self, weights_dir, tmp_path, n_workers
+    ):
+        """In place of a memory budget, with the same numbers. It went
+        red with the option unknown."""
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        raw = json.loads(json.dumps(raw))
+        raw["stats"].update({})
+        raw["output"].update(stem="again", leaves_stem="statistics")
+        raw["reduce"] = {"pandas": {"targets_per_block": 1, "n_workers": n_workers}}
+        with pytest.warns(UserWarning, match="targets_per_block = 1 declares"):
+            got = run_pipeline(
+                MonteCarloPipelineConfig.model_validate(raw), stage="reduce"
+            )
+        _same_frames(got.stats, whole.stats)
+        reduce = json.loads((out / "again.manifest.json").read_text())["reduce"]
+        assert reduce["blocks"] == 2 and reduce["per_worker_gb"] is None
+        assert reduce["options"]["targets_per_block"] == 1
+        assert reduce["options"]["memory_gb"] is None
+        assert reduce["block_size"]["by"] == "declared"
+        assert reduce["block_size"]["targets_per_block"] == 1
+        assert reduce["block_size"]["judged"] is False
+        assert reduce["block_size"]["measured_rows"] == 24
+        assert (reduce["block_size"]["unavailable"] is None) == (n_workers == 2)
+
+    def test_a_budget_and_a_declared_size_together_are_refused(
+        self, weights_dir, tmp_path
+    ):
+        raw = self._raw(weights_dir, tmp_path / "t", tmp_path / "o")
+        raw["reduce"] = {"pandas": {"memory_gb": 1.0, "targets_per_block": 128}}
+        with pytest.raises(ValueError, match="memory_gb, which the blocks are sized"):
+            MonteCarloPipelineConfig.model_validate(raw)
 
     def test_other_windows_need_neither_the_tree_nor_the_weights(
         self, weights_dir, tmp_path, recwarn
@@ -3352,7 +3541,9 @@ class TestReduce:
             "  sized at 280 bytes a row, 240 and 40 for each dimension of a "
             "leaf, with 0.5 of a group's rows kept. The "
             "rows of a group are known summed over the leaves, so this takes "
-            "every leaf to spread its rows over the groups alike.",
+            "every leaf to spread its rows over the groups alike. The first "
+            "block is measured in a worker of its own, and the run is refused "
+            "if it takes more than 2 times that.",
             f"  leaves: every file under {out / 'leaves'} is in a leaves manifest",
         ]
         assert plan.missing == []
