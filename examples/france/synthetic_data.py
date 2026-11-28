@@ -215,19 +215,23 @@ name = "synthetic_gadm20_adm2"
 path = "{work / "gadm.parquet"}"
 id_fields = ["ISO", "ID_1", "ID_2"]
 version = "gadm-2.0-impactmap-copy-2025"
+on_invalid_geometry = "repair"
 
 [source]
 path = "{data / "impact_regions.parquet"}"
 id_fields = ["hierid"]
 version = "world-combo-201710"
+on_invalid_geometry = "repair"
 
 [[weights]]
 name = "pop"
 raster = "{data / "population_2015_30ss.tif"}"
 fallback = "area"
+kind = "point_sum"
 
 [backend]
 kind = "local"
+coverage = "exact_fraction"
 
 [output]
 dir = "{data / "published" / "gadm20-adm2-per-source"}"

@@ -2,6 +2,116 @@
 
 ## Unreleased
 
+**A weights config states every choice whose wrong value gives another
+number, as the quantile method and the summation already do.** The rule:
+a default that fails loudly when it is wrong is fine, and a default that
+silently produces a different number is not. So these have no default
+any more, and a config that leaves one out is refused naming it:
+`normalization`, which was `"per_destination"`; `weights[].fallback`,
+which was `"area"`; `weights[].kind`, which was `"point_sum"`;
+`backend.coverage`, which was `"exact_fraction"`;
+`regions.on_invalid_geometry` and `source.on_invalid_geometry`, which
+were `"repair"`; and `grid.offset` and `grid.lon_convention`, which were
+`"center"` and `"[-180,180)"`. The last two matter most. A grid at the
+wrong offset or longitude origin still covers the regions, so the
+weights came out on other cells with nothing said, the error the
+BigQuery backend has refused for an edge-offset grid since #34. The area
+weight takes neither `fallback` nor `kind`, since its total is the
+region's own area and it reads no raster, and it refuses them as it
+refuses a raster or table.
+
+The library's own copies of the normalization default follow what the
+caller says. `WeightsArtifact.from_table`, `compute_native_weights`,
+`apply_fallback`, `Manifest` and `OutputSchema` take it with no default,
+and `WeightsArtifact.load` refuses a weights manifest that does not
+record it, where it read one as `"per_destination"`. The warning when
+the fallback fired often under a policy left unstated goes with that
+default, `_IMPLICIT_DEFAULT_FRAC` and `_IMPLICIT_DEFAULT_MIN` too. It
+announced that an unstated default had fired, and `weight_share`
+measures how much of a target's basis contributed, which is the same
+information. The BigQuery backend read a weight named `pop` from the
+column `population` of its table and any other weight from the column of
+its own name. That was one table's layout and not a rule, so a BigQuery
+weight now declares `weights[].column` beside `weights[].table`, and a
+local weight refuses one.
+
+Left alone, and why. `read_gmst` and `[stats.warming_levels]` keep
+`time_col`, `value_col` and `sep`, because a wrong value there fails to
+find a column and stops. `from_table` keeps recognising coordinate
+columns by name, because it refuses ambiguity and checks the values
+against the grid. And every default that refuses stays,
+`on_null_geometry`, `on_unknown_id`, `on_zero_overlap`, `on_unmatched`,
+`on_zero_weight` and `on_absent_from_data`, because a default that
+refuses chooses nothing in silence.
+
+This breaks every weights config that relied on one of the defaults. The
+configs and examples of this repository state the values their defaults
+gave them, so none of their numbers moves. The recipes repository,
+pinned on v0.5.0, needs the same keys when its pin moves, where it
+already changes for the quantile method, the summation, the declared
+members and the model weight names. The config hash a weights manifest
+records changes for every config, the same values included, since a
+weight now holds its column and the area weight no fallback or kind, so
+a hash from an earlier run does not match one written now. So the config
+an earlier weights manifest came from can no longer be found by hashing
+candidate configs with this version, which refuses an old config for its
+missing keys and hashes a completed one differently. It takes the
+version that wrote the manifest, named in its package_versions, which
+the published GADM weights give as segment_weights 0.1.0, the package's
+former name.
+
+Regenerating the weights artifacts gives the same weights with new
+manifests, since each config states the value its default gave. They are
+regenerated before any product, because a product's run manifest records
+the SHA-256 of both files of the weights it loaded, the manifest among
+them, and a regenerated manifest records another config hash, so a
+product made from the old weights would name a manifest that is no
+longer published. Regenerating the GADM weights needs the GADM target
+layers, which are not distributed and are rebuilt from the GADM sources
+with `examples/gadm20/prepare_gadm20_targets.py` and
+`examples/gadm41/prepare_gadm41_targets.py`.
+
+**Every block of a reduce is measured and recorded, and only the first
+is judged.** Nothing is refused that was not before. A run then shows
+how much blocks of one size vary from worker to worker and how far the
+first block sits from the heaviest, which is what the tolerance of twice
+the estimate is to be set from, where one measured first block could say
+neither. Each block's entry under `reduce.block_size.every_block` gives
+the readings around it and its own growth, and `over_every_block` the
+spread of the measured blocks' bytes a kept row, the heaviest over the
+estimate and the first over the heaviest. A block's growth is read off
+its process's peak after it, so only a block that took its process to a
+new peak has one. On Linux it is taken from the resident memory before
+the block, VmRSS of `/proc/self/status`, because the peak before a later
+block is that of an earlier one. On macOS, which does not read the
+resident memory of the moment, only a worker's first block has one. Each
+worker's first block and each block that took its worker higher than
+before are measured, and a block lighter than one its worker built
+earlier is recorded without a growth, saying why. The log line of each
+block gives its bytes a kept row.
+
+**On Linux a worker's peak resident memory is read as VmHWM of
+`/proc/self/status`, where it was `ru_maxrss`.** On Linux `ru_maxrss`
+survives an exec, so a worker started by spawn read the peak of the
+process that started it, and a block below that peak read nothing. Fork
+starts it afresh, so runs on the cluster, which fork, were measured
+right already, and what read blind was a test that asked for spawn.
+VmHWM is the high-water mark of the process's own address space. On a
+Midway3 compute node, RHEL 8 with kernel 4.18 and Python 3.11.12, it
+started at the worker's own resident memory under spawn, fork and
+forkserver, equal to VmRSS, and grew by the 150 MB a worker touched,
+150.0, 150.3 and 150.0 MB. There the spawned worker's `ru_maxrss`
+started at the parent's 419.9 MB and grew by nothing. macOS keeps
+`ru_maxrss`, which a new worker starts afresh there. A first block whose
+peak did not rise is still recorded as unmeasured, and on Linux that
+should now be rare. Under fork the peaks a worker records count the
+pages it shares with the process that started it, 319.8 MB at the start
+of a worker whose parent held 300 MB, so they overstate what the worker
+alone holds. That errs on the side of the budget, and the growth is
+unaffected, 150.2 MB there. The manifest's measure says which reading
+was taken. The aggregate stage reads its workers' peaks the same way,
+where it took Linux's kibibytes for thousands of bytes.
+
 **A worker that dies stops the aggregate stage at once, naming the
 leaves in flight and how the workers ended.** The leaves ran on a
 `multiprocessing.Pool` that renewed each worker after 16 leaves, and a
@@ -48,19 +158,18 @@ by side under `reduce.block_size`. A first block that keeps 100,000 rows
 or more and takes more than twice the estimate stops the run before any
 other block, with nothing written, and one that keeps fewer is recorded
 and not judged. Twice is a tolerance on a measure with known noise, not
-a correction of the estimate. One synthetic first block, measured in one
-fresh worker after another, read from a fifth of the estimate to nine
-tenths of it, and memory sampled through the block peaked where the
-measure did, so the spread is in what the block holds resident and not
-in the reading. The manifest records the factor beside the measure. On
-one worker the block runs in the process that planned the run, whose
-peak cannot be put down to it, and a worker whose peak did not rise, as
-a forked one can when the block weighs less than what it inherited, says
-nothing of the block either. Neither has a measurement or a judgement,
-and the manifest says why, and which start method the workers had. The
-peak a worker logs is read in bytes on macOS and kibibytes on Linux,
-where Linux's was taken as thousands of bytes. New:
-`[reduce.pandas] targets_per_block` declares the size of a block in
+a correction of the estimate. One synthetic first block, measured on
+macOS in one fresh worker after another, read from a fifth of the
+estimate to nine tenths of it, and memory sampled through the block
+peaked where the measure did, so the spread is in what the block holds
+resident and not in the reading. The manifest records the factor beside
+the measure. On one worker the block runs in the process that planned
+the run, whose peak cannot be put down to it, and a worker whose peak
+did not rise over the block says nothing of it either. Neither has a
+measurement or a judgement, and the manifest says why, and which start
+method the workers had. The peak a worker logs is read in bytes on macOS
+and kibibytes on Linux, where Linux's was taken as thousands of bytes.
+New: `[reduce.pandas] targets_per_block` declares the size of a block in
 place of `memory_gb`. It warns, and the manifest records the size as
 declared.
 

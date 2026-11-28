@@ -71,14 +71,16 @@ def weights_dir(tmp_path: Path) -> Path:
                 "path": str(tp),
                 "id_fields": ["target_id"],
                 "version": "targets-v1",
+                "on_invalid_geometry": "repair",
             },
             "source": {
                 "path": str(sp),
                 "id_fields": ["unit_id"],
                 "version": SOURCE_VERSION,
+                "on_invalid_geometry": "repair",
             },
             "weights": [{"name": "area"}],
-            "backend": {"kind": "local"},
+            "backend": {"kind": "local", "coverage": "exact_fraction"},
             "output": {"dir": str(out)},
             "normalization": "per_source",
         }
@@ -2781,10 +2783,8 @@ _ONE_GROUP_GB = 7000e-9
 @pytest.fixture
 def spawned_workers():
     """Workers started by spawn, for the test that reads a worker's real
-    peak resident memory over its first block. On macOS such a worker's
-    peak starts from its own setup. On Linux it starts from the peak of
-    the process that started it, so a small block reads nothing there.
-    Runs keep the platform's own start method."""
+    peak resident memory over its first block. Runs keep the platform's
+    own start method."""
     import multiprocessing
 
     before = multiprocessing.get_start_method(allow_none=True)
@@ -2818,9 +2818,16 @@ def forked_workers_with_a_rising_peak(monkeypatch):
 
 
 @pytest.fixture
+def forked_workers_with_a_slow_peak(monkeypatch):
+    """A peak that rises a byte with every reading."""
+    readings = itertools.count(1)
+    yield from _forked_workers(monkeypatch, lambda: 10**9 + next(readings))
+
+
+@pytest.fixture
 def forked_workers_with_a_flat_peak(monkeypatch):
-    """A peak that never rises, as on Linux over a block lighter than the
-    peak of the process the worker came from."""
+    """A peak that never rises, as over a block that fits in memory the
+    worker already held."""
     yield from _forked_workers(monkeypatch, lambda: 10**9)
 
 
@@ -3102,11 +3109,11 @@ class TestReduce:
     ):
         """The first block is built alone in a worker and measured as the
         growth of its peak resident memory over the block. A block this
-        small can leave the peak where it was, at the worker's setup or on
-        Linux at the peak of the process that started it, and then the
-        record says so. Either way it is below what is
+        small can leave the peak where the worker's setup put it, and then
+        the record says so. Either way it is below what is
         judged, so it is recorded and not judged. It went red with
         nothing measured."""
+        from cil_regionalization import resident
         from cil_regionalization.reduce.pandas_blocks import _FLAT_PEAK
 
         raw, whole, out = self._aggregated(weights_dir, tmp_path)
@@ -3118,7 +3125,8 @@ class TestReduce:
         assert sizing["by"] == "estimate" and sizing["targets_per_block"] is None
         assert sizing["estimate_bytes_per_row"] == 280
         assert sizing["measured_rows"] == 24 and sizing["measured_block"] == [0, 1]
-        assert sizing["start_method"] == "spawn" and "ru_maxrss" in sizing["measure"]
+        assert sizing["start_method"] == "spawn"
+        assert f"read as {resident.reading()} on " in sizing["measure"]
         setup = sizing["worker_setup_peak_bytes"]
         after = sizing["peak_after_block_bytes"]
         assert after >= setup > 0
@@ -3214,6 +3222,42 @@ class TestReduce:
         assert sizing["judged"] is True and sizing["start_method"] == "fork"
         # the peak the fixture puts in, read in the worker
         assert sizing["measured_growth_bytes"] % 10**4 == 0
+
+    @pytest.mark.parametrize("n_workers, judged", [(1, False), (2, True)])
+    @pytest.mark.usefixtures("forked_workers_with_a_slow_peak")
+    def test_every_block_is_measured_and_recorded_and_only_the_first_judged(
+        self, weights_dir, tmp_path, monkeypatch, n_workers, judged
+    ):
+        """The peak rises a byte with every reading, so the first block is
+        judged well within an estimate of a byte a row where it has a
+        worker of its own. Each block's own growth, from a resident memory
+        put far below the peak, is far above the estimate, and it is
+        recorded and refuses nothing. It went red with the first block
+        alone recorded."""
+        from cil_regionalization.reduce import pandas_blocks
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        monkeypatch.setattr(pandas_blocks, "JUDGED_ROWS", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_ROW", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_DIMENSION", 0)
+        monkeypatch.setattr(pandas_blocks, "_resident_bytes", lambda: 10**6)
+        # a row group of 24 rows at a byte a row fits a worker of 30 bytes,
+        # and two do not, so there are two blocks
+        got = self._reduce(raw, memory_gb=n_workers * 30e-9, n_workers=n_workers)
+        _same_frames(got.stats, whole.stats)
+        sizing = json.loads((out / "again.manifest.json").read_text())["reduce"][
+            "block_size"
+        ]
+        assert sizing["judged"] is judged
+        every = sizing["every_block"]
+        assert [e["block"] for e in every] == [[0, 1], [1, 2]]
+        assert [e["growth_from"] for e in every] == [
+            "the resident memory before it"
+        ] * 2
+        assert all(e["growth_bytes"] > 10**8 for e in every)
+        over = sizing["over_every_block"]
+        assert over["blocks"] == over["measured"] == 2
+        assert over["heaviest_over_estimate"] > 10**5
 
     @pytest.mark.usefixtures("forked_workers_with_a_flat_peak")
     def test_a_forked_worker_whose_peak_did_not_rise_is_not_judged(

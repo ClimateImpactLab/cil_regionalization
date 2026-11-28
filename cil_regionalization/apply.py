@@ -134,7 +134,12 @@ class WeightsArtifact:
 
         missing = [
             k
-            for k in ("id_fields", "source_key_columns", "weight_names")
+            for k in (
+                "id_fields",
+                "source_key_columns",
+                "weight_names",
+                "normalization",
+            )
             if manifest.get(k) is None
         ]
         if missing:
@@ -151,7 +156,7 @@ class WeightsArtifact:
             id_fields=tuple(manifest["id_fields"]),
             weight_names=tuple(manifest["weight_names"]),
             source_units=source_units,
-            normalization=manifest.get("normalization", "per_destination"),
+            normalization=manifest["normalization"],
         )
         return cls(
             frame=frame,
@@ -169,8 +174,8 @@ class WeightsArtifact:
         id_fields: Sequence[str],
         weights: Mapping[str, str],
         source: str,
+        normalization: str,
         source_keys: Sequence[str] | None = None,
-        normalization: str = "per_destination",
         regions_version: str | None = None,
         check: bool = True,
         tolerance: float = 1e-6,

@@ -51,7 +51,11 @@ def _local_cfg(
     return Config.model_validate(
         {
             "project": {"name": "stage4_mode"},
-            "regions": {"path": str(regions_path), "id_fields": ["region_id"]},
+            "regions": {
+                "path": str(regions_path),
+                "id_fields": ["region_id"],
+                "on_invalid_geometry": "repair",
+            },
             "grid": {
                 "mode": "generate",
                 "resolution": 1.0,
@@ -59,11 +63,17 @@ def _local_cfg(
                 "lon_convention": "[-180,180)",
             },
             "weights": [
-                {"name": "pop", "raster": str(raster_path), "fallback": "area"},
+                {
+                    "name": "pop",
+                    "raster": str(raster_path),
+                    "fallback": "area",
+                    "kind": "point_sum",
+                },
                 {"name": "area"},
             ],
             "backend": {"kind": "local", "coverage": coverage},
             "output": {"dir": str(out_dir)},
+            "normalization": "per_destination",
         }
     )
 
@@ -214,7 +224,11 @@ def _area_only_local_cfg(regions_path: Path, out_dir: Path) -> Config:
     return Config.model_validate(
         {
             "project": {"name": "stage4_cross_local"},
-            "regions": {"path": str(regions_path), "id_fields": ["hierid"]},
+            "regions": {
+                "path": str(regions_path),
+                "id_fields": ["hierid"],
+                "on_invalid_geometry": "repair",
+            },
             "grid": {
                 "mode": "generate",
                 "resolution": 1.0,
@@ -224,6 +238,7 @@ def _area_only_local_cfg(regions_path: Path, out_dir: Path) -> Config:
             "weights": [{"name": "area"}],
             "backend": {"kind": "local", "coverage": "pixel_centroid"},
             "output": {"dir": str(out_dir)},
+            "normalization": "per_destination",
         }
     )
 
@@ -236,6 +251,7 @@ def _area_only_bq_cfg(out_dir: Path) -> Config:
                 "table": _IR_TABLE,
                 "id_fields": ["hierid"],
                 "keep": {"hierid": _CROSS_HIERIDS},
+                "on_invalid_geometry": "repair",
             },
             "grid": {
                 "mode": "generate",
@@ -246,6 +262,7 @@ def _area_only_bq_cfg(out_dir: Path) -> Config:
             "weights": [{"name": "area"}],
             "backend": {"kind": "bigquery", "coverage": "pixel_centroid"},
             "output": {"dir": str(out_dir)},
+            "normalization": "per_destination",
         }
     )
 

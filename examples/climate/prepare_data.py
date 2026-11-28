@@ -149,7 +149,11 @@ def export_csv(rows: pd.DataFrame) -> None:
 
 def _ir_weights(table):
     return cilreg.WeightsArtifact.from_table(
-        table, id_fields=["hierid"], weights=WEIGHT_COLUMNS, source=BCSD_GRID
+        table,
+        id_fields=["hierid"],
+        weights=WEIGHT_COLUMNS,
+        source=BCSD_GRID,
+        normalization="per_destination",
     )
 
 

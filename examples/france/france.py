@@ -271,20 +271,24 @@ def _(DATA, OUT, SOURCE_VERSION, relative, sources):
     path = "{relative(DATA / file, _configs)}"
     id_fields = ["{key}"]
     version = "{TARGETS_VERSION}"
+    on_invalid_geometry = "repair"
 
     [source]
     path = "{relative(DATA / "impact_regions.parquet", _configs)}"
     id_fields = ["hierid"]
     version = "{SOURCE_VERSION}"
+    on_invalid_geometry = "repair"
     on_zero_overlap = "skip"
 
     [[weights]]
     name = "pop"
     raster = "{relative(DATA / "population_2015_30ss.tif", _configs)}"
     fallback = "area"
+    kind = "point_sum"
 
     [backend]
     kind = "local"
+    coverage = "exact_fraction"
 
     [output]
     dir = "{relative(OUT / "weights" / name, _configs)}"

@@ -44,6 +44,7 @@ name = "pop"
 # location; replace it with the path to your copy.
 raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
 fallback = "area"
+kind = "point_sum"
 
 [[weights]]
 name = "area"

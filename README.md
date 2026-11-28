@@ -622,24 +622,44 @@ memory_gb = 128   # for all the workers together
 n_workers = 16    # run.n_workers unless set
 ```
 
-`--dry-run` prints the blocks and the number of file opens that
-budget gives. The blocks are sized from an estimate of the bytes a
-kept row takes, calibrated on resident memory. The first block is built
-alone in a worker of its own, and measured as the growth of that
-worker's peak resident memory over the block, from the peak once the
-worker has set itself up. The manifest records the estimate and the
-measurement side by side under `reduce.block_size`, and the setup peak,
-which every worker holds before its first block. A first block that
-keeps 100,000 rows or more and takes more than twice the estimate stops
-the run, with nothing written, since its blocks could take more than
-the budget. Twice, and not once, because the measure is noisy. The same
-block, measured in one fresh worker after another, can read from a
-fifth of the estimate to nearly all of it. On one worker the blocks
-run in the process that planned the run, whose peak includes what it
-did before. A forked worker starts from what it inherited, and a block
-lighter than that leaves its peak where it was. In both cases the
-manifest says there is no measurement and why, and the run is not
-judged.
+`--dry-run` prints the blocks and the number of file opens that budget
+gives. The blocks are sized from an estimate of the bytes a kept row
+takes, calibrated on resident memory. The first block is built alone in
+a worker of its own, and measured as the growth of that worker's peak
+resident memory over the block, from the peak once the worker has set
+itself up. The manifest records the estimate and the measurement side by
+side under `reduce.block_size`, and the setup peak, which every worker
+holds before its first block. A first block that keeps 100,000 rows or
+more and takes more than twice the estimate stops the run, with nothing
+written, since its blocks could take more than the budget. Twice, and
+not once, because the measure is noisy. The same block, measured on
+macOS in one fresh worker after another, can read from a fifth of the
+estimate to nearly all of it. On one worker the blocks run in the
+process that planned the run, whose peak includes what it did before. A
+block that fits in memory the worker already held leaves its peak where
+it was. In both cases the manifest says there is no measurement and why,
+and the run is not judged. The peak is read as each platform keeps it,
+as VmHWM of `/proc/self/status` on Linux and as `ru_maxrss` on macOS. On
+Linux `ru_maxrss` survives an exec, so a spawned worker's would start
+from the peak of the process that started it. Under fork a worker counts
+the pages it shares with that process as its own, so the peaks under
+`reduce.block_size` and `max_worker_peak_gb` overstate what a worker
+alone holds, which errs on the side of the budget. The growth, the
+difference of two peaks that both count those pages, is exact.
+
+Every block is measured and recorded under
+`reduce.block_size.every_block`, and only the first is judged. A block's
+own growth is read off its process's peak after it, so only a block that
+took its process to a new peak has one. On Linux it is taken from the
+resident memory before the block, VmRSS of `/proc/self/status`. On
+macOS, where that is not read, only a worker's first block has one, from
+the peak once the worker had set itself up. So each worker's first block
+is measured, and so is each block that took its worker higher than
+before, while a block lighter than one its worker built earlier has no
+growth and the record says why. `reduce.block_size.over_every_block`
+gives the spread of the measured blocks' bytes a kept row, the heaviest
+over the estimate, and the first over the heaviest. That is what the
+tolerance of twice the estimate is to be set from.
 
 Someone who has measured their own runs can declare the size of a
 block instead, in targets, a whole number of the leaves' row groups:

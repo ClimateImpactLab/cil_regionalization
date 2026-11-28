@@ -64,6 +64,7 @@ def _bq_cfg(**overrides) -> Config:
             "table": _IR_TABLE,
             "id_fields": ["hierid"],
             "keep": {"hierid": ["ABW", "BHS"]},
+            "on_invalid_geometry": "repair",
         },
         "grid": {
             "mode": "generate",
@@ -72,7 +73,13 @@ def _bq_cfg(**overrides) -> Config:
             "lon_convention": "[-180,180)",
         },
         "weights": [
-            {"name": "pop", "table": _POP_TABLE, "fallback": "area"},
+            {
+                "name": "pop",
+                "table": _POP_TABLE,
+                "column": "population",
+                "fallback": "area",
+                "kind": "point_sum",
+            },
             {"name": "area"},
         ],
         "backend": {
@@ -85,6 +92,7 @@ def _bq_cfg(**overrides) -> Config:
             },
         },
         "output": {"dir": "/tmp/cilreg_bq_test"},
+        "normalization": "per_destination",
     }
     for key, val in overrides.items():
         d[key] = val
@@ -356,6 +364,25 @@ class TestMainSql:
     def test_weight_table_appears(self):
         sql, _ = self._build()
         assert _POP_TABLE in sql
+
+    def test_a_weight_is_read_from_the_column_it_declares(self):
+        """Not from a column its name maps to. It went red on the map that
+        read a weight named pop from the column population."""
+        cfg = _bq_cfg(
+            weights=[
+                {
+                    "name": "pop",
+                    "table": _POP_TABLE,
+                    "column": "people_2015",
+                    "fallback": "area",
+                    "kind": "point_sum",
+                },
+                {"name": "area"},
+            ]
+        )
+        sql, _ = self._build(cfg)
+        assert "people_2015" in sql
+        assert "population" not in sql.replace(_POP_TABLE, "")
 
     def test_floor_cell_binning(self):
         sql, _ = self._build()
@@ -1353,7 +1380,11 @@ class TestConfigRejections:
         ).to_parquet(p)
 
         d = _bq_cfg().model_dump()
-        d["regions"] = {"path": str(p), "id_fields": ["hierid"]}
+        d["regions"] = {
+            "path": str(p),
+            "id_fields": ["hierid"],
+            "on_invalid_geometry": "repair",
+        }
         cfg = Config.model_validate(d)
         regions = RegionSet.from_config(cfg.regions)
         assert regions.gdf is not None
@@ -1674,7 +1705,13 @@ class TestRealBackend:
                     "lon_convention": "[-180,180)",
                 },
                 "weights": [
-                    {"name": "pop", "table": _POP_TABLE, "fallback": "area"},
+                    {
+                        "name": "pop",
+                        "table": _POP_TABLE,
+                        "column": "population",
+                        "fallback": "area",
+                        "kind": "point_sum",
+                    },
                     {"name": "area"},
                 ],
                 "backend": {
@@ -1682,6 +1719,7 @@ class TestRealBackend:
                     "coverage": "pixel_centroid",
                 },
                 "output": {"dir": str(tmp_path), "confirm_cost": False},
+                "normalization": "per_destination",
             }
         )
         regions = RegionSet.from_config(cfg.regions)

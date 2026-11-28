@@ -995,7 +995,15 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
         return sql
 
     def _weight_value_column(self, weight: WeightSpec) -> str:
-        return {"pop": "population"}.get(weight.name, weight.name)
+        """The column of the weight's table that holds its values, as
+        ``weights[].column`` declares it."""
+        if weight.column is None:
+            raise ValueError(
+                f"weights.{weight.name}.column is required for the bigquery "
+                f"backend: the column of weights.{weight.name}.table that holds "
+                f"the weight's values"
+            )
+        return weight.column
 
     # ----- BigQuery execution ----------------------------------------------
 
@@ -1048,6 +1056,7 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
                 id_fields,
                 "area",
                 raw_col="raw",
+                normalization=cfg.normalization,
             )
 
             pieces: list[pd.DataFrame] = [area_native]
@@ -1062,7 +1071,7 @@ ORDER BY a.{primary_id}, a.cell_ix, a.cell_iy
                     spec.name,
                     spec.fallback,
                     id_fields,
-                    policy_explicit=spec.fallback_explicit,
+                    normalization=cfg.normalization,
                 )
                 pieces.append(piece)
             final = self._join_pieces(pieces, id_fields)

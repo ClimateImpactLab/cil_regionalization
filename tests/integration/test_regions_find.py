@@ -55,11 +55,13 @@ def _write_local_cfg(tmp_path: Path) -> Path:
     cfg_path = tmp_path / "cfg.toml"
     cfg_path.write_text(
         f"""
+normalization = "per_destination"
 [project]
 name = "find_test"
 [regions]
 path = "{regions_path}"
 id_fields = ["hierid"]
+on_invalid_geometry = "repair"
 [grid]
 mode = "generate"
 resolution = 1.0
@@ -68,6 +70,8 @@ lon_convention = "[-180,180)"
 [[weights]]
 name = "pop"
 raster = "{raster_path}"
+fallback = "area"
+kind = "point_sum"
 [[weights]]
 name = "area"
 [backend]
@@ -173,11 +177,13 @@ class TestRegionsFindBigQuery:
         cfg_path = tmp_path / "cfg.toml"
         cfg_path.write_text(
             f"""
+normalization = "per_destination"
 [project]
 name = "find_bq_test"
 [regions]
 table = "compute-impactlab.spatial_aggregation.test_table"
 id_fields = ["hierid"]
+on_invalid_geometry = "repair"
 [grid]
 mode = "generate"
 resolution = 1.0
@@ -186,6 +192,9 @@ lon_convention = "[-180,180)"
 [[weights]]
 name = "pop"
 table = "x.y.pop"
+column = "population"
+fallback = "area"
+kind = "point_sum"
 [[weights]]
 name = "area"
 [backend]

@@ -18,14 +18,29 @@ from cil_regionalization.config import Config, LocalBackendOptions, load_config
 def _local_cfg() -> dict:
     return {
         "project": {"name": "test"},
-        "regions": {"path": "/tmp/regions.shp", "id_fields": ["hierid"]},
-        "grid": {"mode": "generate", "resolution": 1.0},
+        "regions": {
+            "path": "/tmp/regions.shp",
+            "id_fields": ["hierid"],
+            "on_invalid_geometry": "repair",
+        },
+        "grid": {
+            "mode": "generate",
+            "resolution": 1.0,
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        },
         "weights": [
-            {"name": "pop", "raster": "/tmp/pop.tif"},
+            {
+                "name": "pop",
+                "raster": "/tmp/pop.tif",
+                "fallback": "area",
+                "kind": "point_sum",
+            },
             {"name": "area"},
         ],
-        "backend": {"kind": "local"},
+        "backend": {"kind": "local", "coverage": "exact_fraction"},
         "output": {"dir": "/tmp/out"},
+        "normalization": "per_destination",
     }
 
 
@@ -35,10 +50,22 @@ def _bq_cfg() -> dict:
         "regions": {
             "table": "compute-impactlab.spatial_aggregation.regions",
             "id_fields": ["hierid"],
+            "on_invalid_geometry": "repair",
         },
-        "grid": {"mode": "generate", "resolution": 1.0, "lon_convention": "[0,360)"},
+        "grid": {
+            "mode": "generate",
+            "resolution": 1.0,
+            "lon_convention": "[0,360)",
+            "offset": "center",
+        },
         "weights": [
-            {"name": "pop", "table": "compute-impactlab.gpw.pop"},
+            {
+                "name": "pop",
+                "table": "compute-impactlab.gpw.pop",
+                "column": "population",
+                "fallback": "area",
+                "kind": "point_sum",
+            },
             {"name": "area"},
         ],
         "backend": {
@@ -48,22 +75,92 @@ def _bq_cfg() -> dict:
                 "temp_dataset": "temp_workspace",
                 "staging_uri": "gs://example-staging/segment-weights/",
             },
+            "coverage": "exact_fraction",
         },
         "output": {"dir": "gs://impactlab-data-scratch/test"},
+        "normalization": "per_destination",
     }
+
+
+def _polygon_cfg() -> dict:
+    d = _local_cfg()
+    del d["grid"]
+    d["regions"]["version"] = "targets-v1"
+    d["source"] = {
+        "path": "/tmp/units.parquet",
+        "id_fields": ["unit_id"],
+        "version": "units-v1",
+        "on_invalid_geometry": "repair",
+    }
+    return d
+
+
+def _without(d: dict, path: str) -> dict:
+    """``d`` with the key at the dotted ``path`` deleted, a weight named
+    in brackets."""
+    d = copy.deepcopy(d)
+    *parents, key = path.split(".")
+    node = d
+    for part in parents:
+        if part.startswith("weights["):
+            name = part[len("weights[") : -1]
+            node = next(w for w in node["weights"] if w["name"] == name)
+        else:
+            node = node[part]
+    del node[key]
+    return d
+
+
+class TestRequired:
+    """Keys whose wrong value would give another number in silence, which
+    a config states and which are refused by name when left out. Each
+    went red with the key defaulted."""
+
+    @pytest.mark.parametrize(
+        "config, path, named",
+        [
+            (_local_cfg, "normalization", "normalization"),
+            (_local_cfg, "regions.on_invalid_geometry", "regions.on_invalid_geometry"),
+            (_polygon_cfg, "source.on_invalid_geometry", "source.on_invalid_geometry"),
+            (_local_cfg, "grid.offset", "grid.offset"),
+            (_local_cfg, "grid.lon_convention", "grid.lon_convention"),
+            (_local_cfg, "backend.coverage", "backend.coverage"),
+            (_local_cfg, "weights[pop].fallback", "weights.pop.fallback"),
+            (_local_cfg, "weights[pop].kind", "weights.pop.kind"),
+            (_bq_cfg, "weights[pop].column", "weights.pop.column"),
+        ],
+    )
+    def test_a_config_without_the_key_is_refused_naming_it(self, config, path, named):
+        assert Config.model_validate(config())
+        with pytest.raises(ValidationError) as exc:
+            Config.model_validate(_without(config(), path))
+        assert named in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "key, value", [("fallback", "area"), ("kind", "point_sum")]
+    )
+    def test_the_area_weight_takes_neither_fallback_nor_kind(self, key, value):
+        """Its total is the region's own area and it reads no raster, so
+        either would claim a choice that is never made."""
+        d = _local_cfg()
+        d["weights"][1][key] = value
+        with pytest.raises(ValidationError, match=f"weights.area takes no {key}"):
+            Config.model_validate(d)
+
+    def test_a_local_weight_with_a_column_is_refused(self):
+        d = _local_cfg()
+        d["weights"][0]["column"] = "population"
+        with pytest.raises(ValidationError, match="names a column of a BigQuery"):
+            Config.model_validate(d)
 
 
 class TestValidConfigs:
     def test_minimal_local_applies_defaults(self):
         cfg = Config.model_validate(_local_cfg())
         assert cfg.backend.kind == "local"
-        assert cfg.grid.offset == "center"
-        assert cfg.grid.lon_convention == "[-180,180)"
-        assert cfg.backend.coverage == "exact_fraction"
         assert cfg.backend.local.dask == "off"
         assert cfg.output.format == "parquet"
         assert cfg.validation.sum_tolerance == 1e-6
-        assert cfg.regions.on_invalid_geometry == "repair"
 
     def test_minimal_bigquery_applies_defaults(self):
         cfg = Config.model_validate(_bq_cfg())
@@ -83,12 +180,6 @@ class TestValidConfigs:
         # bigquery.readSessionUser role.
         assert cfg.backend.bigquery.use_bqstorage is False
         assert cfg.grid.lon_convention == "[0,360)"
-
-    def test_weight_kind_default_is_point_sum(self):
-        cfg = Config.model_validate(_local_cfg())
-        # Existing pop configs default cleanly to point_sum (legacy
-        # behaviour); no migration needed.
-        assert all(w.kind == "point_sum" for w in cfg.weights)
 
     def test_weight_kind_area_weighted_sum_allowed(self):
         data = _local_cfg()
@@ -163,19 +254,31 @@ class TestValidConfigs:
 
     def test_prebuilt_grid_from_path(self):
         d = _local_cfg()
-        d["grid"] = {"mode": "prebuilt", "path": "/tmp/grid.parquet"}
+        d["grid"] = {
+            "mode": "prebuilt",
+            "path": "/tmp/grid.parquet",
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         cfg = Config.model_validate(d)
         assert cfg.grid.mode == "prebuilt"
         assert cfg.grid.path == "/tmp/grid.parquet"
 
     def test_prebuilt_grid_from_table(self):
         d = _bq_cfg()
-        d["grid"] = {"mode": "prebuilt", "table": "compute-impactlab.foo.grid"}
+        d["grid"] = {
+            "mode": "prebuilt",
+            "table": "compute-impactlab.foo.grid",
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         cfg = Config.model_validate(d)
         assert cfg.grid.table == "compute-impactlab.foo.grid"
 
     def test_load_from_toml(self, tmp_path):
         toml_text = """
+normalization = "per_destination"
+
 [project]
 name = "demo"
 description = "exercise"
@@ -183,21 +286,26 @@ description = "exercise"
 [regions]
 path = "/tmp/regions.shp"
 id_fields = ["hierid"]
+on_invalid_geometry = "repair"
 
 [grid]
 mode = "generate"
 resolution = 0.25
 offset = "edge"
+lon_convention = "[-180,180)"
 
 [[weights]]
 name = "pop"
 raster = "/tmp/pop.tif"
+fallback = "area"
+kind = "point_sum"
 
 [[weights]]
 name = "area"
 
 [backend]
 kind = "local"
+coverage = "exact_fraction"
 
 [backend.local]
 dask = "local"
@@ -230,7 +338,13 @@ sum_tolerance = 0.0001
 class TestGridErrors:
     def test_generate_with_path_is_ambiguous(self):
         d = _local_cfg()
-        d["grid"] = {"mode": "generate", "resolution": 1.0, "path": "/tmp/g.shp"}
+        d["grid"] = {
+            "mode": "generate",
+            "resolution": 1.0,
+            "path": "/tmp/g.shp",
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         msg = str(exc.value)
@@ -239,7 +353,13 @@ class TestGridErrors:
 
     def test_generate_with_table_is_ambiguous(self):
         d = _bq_cfg()
-        d["grid"] = {"mode": "generate", "resolution": 1.0, "table": "x.y.z"}
+        d["grid"] = {
+            "mode": "generate",
+            "resolution": 1.0,
+            "table": "x.y.z",
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         msg = str(exc.value)
@@ -248,14 +368,24 @@ class TestGridErrors:
 
     def test_generate_without_resolution(self):
         d = _local_cfg()
-        d["grid"] = {"mode": "generate"}
+        d["grid"] = {
+            "mode": "generate",
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         assert "grid.resolution" in str(exc.value)
 
     def test_prebuilt_with_resolution_is_ambiguous(self):
         d = _local_cfg()
-        d["grid"] = {"mode": "prebuilt", "resolution": 1.0, "path": "/tmp/g.shp"}
+        d["grid"] = {
+            "mode": "prebuilt",
+            "resolution": 1.0,
+            "path": "/tmp/g.shp",
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         msg = str(exc.value)
@@ -264,7 +394,11 @@ class TestGridErrors:
 
     def test_prebuilt_without_source(self):
         d = _local_cfg()
-        d["grid"] = {"mode": "prebuilt"}
+        d["grid"] = {
+            "mode": "prebuilt",
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         msg = str(exc.value)
@@ -273,7 +407,13 @@ class TestGridErrors:
 
     def test_prebuilt_with_both_path_and_table(self):
         d = _local_cfg()
-        d["grid"] = {"mode": "prebuilt", "path": "/tmp/g.shp", "table": "x.y.z"}
+        d["grid"] = {
+            "mode": "prebuilt",
+            "path": "/tmp/g.shp",
+            "table": "x.y.z",
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         msg = str(exc.value)
@@ -283,7 +423,12 @@ class TestGridErrors:
 
     def test_negative_resolution(self):
         d = _local_cfg()
-        d["grid"] = {"mode": "generate", "resolution": -1.0}
+        d["grid"] = {
+            "mode": "generate",
+            "resolution": -1.0,
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         assert "grid.resolution" in str(exc.value) or "resolution" in str(exc.value)
@@ -299,7 +444,10 @@ class TestGridErrors:
 class TestWeightErrors:
     def test_local_non_area_without_raster(self):
         d = _local_cfg()
-        d["weights"] = [{"name": "pop"}, {"name": "area"}]
+        d["weights"] = [
+            {"name": "pop", "fallback": "area", "kind": "point_sum"},
+            {"name": "area"},
+        ]
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         msg = str(exc.value)
@@ -309,7 +457,10 @@ class TestWeightErrors:
 
     def test_bigquery_non_area_without_table(self):
         d = _bq_cfg()
-        d["weights"] = [{"name": "pop"}, {"name": "area"}]
+        d["weights"] = [
+            {"name": "pop", "fallback": "area", "kind": "point_sum"},
+            {"name": "area"},
+        ]
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         msg = str(exc.value)
@@ -336,8 +487,18 @@ class TestWeightErrors:
     def test_duplicate_weight_names(self):
         d = _local_cfg()
         d["weights"] = [
-            {"name": "pop", "raster": "/tmp/p1.tif"},
-            {"name": "pop", "raster": "/tmp/p2.tif"},
+            {
+                "name": "pop",
+                "raster": "/tmp/p1.tif",
+                "fallback": "area",
+                "kind": "point_sum",
+            },
+            {
+                "name": "pop",
+                "raster": "/tmp/p2.tif",
+                "fallback": "area",
+                "kind": "point_sum",
+            },
         ]
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
@@ -360,6 +521,7 @@ class TestRegionsErrors:
             "path": "/tmp/r.shp",
             "table": "x.y.z",
             "id_fields": ["hierid"],
+            "on_invalid_geometry": "repair",
         }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
@@ -370,7 +532,7 @@ class TestRegionsErrors:
 
     def test_neither_path_nor_table(self):
         d = _local_cfg()
-        d["regions"] = {"id_fields": ["hierid"]}
+        d["regions"] = {"id_fields": ["hierid"], "on_invalid_geometry": "repair"}
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         msg = str(exc.value)
@@ -379,7 +541,11 @@ class TestRegionsErrors:
 
     def test_empty_id_fields(self):
         d = _local_cfg()
-        d["regions"] = {"path": "/tmp/r.shp", "id_fields": []}
+        d["regions"] = {
+            "path": "/tmp/r.shp",
+            "id_fields": [],
+            "on_invalid_geometry": "repair",
+        }
         with pytest.raises(ValidationError) as exc:
             Config.model_validate(d)
         assert "id_fields" in str(exc.value)

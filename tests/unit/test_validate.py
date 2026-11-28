@@ -29,7 +29,11 @@ def _clean_frame() -> pd.DataFrame:
 
 class TestCleanFrame:
     def test_clean_frame_passes(self):
-        schema = OutputSchema(id_fields=("region_id",), weight_names=("pop", "area"))
+        schema = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop", "area"),
+            normalization="per_destination",
+        )
         report = check_sum_to_one(_clean_frame(), schema, tolerance=1e-9)
         assert report.ok
         assert report.n_regions == 2
@@ -42,7 +46,11 @@ class TestCorruptedFrame:
         df = _clean_frame()
         # break region A's pop sum
         df.loc[0, "popwt"] = 0.5  # was 0.4; A now sums to 1.1
-        schema = OutputSchema(id_fields=("region_id",), weight_names=("pop", "area"))
+        schema = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop", "area"),
+            normalization="per_destination",
+        )
         report = check_sum_to_one(df, schema, tolerance=1e-6)
         assert not report.ok
         assert len(report.failures) == 1
@@ -55,14 +63,22 @@ class TestCorruptedFrame:
     def test_tolerance_accepts_small_drift(self):
         df = _clean_frame()
         df.loc[0, "popwt"] = 0.4 + 1e-12
-        schema = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        schema = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         report = check_sum_to_one(df, schema, tolerance=1e-6)
         assert report.ok
 
     def test_zero_weight_region_fails(self):
         df = _clean_frame()
         df.loc[df["region_id"] == "A", "popwt"] = 0.0
-        schema = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        schema = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         report = check_sum_to_one(df, schema, tolerance=1e-6)
         assert not report.ok
         assert any(report.failures["region_id"] == "A")
@@ -90,7 +106,11 @@ class TestGridInvariants:
     def _schema(self):
         from cil_regionalization.schema import OutputSchema
 
-        return OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        return OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
 
     def _clean_row(self) -> dict:
         return {
@@ -156,7 +176,11 @@ class TestGridInvariants:
 class TestMissingColumn:
     def test_missing_weight_column_raises(self):
         df = _clean_frame().drop(columns=["popwt"])
-        schema = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        schema = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         with pytest.raises(ValueError, match="popwt"):
             check_sum_to_one(df, schema)
 

@@ -15,7 +15,11 @@ from cil_regionalization.regions import RegionSet
 
 class TestLocalLoad:
     def test_load_geoparquet(self, three_region_geoparquet: Path):
-        cfg = RegionsConfig(path=str(three_region_geoparquet), id_fields=["region_id"])
+        cfg = RegionsConfig(
+            path=str(three_region_geoparquet),
+            id_fields=["region_id"],
+            on_invalid_geometry="repair",
+        )
         rs = RegionSet.from_config(cfg)
         assert rs.is_local
         assert len(rs) == 3
@@ -23,13 +27,19 @@ class TestLocalLoad:
         assert sorted(ids) == ["A", "B", "C"]
 
     def test_missing_path_raises(self, tmp_path: Path):
-        cfg = RegionsConfig(path=str(tmp_path / "nope.parquet"), id_fields=["x"])
+        cfg = RegionsConfig(
+            path=str(tmp_path / "nope.parquet"),
+            id_fields=["x"],
+            on_invalid_geometry="repair",
+        )
         with pytest.raises(FileNotFoundError, match="regions.path"):
             RegionSet.from_config(cfg)
 
     def test_missing_id_field_raises(self, three_region_geoparquet: Path):
         cfg = RegionsConfig(
-            path=str(three_region_geoparquet), id_fields=["missing_col"]
+            path=str(three_region_geoparquet),
+            id_fields=["missing_col"],
+            on_invalid_geometry="repair",
         )
         with pytest.raises(ValueError, match="missing_col"):
             RegionSet.from_config(cfg)
@@ -41,6 +51,7 @@ class TestFilters:
             path=str(three_region_geoparquet),
             id_fields=["region_id"],
             keep={"label": ["alpha", "gamma"]},
+            on_invalid_geometry="repair",
         )
         rs = RegionSet.from_config(cfg)
         ids = sorted(d["region_id"] for d, _ in rs.iter_regions())
@@ -51,6 +62,7 @@ class TestFilters:
             path=str(three_region_geoparquet),
             id_fields=["region_id"],
             drop={"region_id": ["B"]},
+            on_invalid_geometry="repair",
         )
         rs = RegionSet.from_config(cfg)
         ids = sorted(d["region_id"] for d, _ in rs.iter_regions())
@@ -61,6 +73,7 @@ class TestFilters:
             path=str(three_region_geoparquet),
             id_fields=["region_id"],
             keep={"no_such_col": ["A"]},
+            on_invalid_geometry="repair",
         )
         with pytest.raises(ValueError, match="no_such_col"):
             RegionSet.from_config(cfg)
@@ -71,6 +84,7 @@ class TestFilters:
             id_fields=["region_id"],
             keep={"label": ["alpha", "gamma", "no_such_label"]},
             drop={"region_id": ["C", "Z"]},
+            on_invalid_geometry="repair",
         )
         rs = RegionSet.from_config(cfg)
         assert [d["region_id"] for d, _ in rs.iter_regions()] == ["A"]
@@ -85,6 +99,7 @@ class TestFilters:
             id_fields=["region_id"],
             keep={"region_id": ["A", "C"]},
             drop={"region_id": ["B"]},
+            on_invalid_geometry="repair",
         )
         rs = RegionSet.from_config(cfg)
         assert rs.unknown_keep_ids == {}
@@ -160,19 +175,24 @@ class TestBigQueryReference:
         cfg = RegionsConfig(
             table="compute-impactlab.foo.regions",
             id_fields=["hierid"],
+            on_invalid_geometry="repair",
         )
         rs = RegionSet.from_config(cfg)
         assert not rs.is_local
         assert rs.table == "compute-impactlab.foo.regions"
 
     def test_bq_iter_regions_refuses(self):
-        cfg = RegionsConfig(table="ci.foo.bar", id_fields=["hierid"])
+        cfg = RegionsConfig(
+            table="ci.foo.bar", id_fields=["hierid"], on_invalid_geometry="repair"
+        )
         rs = RegionSet.from_config(cfg)
         with pytest.raises(ValueError, match="BigQuery"):
             next(rs.iter_regions())
 
     def test_bq_len_refuses(self):
-        cfg = RegionsConfig(table="ci.foo.bar", id_fields=["hierid"])
+        cfg = RegionsConfig(
+            table="ci.foo.bar", id_fields=["hierid"], on_invalid_geometry="repair"
+        )
         rs = RegionSet.from_config(cfg)
         with pytest.raises(ValueError, match="BigQuery"):
             len(rs)
@@ -217,11 +237,18 @@ class TestRemoteRegions:
                 "regions": {
                     "path": "gs://bucket/regions.parquet",
                     "id_fields": ["region_id"],
+                    "on_invalid_geometry": "repair",
                 },
-                "grid": {"mode": "generate", "resolution": 1.0},
+                "grid": {
+                    "mode": "generate",
+                    "resolution": 1.0,
+                    "offset": "center",
+                    "lon_convention": "[-180,180)",
+                },
                 "weights": [{"name": "area"}],
-                "backend": {"kind": "local"},
+                "backend": {"kind": "local", "coverage": "exact_fraction"},
                 "output": {"dir": "out"},
+                "normalization": "per_destination",
             }
         )
         assert check_inputs_exist(cfg) == []
@@ -244,7 +271,11 @@ class TestRemoteRegions:
             gdf.to_file(bucket / name)
         _fake_gcsfs(monkeypatch, tmp_path)
         rs = RegionSet.from_config(
-            RegionsConfig(path=f"gs://bucket/{name}", id_fields=["region_id"])
+            RegionsConfig(
+                path=f"gs://bucket/{name}",
+                id_fields=["region_id"],
+                on_invalid_geometry="repair",
+            )
         )
         assert sorted(rs.gdf["region_id"]) == ["a", "b"]
         assert rs.source_uri == f"gs://bucket/{name}"
@@ -256,7 +287,11 @@ class TestRemoteRegions:
         self, three_region_geoparquet
     ):
         rs = RegionSet.from_config(
-            RegionsConfig(path=str(three_region_geoparquet), id_fields=["region_id"])
+            RegionsConfig(
+                path=str(three_region_geoparquet),
+                id_fields=["region_id"],
+                on_invalid_geometry="repair",
+            )
         )
         assert rs.source_sha256 is None
 
@@ -266,5 +301,9 @@ class TestRemoteRegions:
         monkeypatch.setitem(sys.modules, "gcsfs", None)
         with pytest.raises(ImportError, match=r"which the \[bigquery\] extra installs"):
             RegionSet.from_config(
-                RegionsConfig(path="gs://bucket/regions.parquet", id_fields=["id"])
+                RegionsConfig(
+                    path="gs://bucket/regions.parquet",
+                    id_fields=["id"],
+                    on_invalid_geometry="repair",
+                )
             )

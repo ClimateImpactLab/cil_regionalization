@@ -74,7 +74,11 @@ table = table.groupby(["hierid", "pix_cent_x", "pix_cent_y"], as_index=False)[
     ["popwt"]
 ].sum(min_count=1)
 weights = cilreg.WeightsArtifact.from_table(
-    table, id_fields=["hierid"], weights={"pop": "popwt"}, source=BCSD_GRID
+    table,
+    id_fields=["hierid"],
+    weights={"pop": "popwt"},
+    source=BCSD_GRID,
+    normalization="per_destination",
 )
 
 out = cilreg.apply_weights(

@@ -47,6 +47,11 @@ class Manifest:
     grid_resolution: float | None
     package_versions: dict[str, str]
     python_version: str
+    # Which side of the intersection the weights sum to 1 within
+    # (per_destination or per_source). Consumers check this against the
+    # operation they intend via `schema.require_normalization`. A manifest
+    # that does not record it is refused rather than read as either.
+    normalization: str
     # "grid" or "polygons": which geometry supplied the source units.
     source_mode: str = "grid"
     # The config's project name and description, carried verbatim so a
@@ -75,12 +80,6 @@ class Manifest:
     # partially covered unit's weights sum to 1 over a sliver, and
     # sum-to-one gives no warning.
     partial_coverage: dict[str, Any] | None = None
-    # Which side of the intersection the weights sum to 1 within
-    # (per_destination or per_source). Consumers check this against the
-    # operation they intend via `schema.require_normalization`; manifests
-    # written before the field existed default to per_destination, which
-    # is the behavior every earlier run had.
-    normalization: str = "per_destination"
     inputs: dict[str, str] = field(default_factory=dict)
     # SHA256 of each written output file, keyed by filename, recorded by
     # the writer after the file lands. The fetch layer verifies a
