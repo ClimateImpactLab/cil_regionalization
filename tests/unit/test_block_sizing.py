@@ -45,40 +45,6 @@ class TestDeclaredBlocks:
             PandasBlocks(PandasReduceOptions())._plan(_request([10]))
 
 
-class TestPeakResidentMemory:
-    """ru_maxrss counts bytes on macOS and kibibytes on Linux."""
-
-    @pytest.mark.parametrize(
-        "platform, expected",
-        [("darwin", 1000), ("linux", 1_024_000), ("freebsd14", None)],
-    )
-    def test_the_unit_is_the_platform_s(self, monkeypatch, platform, expected):
-        """It went red on a peak taken as bytes everywhere, and on Linux
-        as thousands of bytes, a factor of 1.024 off."""
-        import resource
-        import sys
-
-        from cil_regionalization.reduce import pandas_blocks
-
-        monkeypatch.setattr(sys, "platform", platform)
-        monkeypatch.setattr(
-            resource, "getrusage", lambda who: SimpleNamespace(ru_maxrss=1000)
-        )
-        assert pandas_blocks._peak_resident_bytes() == expected
-
-    def test_the_peak_logged_in_gigabytes_is_of_the_same_bytes(self, monkeypatch):
-        import resource
-        import sys
-
-        from cil_regionalization.reduce import pandas_blocks
-
-        monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr(
-            resource, "getrusage", lambda who: SimpleNamespace(ru_maxrss=1_000_000)
-        )
-        assert pandas_blocks._peak_gb() == 1.024
-
-
 class TestGrowth:
     """When the growth of a peak says something of the first block."""
 
@@ -88,23 +54,28 @@ class TestGrowth:
         assert _growth(10**9, 10**9 + 5, own_process=True) == (5, None)
 
     def test_a_peak_that_did_not_rise_gives_no_measure(self):
-        """As under fork, when the block weighs less than what the worker
-        inherited. It went red with a growth of zero recorded."""
+        """As when the block fits in memory the worker already held. It
+        went red with a growth of zero recorded."""
         from cil_regionalization.reduce.pandas_blocks import _FLAT_PEAK, _growth
 
         assert _growth(10**9, 10**9, own_process=True) == (None, _FLAT_PEAK)
-        assert "did not rise above the peak it started from" in _FLAT_PEAK
+        assert "did not rise over the block" in _FLAT_PEAK
 
     def test_the_process_that_planned_the_run_gives_no_measure(self):
         from cil_regionalization.reduce.pandas_blocks import _SHARED_PEAK, _growth
 
         assert _growth(10**9, 2 * 10**9, own_process=False) == (None, _SHARED_PEAK)
 
-    def test_an_unknown_unit_gives_no_measure(self):
+    def test_a_peak_not_read_gives_no_measure_and_says_why(self, monkeypatch):
+        import sys
+
         from cil_regionalization.reduce.pandas_blocks import _growth
 
-        growth, why = _growth(None, None, own_process=True)
-        assert growth is None and "unit of ru_maxrss" in why
+        monkeypatch.setattr(sys, "platform", "freebsd14")
+        assert _growth(None, None, own_process=True) == (
+            None,
+            "the peak resident memory of a process is not read on freebsd14",
+        )
 
     def test_the_growth_leaves_out_what_the_worker_set_up(self, monkeypatch):
         """The setup raises the peak by 100 and the block by 10, and the

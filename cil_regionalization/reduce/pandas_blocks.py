@@ -36,12 +36,14 @@ import numpy as np
 import pandas as pd
 
 from cil_regionalization import leaves as leaf_format
+from cil_regionalization import resident
 from cil_regionalization.manifest import collect_package_versions
 from cil_regionalization.reduce.base import (
     PandasReduceOptions,
     ReduceBackend,
     ReduceRequest,
 )
+from cil_regionalization.resident import peak_resident_bytes as _peak_resident_bytes
 from cil_regionalization.stats import (
     GroupError,
     UnweightedModelWeightsWarning,
@@ -70,16 +72,13 @@ JUDGED_ROWS = 100_000
 # A first block is refused when it takes more than this many times the
 # estimate a kept row. It is a tolerance on a measure with known noise,
 # not a correction of the estimate. One synthetic first block, measured
-# in one fresh worker after another, read from a fifth of the estimate
-# to nine tenths of it. Memory sampled through the block peaked where
-# the measure did, so the spread is in what the block holds resident and
-# not in the reading. Twice refuses a block far heavier than the
-# estimate and not that spread. The manifest records the measure of
-# every run, so runs on real data can tighten it.
+# on macOS in one fresh worker after another, read from a fifth of the
+# estimate to nine tenths of it. Memory sampled through the block peaked
+# where the measure did, so the spread is in what the block holds
+# resident and not in the reading. Twice refuses a block far heavier
+# than the estimate and not that spread. The manifest records the
+# measure of every run, so runs on real data can tighten it.
 REFUSED_ABOVE = 2
-# The unit ru_maxrss counts in, bytes on macOS and kibibytes on Linux.
-# On a platform not listed the peak is not read, rather than guessed.
-_RU_MAXRSS_UNIT = {"darwin": 1, "linux": 1024}
 # Why a first block run in the process that planned the run has no
 # measurement.
 _SHARED_PEAK = (
@@ -87,13 +86,13 @@ _SHARED_PEAK = (
     "resident memory includes what it did before, so the block's share of "
     "the peak cannot be told"
 )
-# Why a worker whose peak did not rise has none either. A forked worker
-# starts from what it inherited, and a block lighter than that leaves
-# the peak where it was.
+# Why a worker whose peak did not rise has none either. A block that
+# fits in memory the worker already held, as a small one can in what the
+# worker's setup freed, leaves the peak where it was.
 _FLAT_PEAK = (
-    "the worker's peak resident memory did not rise above the peak it "
-    "started from, so the block weighed less than what the worker inherited "
-    "and the peak says nothing of it"
+    "the worker's peak resident memory did not rise over the block, so the "
+    "block fit in memory the worker already held and the peak says nothing "
+    "of it"
 )
 
 
@@ -369,14 +368,22 @@ def _block_size_record(request: ReduceRequest, plan: dict, first: dict) -> dict:
         "measured_bytes_per_row": measured,
         "measured_rows": rows,
         "measured_growth_bytes": growth,
+        # Under fork a worker counts the pages it shares with the process
+        # that started it as its own, so its peaks overstate what it alone
+        # holds. That errs on the side of the budget, and the growth, the
+        # difference of two peaks that both count them, is exact.
         "worker_setup_peak_bytes": first["worker_setup_peak_bytes"],
         "peak_after_block_bytes": first["peak_after_block_bytes"],
         "measured_block": list(first["block"]),
         "start_method": first["start_method"],
         "measure": (
-            "the growth of the peak resident memory, ru_maxrss, of the worker "
-            "that built the first block, from the peak once it had set itself "
-            "up and before it read the block, to the end of the block"
+            f"the growth of the peak resident memory of the worker that built "
+            f"the first block, read as {resident.reading() or 'nothing'} on "
+            f"{sys.platform}, from the peak once it had set itself up and "
+            f"before it read the block, to the end of the block. Under fork "
+            f"both peaks count the pages the worker shares with the process "
+            f"that started it, so they overstate what it alone holds, and the "
+            f"growth is unaffected"
         ),
         "unavailable": unavailable,
         "judged": judged,
@@ -511,7 +518,7 @@ def _growth(
     if not own_process:
         return None, _SHARED_PEAK
     if started is None or peak is None:
-        return None, f"the unit of ru_maxrss on {sys.platform} is not known here"
+        return None, resident.why_not_read()
     if peak <= started:
         return None, _FLAT_PEAK
     return peak - started, None
@@ -544,20 +551,6 @@ def _init_worker(request: ReduceRequest, own_process: bool = True) -> None:
             f"leaves were written with"
         )
     _STATE.update(request=request, targets=targets)
-
-
-def _peak_resident_bytes() -> int | None:
-    """This process's peak resident memory in bytes, from ru_maxrss, or
-    None on a platform whose unit of it is not in `_RU_MAXRSS_UNIT`."""
-    import resource
-
-    unit = next(
-        (u for name, u in _RU_MAXRSS_UNIT.items() if sys.platform.startswith(name)),
-        None,
-    )
-    if unit is None:
-        return None
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
 
 
 def _peak_gb() -> float:

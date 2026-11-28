@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+**On Linux a worker's peak resident memory is read as VmHWM of
+`/proc/self/status`, where it was `ru_maxrss`.** On Linux `ru_maxrss`
+survives an exec, so a worker started by spawn read the peak of the
+process that started it, and a block below that peak read nothing. Fork
+starts it afresh, so runs on the cluster, which fork, were measured
+right already, and what read blind was a test that asked for spawn.
+VmHWM is the high-water mark of the process's own address space. On a
+Midway3 compute node, RHEL 8 with kernel 4.18 and Python 3.11.12, it
+started at the worker's own resident memory under spawn, fork and
+forkserver, equal to VmRSS, and grew by the 150 MB a worker touched,
+150.0, 150.3 and 150.0 MB. There the spawned worker's `ru_maxrss`
+started at the parent's 419.9 MB and grew by nothing. macOS keeps
+`ru_maxrss`, which a new worker starts afresh there. A first block whose
+peak did not rise is still recorded as unmeasured, and on Linux that
+should now be rare. Under fork the peaks a worker records count the
+pages it shares with the process that started it, 319.8 MB at the start
+of a worker whose parent held 300 MB, so they overstate what the worker
+alone holds. That errs on the side of the budget, and the growth is
+unaffected, 150.2 MB there. The manifest's measure says which reading
+was taken. The aggregate stage reads its workers' peaks the same way,
+where it took Linux's kibibytes for thousands of bytes.
+
 **A worker that dies stops the aggregate stage at once, naming the
 leaves in flight and how the workers ended.** The leaves ran on a
 `multiprocessing.Pool` that renewed each worker after 16 leaves, and a
@@ -48,19 +70,18 @@ by side under `reduce.block_size`. A first block that keeps 100,000 rows
 or more and takes more than twice the estimate stops the run before any
 other block, with nothing written, and one that keeps fewer is recorded
 and not judged. Twice is a tolerance on a measure with known noise, not
-a correction of the estimate. One synthetic first block, measured in one
-fresh worker after another, read from a fifth of the estimate to nine
-tenths of it, and memory sampled through the block peaked where the
-measure did, so the spread is in what the block holds resident and not
-in the reading. The manifest records the factor beside the measure. On
-one worker the block runs in the process that planned the run, whose
-peak cannot be put down to it, and a worker whose peak did not rise, as
-a forked one can when the block weighs less than what it inherited, says
-nothing of the block either. Neither has a measurement or a judgement,
-and the manifest says why, and which start method the workers had. The
-peak a worker logs is read in bytes on macOS and kibibytes on Linux,
-where Linux's was taken as thousands of bytes. New:
-`[reduce.pandas] targets_per_block` declares the size of a block in
+a correction of the estimate. One synthetic first block, measured on
+macOS in one fresh worker after another, read from a fifth of the
+estimate to nine tenths of it, and memory sampled through the block
+peaked where the measure did, so the spread is in what the block holds
+resident and not in the reading. The manifest records the factor beside
+the measure. On one worker the block runs in the process that planned
+the run, whose peak cannot be put down to it, and a worker whose peak
+did not rise over the block says nothing of it either. Neither has a
+measurement or a judgement, and the manifest says why, and which start
+method the workers had. The peak a worker logs is read in bytes on macOS
+and kibibytes on Linux, where Linux's was taken as thousands of bytes.
+New: `[reduce.pandas] targets_per_block` declares the size of a block in
 place of `memory_gb`. It warns, and the manifest records the size as
 declared.
 

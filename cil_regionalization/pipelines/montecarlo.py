@@ -122,6 +122,7 @@ from cil_regionalization.reduce import (
     ReduceRequest,
     get_backend,
 )
+from cil_regionalization.resident import peak_resident_bytes
 from cil_regionalization.stats import (
     _quantile_label,
     _warn_if_unweighted_models,
@@ -2325,12 +2326,10 @@ def _ordered(frame: pd.DataFrame, cfg: MonteCarloPipelineConfig) -> pd.DataFrame
 
 
 def _peak_rss_gb() -> float:
-    """This process's peak resident memory in GB."""
-    import resource
-
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # ru_maxrss is kilobytes on Linux, bytes on macOS
-    return peak / 1e6 if sys.platform.startswith("linux") else peak / 1e9
+    """This process's peak resident memory in GB, read as
+    `resident.peak_resident_bytes` reads it, or NaN where it is not."""
+    peak = peak_resident_bytes()
+    return float("nan") if peak is None else peak / 1e9
 
 
 def _current_rss_gb() -> Optional[float]:

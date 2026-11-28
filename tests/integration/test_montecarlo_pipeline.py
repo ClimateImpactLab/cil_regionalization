@@ -2781,10 +2781,8 @@ _ONE_GROUP_GB = 7000e-9
 @pytest.fixture
 def spawned_workers():
     """Workers started by spawn, for the test that reads a worker's real
-    peak resident memory over its first block. On macOS such a worker's
-    peak starts from its own setup. On Linux it starts from the peak of
-    the process that started it, so a small block reads nothing there.
-    Runs keep the platform's own start method."""
+    peak resident memory over its first block. Runs keep the platform's
+    own start method."""
     import multiprocessing
 
     before = multiprocessing.get_start_method(allow_none=True)
@@ -2819,8 +2817,8 @@ def forked_workers_with_a_rising_peak(monkeypatch):
 
 @pytest.fixture
 def forked_workers_with_a_flat_peak(monkeypatch):
-    """A peak that never rises, as on Linux over a block lighter than the
-    peak of the process the worker came from."""
+    """A peak that never rises, as over a block that fits in memory the
+    worker already held."""
     yield from _forked_workers(monkeypatch, lambda: 10**9)
 
 
@@ -3102,11 +3100,11 @@ class TestReduce:
     ):
         """The first block is built alone in a worker and measured as the
         growth of its peak resident memory over the block. A block this
-        small can leave the peak where it was, at the worker's setup or on
-        Linux at the peak of the process that started it, and then the
-        record says so. Either way it is below what is
+        small can leave the peak where the worker's setup put it, and then
+        the record says so. Either way it is below what is
         judged, so it is recorded and not judged. It went red with
         nothing measured."""
+        from cil_regionalization import resident
         from cil_regionalization.reduce.pandas_blocks import _FLAT_PEAK
 
         raw, whole, out = self._aggregated(weights_dir, tmp_path)
@@ -3118,7 +3116,8 @@ class TestReduce:
         assert sizing["by"] == "estimate" and sizing["targets_per_block"] is None
         assert sizing["estimate_bytes_per_row"] == 280
         assert sizing["measured_rows"] == 24 and sizing["measured_block"] == [0, 1]
-        assert sizing["start_method"] == "spawn" and "ru_maxrss" in sizing["measure"]
+        assert sizing["start_method"] == "spawn"
+        assert f"read as {resident.reading()} on " in sizing["measure"]
         setup = sizing["worker_setup_peak_bytes"]
         after = sizing["peak_after_block_bytes"]
         assert after >= setup > 0
