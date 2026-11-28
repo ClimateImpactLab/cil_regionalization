@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 import pandas as pd
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from cil_regionalization.config import _Strict
 
@@ -27,11 +27,26 @@ ALL_METHODS: frozenset[Methods] = frozenset(
 
 class PandasReduceOptions(_Strict):
     """Options of the pandas backend. ``memory_gb`` is the memory all
-    its workers may hold together and has no default. ``n_workers``
-    defaults to ``run.n_workers``."""
+    its workers may hold together, which the blocks are sized from, and
+    ``targets_per_block`` declares their size instead. One of the two is
+    needed and neither has a default. ``n_workers`` defaults to
+    ``run.n_workers``."""
 
     memory_gb: Optional[float] = Field(default=None, gt=0)
+    # A whole number of the leaves' row groups. For an expert who has
+    # measured a run, and the manifest records it as declared.
+    targets_per_block: Optional[int] = Field(default=None, ge=1)
     n_workers: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _one_way_to_size_the_blocks(self) -> "PandasReduceOptions":
+        if self.memory_gb is not None and self.targets_per_block is not None:
+            raise ValueError(
+                "[reduce.pandas] takes memory_gb, which the blocks are sized "
+                "from, or targets_per_block, which declares their size, not "
+                "both"
+            )
+        return self
 
 
 class ReduceConfig(_Strict):

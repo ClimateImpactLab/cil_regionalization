@@ -94,6 +94,7 @@ n_workers = 1
 # the years. It
 # takes the statistics from the leaves under pipeline_out/leaves, one
 # block of targets at a time, and memory_gb is what all its workers may
-# hold together.
+# hold together. targets_per_block declares the size of a block in its
+# place, and warns.
 [reduce.pandas]
 memory_gb = 4

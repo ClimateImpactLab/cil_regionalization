@@ -155,6 +155,104 @@ def _pipeline_cfg(
 _LEVELS = {"kumquat": ["k0", "k1"], "zeppelin": ["z0", "z1", "z2"]}
 
 
+def _last_first_waves(fn, tasks, *, initializer, initargs, on_result, **_):
+    """In place of `run_in_waves`: in this process, the leaves handed back
+    last first, each as soon as it is done."""
+    initializer(*initargs)
+    for task in reversed(list(tasks)):
+        on_result(fn(task))
+
+
+def _dies(task):
+    import os
+
+    os._exit(1)
+
+
+class TestWaves:
+    """The leaves are aggregated in waves, each on new workers."""
+
+    def test_waves_of_two_give_what_one_worker_gives(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Six leaves over two workers in waves of two, so three waves."""
+        from cil_regionalization.pipelines import montecarlo
+
+        tree = tmp_path / "tree"
+        _build_tree(tree, _LEVELS)
+        one = run_pipeline(
+            _pipeline_cfg(weights_dir, tree, tmp_path / "one", levels=_LEVELS)
+        )
+        monkeypatch.setattr(montecarlo, "LEAVES_PER_WORKER", 1)
+        waves = run_pipeline(
+            _pipeline_cfg(
+                weights_dir, tree, tmp_path / "waves", levels=_LEVELS, n_workers=2
+            )
+        )
+        pd.testing.assert_frame_equal(
+            waves.stats, one.stats, check_exact=False, rtol=1e-12
+        )
+
+    def test_a_worker_that_dies_stops_the_run_with_nothing_written(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """It hung on a multiprocessing.Pool, which waits for ever for the
+        leaf a dead worker held. The workers here are forked, so that they
+        see the leaf function this test puts in."""
+        import multiprocessing
+
+        from cil_regionalization.pipelines import montecarlo
+
+        if "fork" not in multiprocessing.get_all_start_methods():
+            pytest.skip("needs forked workers")
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        monkeypatch.setattr(montecarlo, "_process_leaf", _dies)
+        before = multiprocessing.get_start_method(allow_none=True)
+        multiprocessing.set_start_method("fork", force=True)
+        try:
+            with pytest.raises(RuntimeError) as error:
+                run_pipeline(
+                    _pipeline_cfg(weights_dir, tree, out, levels=_LEVELS, n_workers=2)
+                )
+        finally:
+            multiprocessing.set_start_method(before, force=True)
+        message = str(error.value)
+        # two workers, so the first two leaves of the plan were out
+        assert message.startswith(
+            "pipeline: a worker died with k0/z0 and k0/z1 in flight, exiting "
+            "with code 1"
+        ), message
+        assert message.endswith("The run stopped there. No statistics were written.")
+        assert not out.exists() or not any(out.rglob("*.parquet"))
+
+    def test_a_worker_that_dies_leaves_the_leaves_manifest_incomplete(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """With leaf files written, the message says what is left on disk."""
+        import multiprocessing
+
+        from cil_regionalization.pipelines import montecarlo
+
+        if "fork" not in multiprocessing.get_all_start_methods():
+            pytest.skip("needs forked workers")
+        tree, out = tmp_path / "tree", tmp_path / "out"
+        _build_tree(tree, _LEVELS)
+        monkeypatch.setattr(montecarlo, "_process_leaf", _dies)
+        before = multiprocessing.get_start_method(allow_none=True)
+        multiprocessing.set_start_method("fork", force=True)
+        try:
+            with pytest.raises(RuntimeError) as error:
+                run_pipeline(_leaves_cfg(weights_dir, tree, out, n_workers=2))
+        finally:
+            multiprocessing.set_start_method(before, force=True)
+        assert str(error.value).endswith(
+            "No statistics were written. The leaf files written so far are "
+            "kept, and the leaves manifest is left incomplete."
+        )
+        assert _leaves_manifest(out)["complete"] is False
+
+
 class TestEndToEnd:
     def test_generation_application_statistics(self, weights_dir, tmp_path):
         tree = tmp_path / "tree"
@@ -495,24 +593,10 @@ class TestRowOrder:
     ):
         """Both files come in the order of `_ordered`. The pool here
         runs in this process and hands the leaves back last first."""
-        import types
 
         from cil_regionalization.pipelines import montecarlo
 
-        class LastFirstPool:
-            def __init__(self, processes, initializer, initargs, maxtasksperchild):
-                initializer(*initargs)
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def imap_unordered(self, func, tasks, chunksize=1):
-                return [func(task) for task in reversed(list(tasks))]
-
-        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
+        monkeypatch.setattr(montecarlo, "run_in_waves", _last_first_waves)
         tree = tmp_path / "tree"
         _build_tree(tree, self._ORDER_LEVELS)
         raw = self._cfg(
@@ -1983,25 +2067,11 @@ class TestLeafFiles:
     ):
         """The pool here runs in this process and hands the leaves back
         last first."""
-        import types
 
         from cil_regionalization import leaves
         from cil_regionalization.pipelines import montecarlo
 
-        class LastFirstPool:
-            def __init__(self, processes, initializer, initargs, maxtasksperchild):
-                initializer(*initargs)
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def imap_unordered(self, func, tasks, chunksize=1):
-                return [func(task) for task in reversed(list(tasks))]
-
-        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
+        monkeypatch.setattr(montecarlo, "run_in_waves", _last_first_waves)
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         run_pipeline(_leaves_cfg(weights_dir, tree, out, n_workers=2))
@@ -2417,24 +2487,10 @@ class TestLeafFiles:
         """Not the first in plan order. The pool here runs in this
         process and hands each leaf back as it is asked for, last
         first, so the odd leaf is the third to arrive."""
-        import types
 
         from cil_regionalization.pipelines import montecarlo
 
-        class LastFirstPool:
-            def __init__(self, processes, initializer, initargs, maxtasksperchild):
-                initializer(*initargs)
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def imap_unordered(self, func, tasks, chunksize=1):
-                return (func(task) for task in reversed(list(tasks)))
-
-        monkeypatch.setattr(montecarlo, "mp", types.SimpleNamespace(Pool=LastFirstPool))
+        monkeypatch.setattr(montecarlo, "run_in_waves", _last_first_waves)
         tree, out = tmp_path / "tree", tmp_path / "out"
         _build_tree(tree, _LEVELS)
         path = tree / "k1" / "z0" / "damages.parquet"
@@ -2722,6 +2778,52 @@ _METHODS_AND_WEIGHTS = pytest.mark.parametrize(
 _ONE_GROUP_GB = 7000e-9
 
 
+@pytest.fixture
+def spawned_workers():
+    """Workers started by spawn, for the test that reads a worker's real
+    peak resident memory over its first block. On macOS such a worker's
+    peak starts from its own setup. On Linux it starts from the peak of
+    the process that started it, so a small block reads nothing there.
+    Runs keep the platform's own start method."""
+    import multiprocessing
+
+    before = multiprocessing.get_start_method(allow_none=True)
+    multiprocessing.set_start_method("spawn", force=True)
+    yield
+    multiprocessing.set_start_method(before, force=True)
+
+
+def _forked_workers(monkeypatch, peak):
+    """Forked workers, which keep what a test puts in, reading their peak
+    resident memory from ``peak``."""
+    import multiprocessing
+
+    from cil_regionalization.reduce import pandas_blocks
+
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("needs forked workers")
+    monkeypatch.setattr(pandas_blocks, "_peak_resident_bytes", peak)
+    before = multiprocessing.get_start_method(allow_none=True)
+    multiprocessing.set_start_method("fork", force=True)
+    yield
+    multiprocessing.set_start_method(before, force=True)
+
+
+@pytest.fixture
+def forked_workers_with_a_rising_peak(monkeypatch):
+    """A peak that rises with every reading. A block this small can leave
+    the real peak where it was, and then there is nothing to judge."""
+    readings = itertools.count(1)
+    yield from _forked_workers(monkeypatch, lambda: 10**9 + 10**4 * next(readings))
+
+
+@pytest.fixture
+def forked_workers_with_a_flat_peak(monkeypatch):
+    """A peak that never rises, as on Linux over a block lighter than the
+    peak of the process the worker came from."""
+    yield from _forked_workers(monkeypatch, lambda: 10**9)
+
+
 def _same_frames(one: pd.DataFrame, two: pd.DataFrame) -> None:
     """Equal with their dtypes and row order, and to the bit."""
     pd.testing.assert_frame_equal(one, two, check_exact=True)
@@ -2990,8 +3092,189 @@ class TestReduce:
         assert manifest["reduce"]["blocks"] == 2
         assert manifest["reduce"]["options"] == {
             "memory_gb": 2 * _ONE_GROUP_GB,
+            "targets_per_block": None,
             "n_workers": 2,
         }
+
+    @pytest.mark.usefixtures("spawned_workers")
+    def test_the_estimate_and_the_measurement_are_recorded_side_by_side(
+        self, weights_dir, tmp_path
+    ):
+        """The first block is built alone in a worker and measured as the
+        growth of its peak resident memory over the block. A block this
+        small can leave the peak where it was, at the worker's setup or on
+        Linux at the peak of the process that started it, and then the
+        record says so. Either way it is below what is
+        judged, so it is recorded and not judged. It went red with
+        nothing measured."""
+        from cil_regionalization.reduce.pandas_blocks import _FLAT_PEAK
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        got = self._reduce(raw, memory_gb=2 * _ONE_GROUP_GB, n_workers=2)
+        _same_frames(got.stats, whole.stats)
+        sizing = json.loads((out / "again.manifest.json").read_text())["reduce"][
+            "block_size"
+        ]
+        assert sizing["by"] == "estimate" and sizing["targets_per_block"] is None
+        assert sizing["estimate_bytes_per_row"] == 280
+        assert sizing["measured_rows"] == 24 and sizing["measured_block"] == [0, 1]
+        assert sizing["start_method"] == "spawn" and "ru_maxrss" in sizing["measure"]
+        setup = sizing["worker_setup_peak_bytes"]
+        after = sizing["peak_after_block_bytes"]
+        assert after >= setup > 0
+        if sizing["unavailable"] is None:
+            assert sizing["measured_growth_bytes"] == after - setup > 0
+            assert (
+                sizing["measured_bytes_per_row"] == sizing["measured_growth_bytes"] / 24
+            )
+        else:
+            assert after == setup and sizing["unavailable"] == _FLAT_PEAK
+            assert sizing["measured_growth_bytes"] is None
+        assert sizing["judged"] is False and sizing["judged_from_rows"] == 100_000
+        assert "refused" not in sizing
+
+    def test_in_one_process_the_block_is_not_measured_nor_judged(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """The process planned the run before, so its peak is not the
+        block's. Even with every block judged and the estimate set below
+        anything a block takes, the run goes through, and the manifest
+        says why there is no number."""
+        from cil_regionalization.reduce import pandas_blocks
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        monkeypatch.setattr(pandas_blocks, "JUDGED_ROWS", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_ROW", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_DIMENSION", 0)
+        got = self._reduce(raw, memory_gb=_ONE_GROUP_GB, n_workers=1)
+        _same_frames(got.stats, whole.stats)
+        sizing = json.loads((out / "again.manifest.json").read_text())["reduce"][
+            "block_size"
+        ]
+        assert sizing["measured_bytes_per_row"] is None
+        assert sizing["measured_growth_bytes"] is None
+        assert sizing["measured_rows"] == 48
+        assert sizing["judged"] is False and sizing["start_method"] is None
+        assert sizing["unavailable"] == (
+            "the first block ran in the process that planned the run, whose "
+            "peak resident memory includes what it did before, so the "
+            "block's share of the peak cannot be told"
+        )
+
+    @pytest.mark.usefixtures("forked_workers_with_a_rising_peak")
+    def test_a_first_block_heavier_than_the_estimate_is_refused(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """In a worker, with every block judged, and the estimate set at
+        one byte a row, below anything a block takes. Nothing is written.
+        It went red with the run let through."""
+        from cil_regionalization.reduce import pandas_blocks
+
+        raw, _, out = self._aggregated(weights_dir, tmp_path)
+        monkeypatch.setattr(pandas_blocks, "JUDGED_ROWS", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_ROW", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_DIMENSION", 0)
+        # a row group of 24 rows at a byte a row fits 30 bytes, and two do
+        # not, so there are two blocks and the first goes to a worker
+        with pytest.raises(ValueError) as error:
+            self._reduce(raw, memory_gb=2 * 30e-9, n_workers=2)
+        message = str(error.value)
+        assert message.startswith(
+            "reduce: the first block, row groups 0 to 0, took "
+        ), message
+        assert (
+            "bytes a kept row over 24 rows, more than 2 times the 1 bytes a "
+            "row the blocks were sized at, so a block can take more than a "
+            "worker's"
+        ) in message
+        assert "No statistics were written." in message
+        assert "growth of the worker's peak resident memory over the block" in message
+        assert (
+            "Declare the size of a block in [reduce.pandas] targets_per_block"
+            in message
+        )
+        assert not (out / "again.parquet").exists()
+
+    @pytest.mark.usefixtures("forked_workers_with_a_rising_peak")
+    def test_a_first_block_within_the_estimate_is_judged_and_runs(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        from cil_regionalization.reduce import pandas_blocks
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        monkeypatch.setattr(pandas_blocks, "JUDGED_ROWS", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_ROW", 10**12)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_DIMENSION", 0)
+        # one row group a worker, so two blocks and a worker for the first
+        got = self._reduce(raw, memory_gb=2 * 30e3, n_workers=2)
+        _same_frames(got.stats, whole.stats)
+        sizing = json.loads((out / "again.manifest.json").read_text())["reduce"][
+            "block_size"
+        ]
+        assert sizing["judged"] is True and sizing["start_method"] == "fork"
+        # the peak the fixture puts in, read in the worker
+        assert sizing["measured_growth_bytes"] % 10**4 == 0
+
+    @pytest.mark.usefixtures("forked_workers_with_a_flat_peak")
+    def test_a_forked_worker_whose_peak_did_not_rise_is_not_judged(
+        self, weights_dir, tmp_path, monkeypatch
+    ):
+        """Every block is judged and the estimate is below anything a block
+        takes, so a measurement would refuse the run. The run goes
+        through, and the manifest says why there is no number. It went
+        red with a flat peak taken for a growth of zero."""
+        from cil_regionalization.reduce import pandas_blocks
+        from cil_regionalization.reduce.pandas_blocks import _FLAT_PEAK
+
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        monkeypatch.setattr(pandas_blocks, "JUDGED_ROWS", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_ROW", 1)
+        monkeypatch.setattr(pandas_blocks, "BYTES_PER_DIMENSION", 0)
+        # two blocks, so the first goes to a worker
+        got = self._reduce(raw, memory_gb=2 * 30e-9, n_workers=2)
+        _same_frames(got.stats, whole.stats)
+        sizing = json.loads((out / "again.manifest.json").read_text())["reduce"][
+            "block_size"
+        ]
+        assert sizing["start_method"] == "fork"
+        assert sizing["unavailable"] == _FLAT_PEAK
+        assert sizing["worker_setup_peak_bytes"] == sizing["peak_after_block_bytes"]
+        assert sizing["measured_growth_bytes"] is None
+        assert sizing["measured_bytes_per_row"] is None
+        assert sizing["judged"] is False
+
+    @pytest.mark.parametrize("n_workers", [1, 2])
+    def test_a_declared_block_size_is_used_warned_and_recorded(
+        self, weights_dir, tmp_path, n_workers
+    ):
+        """In place of a memory budget, with the same numbers. It went
+        red with the option unknown."""
+        raw, whole, out = self._aggregated(weights_dir, tmp_path)
+        raw = json.loads(json.dumps(raw))
+        raw["stats"].update({})
+        raw["output"].update(stem="again", leaves_stem="statistics")
+        raw["reduce"] = {"pandas": {"targets_per_block": 1, "n_workers": n_workers}}
+        with pytest.warns(UserWarning, match="targets_per_block = 1 declares"):
+            got = run_pipeline(
+                MonteCarloPipelineConfig.model_validate(raw), stage="reduce"
+            )
+        _same_frames(got.stats, whole.stats)
+        reduce = json.loads((out / "again.manifest.json").read_text())["reduce"]
+        assert reduce["blocks"] == 2 and reduce["per_worker_gb"] is None
+        assert reduce["options"]["targets_per_block"] == 1
+        assert reduce["options"]["memory_gb"] is None
+        assert reduce["block_size"]["by"] == "declared"
+        assert reduce["block_size"]["targets_per_block"] == 1
+        assert reduce["block_size"]["judged"] is False
+        assert reduce["block_size"]["measured_rows"] == 24
+
+    def test_a_budget_and_a_declared_size_together_are_refused(
+        self, weights_dir, tmp_path
+    ):
+        raw = self._raw(weights_dir, tmp_path / "t", tmp_path / "o")
+        raw["reduce"] = {"pandas": {"memory_gb": 1.0, "targets_per_block": 128}}
+        with pytest.raises(ValueError, match="memory_gb, which the blocks are sized"):
+            MonteCarloPipelineConfig.model_validate(raw)
 
     def test_other_windows_need_neither_the_tree_nor_the_weights(
         self, weights_dir, tmp_path, recwarn
@@ -3352,7 +3635,9 @@ class TestReduce:
             "  sized at 280 bytes a row, 240 and 40 for each dimension of a "
             "leaf, with 0.5 of a group's rows kept. The "
             "rows of a group are known summed over the leaves, so this takes "
-            "every leaf to spread its rows over the groups alike.",
+            "every leaf to spread its rows over the groups alike. The first "
+            "block is measured in a worker of its own, and the run is refused "
+            "if it takes more than 2 times that.",
             f"  leaves: every file under {out / 'leaves'} is in a leaves manifest",
         ]
         assert plan.missing == []

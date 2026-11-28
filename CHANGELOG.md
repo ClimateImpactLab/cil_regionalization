@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+**A worker that dies stops the aggregate stage at once, naming the
+leaves in flight and how the workers ended.** The leaves ran on a
+`multiprocessing.Pool` that renewed each worker after 16 leaves, and a
+worker that died outright, killed by a signal such as the kernel's for
+memory or ending as its setup raised, left the pool waiting for ever for
+the leaf it held. The leaves now run on a `ProcessPoolExecutor` under
+the platform's own start method, fork on Linux, in waves of 16 leaves a
+worker with new workers for each wave, and no more leaves are handed out
+than there are workers. A death raises with the leaves in flight and the
+workers' exit codes, and no statistics are written. Leaf files already
+written are kept, and the leaves manifest is left incomplete. Any other
+error that stops the run, such as a leaf written with other columns, now
+waits for the leaves in flight to finish, where the pool killed them.
+The reduce stage said a dead worker was most likely killed for memory,
+whatever ended it. It now gives the exit codes, and speaks of the memory
+budget only when a worker was killed by SIGKILL. A worker whose setup
+raised exits with code 0 and logs the traceback, and is said to. The
+waves cost half a second to a second on the leaf benchmark, 384 leaves
+at an eighth of the size on 8 workers under spawn on macOS. Over two
+runs of it, the wall time not spent on leaves, the wall less the leaves'
+own seconds over the workers, was 3.5 to 5.1 s with the pool and 4.4 to
+6.2 s in waves, on walls of 23 to 69 s that moved more than that from
+run to run. Fork on Linux was not measured.
+
+`window_means` takes the rows of each window once, looks for an
+infinite value without copying the rows of the windows, and builds the
+frame of the group keys once, where it did all three for every window.
+On the benchmark leaf of 4.26 million rows it takes 11% less as the
+pipeline calls it, and up to 29% less with the level labels on the
+frame. No number moves. Every call the test suite and the benchmarks
+make gives what the former code gave, to the bit, with the same row
+order and dtypes, and every refusal the same text.
+
+**The first block of a reduce is measured, and a run sized by the
+estimate is refused when the measurement is more than twice it.** The
+blocks are sized from an estimate of the bytes a kept row takes, 240 and
+40 for each dimension of a leaf, calibrated once on the resident memory
+of a worker on one machine. The first block is now built alone in a
+worker of its own and measured as the growth of the worker's peak
+resident memory over the block, from the peak once the worker has set
+itself up, so that what a worker holds for every block is left out. The
+manifest records the estimate, the measurement and the setup peak side
+by side under `reduce.block_size`. A first block that keeps 100,000 rows
+or more and takes more than twice the estimate stops the run before any
+other block, with nothing written, and one that keeps fewer is recorded
+and not judged. Twice is a tolerance on a measure with known noise, not
+a correction of the estimate. One synthetic first block, measured in one
+fresh worker after another, read from a fifth of the estimate to nine
+tenths of it, and memory sampled through the block peaked where the
+measure did, so the spread is in what the block holds resident and not
+in the reading. The manifest records the factor beside the measure. On
+one worker the block runs in the process that planned the run, whose
+peak cannot be put down to it, and a worker whose peak did not rise, as
+a forked one can when the block weighs less than what it inherited, says
+nothing of the block either. Neither has a measurement or a judgement,
+and the manifest says why, and which start method the workers had. The
+peak a worker logs is read in bytes on macOS and kibibytes on Linux,
+where Linux's was taken as thousands of bytes. New:
+`[reduce.pandas] targets_per_block` declares the size of a block in
+place of `memory_gb`. It warns, and the manifest records the size as
+declared.
+
 **A histclim file with rows its leaf does not have is refused, naming
 the first row and the regions or years the file alone has.** The two
 are one projection under two climates, so a row in one alone means the

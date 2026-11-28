@@ -623,7 +623,37 @@ n_workers = 16    # run.n_workers unless set
 ```
 
 `--dry-run` prints the blocks and the number of file opens that
-budget gives. Before any work the leaves are checked against their
+budget gives. The blocks are sized from an estimate of the bytes a
+kept row takes, calibrated on resident memory. The first block is built
+alone in a worker of its own, and measured as the growth of that
+worker's peak resident memory over the block, from the peak once the
+worker has set itself up. The manifest records the estimate and the
+measurement side by side under `reduce.block_size`, and the setup peak,
+which every worker holds before its first block. A first block that
+keeps 100,000 rows or more and takes more than twice the estimate stops
+the run, with nothing written, since its blocks could take more than
+the budget. Twice, and not once, because the measure is noisy. The same
+block, measured in one fresh worker after another, can read from a
+fifth of the estimate to nearly all of it. On one worker the blocks
+run in the process that planned the run, whose peak includes what it
+did before. A forked worker starts from what it inherited, and a block
+lighter than that leaves its peak where it was. In both cases the
+manifest says there is no measurement and why, and the run is not
+judged.
+
+Someone who has measured their own runs can declare the size of a
+block instead, in targets, a whole number of the leaves' row groups:
+
+```toml
+[reduce.pandas]
+targets_per_block = 4096   # in place of memory_gb
+```
+
+A declared size warns, since it overrides the estimate, and the
+manifest records it as declared, with the first block's measurement
+beside it and not judged.
+
+Before any work the leaves are checked against their
 manifest: what aggregated them has to be what the config says, field
 by field, and every file has to be there with its size. A path is not
 part of that. If the weights or the tree have moved, the run says so

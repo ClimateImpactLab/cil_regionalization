@@ -1458,6 +1458,11 @@ weights gave them.
 
 Can be left out.
 
+``n_workers`` processes aggregate the leaves in waves, each wave on
+new workers, since a worker's resident memory grows with the leaves
+it has taken. A worker that dies stops the run, naming the leaves in
+flight and saying how the workers ended.
+
 | key | type | default |
 | --- | --- | --- |
 | `n_workers` | int, at least 1 | 1 |
@@ -1475,10 +1480,13 @@ Can be left out.
 Can be left out.
 
 Options of the pandas backend. ``memory_gb`` is the memory all
-its workers may hold together and has no default. ``n_workers``
-defaults to ``run.n_workers``.
+its workers may hold together, which the blocks are sized from, and
+``targets_per_block`` declares their size instead. One of the two is
+needed and neither has a default. ``n_workers`` defaults to
+``run.n_workers``.
 
 | key | type | default |
 | --- | --- | --- |
 | `memory_gb` | float, above 0 | not set |
+| `targets_per_block` | int, at least 1 | not set |
 | `n_workers` | int, at least 1 | not set |
