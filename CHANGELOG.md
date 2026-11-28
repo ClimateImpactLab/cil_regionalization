@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+**A leaf file keeps the target ids in the type the weights artifact
+gives them, where it took strings alone.** The aggregate stage refused
+every leaf of a product whose artifact has integer ids, with "id field
+'ID_1' has dtype int64. A leaf file needs string ids", and those are the
+GADM 2.0 artifacts behind every ADM1 and ADM2 product: `ir_adm1_full`
+has `ID_1` as int64, `ir_adm2_full` and `ir_adm2_croparea_corn` `ID_1`
+and `ID_2`. A stage check on the cluster met it in 22 seconds. Leaf
+format version 2 takes ids that are strings or integers. An integer
+keeps its width in the target table and in the leaf files, the ordinal
+sorts integers by value and strings by code point, and the reduce stage
+gives the ids back in the artifact's type, so its statistics have the
+dtypes and the row order of stage all. The target digest is over the
+field names, their types and the ids, so an integer 1 and a string "1"
+are different targets and a leaf written from one is refused against the
+other. The storage of a string is not part of it: `ir_adm1_full` stores
+its strings as `large_string` and `ir_adm2_croparea_corn` as `string`,
+and identical ids give one digest either way, where taking the storage
+as the type would have refused a leaf of one against the other for
+nothing anyone could act on. An integer's width is part of it, since an
+int32 and an int64 id are different identities once the values outgrow
+int32. Other id types, floats, booleans, categoricals, datetimes and
+nullable integers among them, are refused. Leaves and target tables of
+version 1 are refused with a message to write them again, and no product
+wrote any, since every production config has `write_leaves = false`.
+
 **A weights config states every choice whose wrong value gives another
 number, as the quantile method and the summation already do.** The rule:
 a default that fails loudly when it is wrong is fine, and a default that

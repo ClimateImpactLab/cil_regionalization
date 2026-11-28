@@ -26,7 +26,9 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-FORMAT_VERSION = 1
+# 2: the target ids keep their type, a string or an integer of its width,
+# where version 1 took strings alone
+FORMAT_VERSION = 2
 TARGETS_PER_GROUP = 128
 ORDINAL_COLUMN = "target_ordinal"
 LEAF_KEY = b"cil_regionalization.leaf"
@@ -57,6 +59,43 @@ def _is_string(column: pd.Series) -> bool:
         "string",
         "empty",
     )
+
+
+def id_type(column: pd.Series, field: str) -> str:
+    """The canonical name of an id field's type, "string" for text in any
+    storage and the numpy name of an integer, such as "int64". Raises on
+    any other type."""
+    # A string column's storage is not part of the id. Arrow keeps the
+    # width of a string's offsets, 32 bits under string and 64 under
+    # large_string, and two copies of the same targets can come with
+    # either (ir_adm1_full has large_string and ir_adm2_croparea_corn
+    # string), as pandas can hold either as object or as a string dtype.
+    # Were the storage hashed, the digest of identical ids would differ
+    # and a leaf written from one copy would be refused against the
+    # other. An integer's width is kept, because an int32 and an int64 id
+    # are different identities once the values outgrow int32.
+    dtype = column.dtype
+    if isinstance(dtype, np.dtype) and dtype.kind in "iu":
+        return dtype.name
+    if _is_string(column):
+        return "string"
+    raise ValueError(
+        f"id field {field!r} has dtype {dtype}. A leaf file takes ids that "
+        f"are strings or integers."
+    )
+
+
+def _arrow_id_type(name: str) -> pa.DataType:
+    return pa.string() if name == "string" else pa.from_numpy_dtype(np.dtype(name))
+
+
+def _canonical_arrow(arrow: pa.DataType, field: str) -> str:
+    """`id_type` of an id column read back from a file."""
+    if pa.types.is_string(arrow) or pa.types.is_large_string(arrow):
+        return "string"
+    if pa.types.is_integer(arrow):
+        return np.dtype(arrow.to_pandas_dtype()).name
+    raise ValueError(f"id field {field!r} is stored as {arrow}")
 
 
 def _is_nullable_string(column: pd.Series) -> bool:
@@ -90,42 +129,53 @@ class TargetTable:
     """The targets of a weights artifact in the order leaf files use.
 
     A target's ordinal is its position among the distinct id tuples
-    sorted ascending, strings compared by code point. It does not depend
-    on the order of the artifact's rows. ``digest`` is a SHA256 over the
-    field names and the ids, not over any file.
+    sorted ascending, integers by value and strings by code point. It
+    does not depend on the order of the artifact's rows. ``id_types``
+    are the fields' types as `id_type` names them, and ``digest`` is a
+    SHA256 over the field names, their types and the ids, not over any
+    file, so an integer 1 and a string "1" are different targets.
     """
 
     id_fields: tuple[str, ...]
-    ids: tuple[tuple[str, ...], ...]
+    id_types: tuple[str, ...]
+    ids: tuple[tuple, ...]
     digest: str
 
     @classmethod
     def from_frame(cls, frame: pd.DataFrame, id_fields) -> "TargetTable":
-        """The table of the targets in ``frame``. Raises if an id field
-        is not a string column or has a missing value."""
+        """The table of the targets in ``frame``, each id kept in the type
+        of its column. Raises if an id field is neither strings nor
+        integers, or has a missing value."""
         id_fields = tuple(id_fields)
+        id_types = tuple(id_type(frame[field], field) for field in id_fields)
         for field in id_fields:
-            if not _is_string(frame[field]):
-                raise ValueError(
-                    f"id field {field!r} has dtype {frame[field].dtype}. A "
-                    f"leaf file needs string ids."
-                )
             if frame[field].isna().any():
                 raise ValueError(
                     f"id field {field!r} has missing values. A target "
                     f"with no id cannot be placed in a leaf file."
                 )
         distinct = frame[list(id_fields)].drop_duplicates()
+        # Python ints and strs, so a field sorts by value and hashes alike
+        # whatever width or storage its column had
         ids = tuple(
-            sorted(zip(*(distinct[f].astype(object).tolist() for f in id_fields)))
+            sorted(
+                zip(
+                    *(
+                        [int(v) for v in distinct[f].tolist()]
+                        if kind != "string"
+                        else [str(v) for v in distinct[f].tolist()]
+                        for f, kind in zip(id_fields, id_types)
+                    )
+                )
+            )
         )
         if not ids:
             raise ValueError("the weights artifact has no targets")
-        return cls(id_fields, ids, cls._digest(id_fields, ids))
+        return cls(id_fields, id_types, ids, cls._digest(id_fields, id_types, ids))
 
     @staticmethod
-    def _digest(id_fields, ids) -> str:
-        digest = hashlib.sha256(b"cil_regionalization targets 1\n")
+    def _digest(id_fields, id_types, ids) -> str:
+        digest = hashlib.sha256(b"cil_regionalization targets 2\n")
 
         def put(text: str) -> None:
             raw = text.encode("utf-8")
@@ -133,12 +183,13 @@ class TargetTable:
             digest.update(raw)
 
         digest.update(len(id_fields).to_bytes(8, "big"))
-        for field in id_fields:
+        for field, kind in zip(id_fields, id_types):
             put(field)
+            put(kind)
         digest.update(len(ids).to_bytes(8, "big"))
         for row in ids:
-            for value in row:
-                put(value)
+            for value, kind in zip(row, id_types):
+                put(value if kind == "string" else str(int(value)))
         return digest.hexdigest()
 
     def __len__(self) -> int:
@@ -194,13 +245,17 @@ class TargetTable:
             return path
         schema = pa.schema(
             [(ORDINAL_COLUMN, pa.int32())]
-            + [(field, pa.string()) for field in self.id_fields],
+            + [
+                (field, _arrow_id_type(kind))
+                for field, kind in zip(self.id_fields, self.id_types)
+            ],
             metadata={
                 TARGETS_KEY: json.dumps(
                     {
                         "format_version": FORMAT_VERSION,
                         "digest": self.digest,
                         "id_fields": list(self.id_fields),
+                        "id_types": list(self.id_types),
                         "n_targets": len(self.ids),
                     },
                     sort_keys=True,
@@ -210,8 +265,8 @@ class TargetTable:
         table = pa.table(
             [pa.array(np.arange(len(self.ids), dtype=np.int32))]
             + [
-                pa.array([row[i] for row in self.ids], type=pa.string())
-                for i in range(len(self.id_fields))
+                pa.array([row[i] for row in self.ids], type=_arrow_id_type(kind))
+                for i, kind in enumerate(self.id_types)
             ],
             schema=schema,
         )
@@ -233,12 +288,26 @@ class TargetTable:
         if TARGETS_KEY not in metadata:
             raise ValueError(f"{path} is not a target table")
         footer = json.loads(metadata[TARGETS_KEY])
+        if footer.get("format_version") != FORMAT_VERSION:
+            raise ValueError(
+                f"{path} is a target table of format version "
+                f"{footer.get('format_version')}, and this version of the library "
+                f"reads version {FORMAT_VERSION}. Write the leaves again."
+            )
         id_fields = tuple(footer["id_fields"])
+        id_types = tuple(
+            _canonical_arrow(table.schema.field(f).type, f) for f in id_fields
+        )
+        if list(id_types) != footer["id_types"]:
+            raise ValueError(
+                f"{path} stores its ids as {list(id_types)}, and its footer "
+                f"says {footer['id_types']}"
+            )
         ordinals = table.column(ORDINAL_COLUMN).to_pylist()
         if ordinals != list(range(len(ordinals))):
             raise ValueError(f"{path} is not in ordinal order")
         ids = tuple(zip(*(table.column(f).to_pylist() for f in id_fields)))
-        found = cls(id_fields, ids, cls._digest(id_fields, ids))
+        found = cls(id_fields, id_types, ids, cls._digest(id_fields, id_types, ids))
         if found.digest != footer["digest"]:
             raise ValueError(
                 f"{path} holds targets with digest {found.digest}, and its "
@@ -364,7 +433,8 @@ def write_leaf(
             # the ordinal already says which id a row has
             field = targets.id_fields.index(name)
             array = pa.array(
-                [row[field] for row in targets.ids], type=pa.string()
+                [row[field] for row in targets.ids],
+                type=_arrow_id_type(targets.id_types[field]),
             ).take(taken)
         elif name == value_col:
             array = pa.array(column.to_numpy(), type=pa.float64())

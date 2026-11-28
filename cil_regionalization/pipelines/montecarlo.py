@@ -2110,8 +2110,16 @@ def _run_reduce(
             {label: window for label, (_, window) in of_label.items()}
         )
     for id_field, column in zip(request.id_fields, document["schema"][1:]):
-        # what the same ids are in a frame of the pipeline's own
-        wanted = "string" if column["pandas"] == "string" else pd.Series(["a"]).dtype
+        # The ids in the dtype the aggregated leaf held them in, which is
+        # the weights artifact's. An integer keeps its width, and a string
+        # is what the same strings are in a frame of the pipeline's own.
+        recorded = column["pandas"]
+        if recorded.startswith(("int", "uint")):
+            wanted = recorded
+        elif recorded == "string":
+            wanted = "string"
+        else:
+            wanted = pd.Series(["a"]).dtype
         stats[id_field] = stats[id_field].astype(wanted)
     stats, targets = _with_shares(
         stats,

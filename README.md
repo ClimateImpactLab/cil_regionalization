@@ -574,7 +574,13 @@ by target and cut into row groups of 128 targets, the same targets in
 the same group of every leaf, with an empty group where a leaf has
 none of them. So the rows of a range of targets can be read from
 every leaf without reading the rest. `leaves/targets.<digest>.parquet`
-gives the target of each ordinal.
+gives the target of each ordinal. The ids keep the type the weights
+artifact gives them, strings or integers of their width, as the GADM
+2.0 artifacts give `ID_1` and `ID_2` as int64, and the statistics carry
+them in that type on every route. The digest is over the field names,
+their types and the ids, so an integer 1 and a string "1" are different
+targets. How a string is stored, as `string` or `large_string`, is not
+part of it.
 
 The footer of a leaf file says what made it, as JSON under the key
 `cil_regionalization.leaf`: the weight, the kind, the versions, the
