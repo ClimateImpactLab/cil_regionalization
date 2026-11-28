@@ -966,8 +966,11 @@ def _pool_block(block: tuple[int, int]) -> dict:
     per_group = request.footer["targets_per_group"]
     block_ids = _STATE["targets"].ids[first * per_group : stop * per_group]
     ordinals = stats.pop(leaf_format.ORDINAL_COLUMN).to_numpy() - first * per_group
+    id_types = _STATE["targets"].id_types
     for i, field in enumerate(request.id_fields):
-        ids = np.array([row[i] for row in block_ids], dtype=object)
+        # in the type the weights artifact gave the field
+        kind = object if id_types[i] == "string" else np.dtype(id_types[i])
+        ids = np.array([row[i] for row in block_ids], dtype=kind)
         stats.insert(i, field, ids[ordinals])
     return {
         "block": block,

@@ -88,14 +88,15 @@ class TestTargetTable:
         assert table.ordinals(frame).tolist() == [3, 1, 2, 0, 4]
         assert table.ordinals(frame).dtype == np.int32
 
-    def test_the_digest_is_of_the_names_and_the_ids(self):
-        """The number of fields goes in first, then each name, then the
-        number of targets, then each id. A name or an id goes in as its
-        length in eight bytes and then its UTF-8 bytes. The literal is
-        what every environment has to give."""
+    def test_the_digest_is_of_the_names_the_types_and_the_ids(self):
+        """The number of fields goes in first, then each name and its
+        type, then the number of targets, then each id, an integer in
+        decimal. A name, a type or an id goes in as its length in eight
+        bytes and then its UTF-8 bytes. The literal is what every
+        environment has to give."""
         table = _targets()
-        expected = hashlib.sha256(b"cil_regionalization targets 1\n")
-        for part in (1, "gid", 5, "T1", "T2", "T3", "T4", "T5"):
+        expected = hashlib.sha256(b"cil_regionalization targets 2\n")
+        for part in (1, "gid", "string", 5, "T1", "T2", "T3", "T4", "T5"):
             if isinstance(part, str):
                 raw = part.encode("utf-8")
                 expected.update(len(raw).to_bytes(8, "big") + raw)
@@ -103,7 +104,7 @@ class TestTargetTable:
                 expected.update(part.to_bytes(8, "big"))
         assert table.digest == expected.hexdigest()
         assert table.digest == (
-            "696923e5e4bc85244b67517226e48687d1907f0830f0245d215a08e306df5a0d"
+            "739d0f4d69c60b0cc52cc4dbd55907c80d0cb9d1c2a4895c5976015a3c2da2d0"
         )
         assert _targets(IDS[:4]).digest != table.digest
         other_name = TargetTable.from_frame(pd.DataFrame({"hid": IDS}), ["hid"])
@@ -117,12 +118,79 @@ class TestTargetTable:
 
     @pytest.mark.parametrize("dtype", ["object", "str", "string"])
     def test_any_string_dtype_gives_the_same_table(self, dtype):
+        """The pandas dtype of a string is not part of the id. It went red
+        with the dtype hashed."""
         frame = pd.DataFrame({"gid": pd.array(IDS, dtype=dtype)})
         assert TargetTable.from_frame(frame, ["gid"]) == _targets()
 
-    def test_an_id_that_is_not_a_string_is_refused(self):
-        with pytest.raises(ValueError, match="'gid' has dtype int64"):
-            TargetTable.from_frame(pd.DataFrame({"gid": [1, 2]}), ["gid"])
+    @pytest.mark.parametrize("arrow", [pa.string(), pa.large_string()])
+    def test_an_artifact_stored_either_way_gives_the_same_table(self, tmp_path, arrow):
+        """ir_adm1_full stores its strings as large_string and
+        ir_adm2_croparea_corn as string. Read as a run reads them, the
+        same ids give the same table either way. pandas drops the width
+        on reading, so this cannot go red on the storage, which the
+        stored target table's test covers. It went red on the integer
+        ID_1 when ids had to be strings."""
+        path = tmp_path / "weights.parquet"
+        pq.write_table(
+            pa.table(
+                {
+                    "ISO": pa.array(["B", "A"], type=arrow),
+                    "ID_1": pa.array([1, 10], type=pa.int64()),
+                }
+            ),
+            path,
+        )
+        assert pq.read_schema(path).field("ISO").type == arrow
+        table = TargetTable.from_frame(pd.read_parquet(path), ["ISO", "ID_1"])
+        plain = pd.DataFrame({"ISO": ["B", "A"], "ID_1": np.array([1, 10])})
+        assert table == TargetTable.from_frame(plain, ["ISO", "ID_1"])
+
+    def test_integer_ids_keep_their_type_and_sort_by_value(self):
+        """As the GADM 2.0 artifacts give ID_1. It went red on a refusal
+        of every id that is not a string."""
+        frame = pd.DataFrame(
+            {
+                "ISO": ["B", "A", "A", "A"],
+                "ID_1": np.array([1, 10, 9, 2], dtype=np.int64),
+            }
+        )
+        table = TargetTable.from_frame(frame, ["ISO", "ID_1"])
+        assert table.id_types == ("string", "int64")
+        assert table.ids == (("A", 2), ("A", 9), ("A", 10), ("B", 1))
+        assert table.ordinals(frame).tolist() == [3, 2, 1, 0]
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            pd.DataFrame({"gid": ["1", "2"]}),
+            pd.DataFrame({"gid": np.array([1, 2], dtype=np.int32)}),
+        ],
+        ids=["the same digits as strings", "a narrower integer"],
+    )
+    def test_the_type_of_an_id_is_part_of_its_identity(self, other):
+        """An integer 1 is not the string "1", and an int32 id is not an
+        int64 one. It went red with the type left out of the digest."""
+        ints = TargetTable.from_frame(
+            pd.DataFrame({"gid": np.array([1, 2], dtype=np.int64)}), ["gid"]
+        )
+        assert TargetTable.from_frame(other, ["gid"]).digest != ints.digest
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            [1.0, 2.0],
+            [True, False],
+            pd.Categorical(["a", "b"]),
+            pd.to_datetime(["2020-01-01", "2021-01-01"]),
+            pd.array([1, 2], dtype="Int64"),
+            [1, "a"],
+        ],
+        ids=["float", "bool", "categorical", "datetime", "nullable", "mixed"],
+    )
+    def test_an_id_that_is_neither_strings_nor_integers_is_refused(self, values):
+        with pytest.raises(ValueError, match="A leaf file takes ids that are"):
+            TargetTable.from_frame(pd.DataFrame({"gid": values}), ["gid"])
 
     def test_a_missing_id_is_refused(self):
         with pytest.raises(ValueError, match="'gid' has missing values"):
@@ -148,6 +216,55 @@ class TestTargetTable:
         assert table.write(tmp_path / "leaves") == path
         assert path.stat().st_mtime_ns == stamp
         assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+    def test_integer_ids_are_stored_and_read_back_in_their_type(self, tmp_path):
+        """It went red with every id stored as a string."""
+        frame = pd.DataFrame(
+            {"ISO": ["A", "A", "B"], "ID_1": np.array([2, 10, 1], dtype=np.int64)}
+        )
+        table = TargetTable.from_frame(frame, ["ISO", "ID_1"])
+        path = table.write(tmp_path)
+        assert [(f.name, str(f.type)) for f in pq.read_schema(path)] == [
+            (ORDINAL_COLUMN, "int32"),
+            ("ISO", "string"),
+            ("ID_1", "int64"),
+        ]
+        again = TargetTable.read(path)
+        assert again == table and again.ids[1] == ("A", 10)
+
+    def test_a_table_stored_as_large_string_is_the_same_table(self, tmp_path):
+        """The width of the string offsets is not part of the id, so a
+        table another writer stored as large_string reads back with the
+        digest of the one written here. It went red with the stored type
+        taken as the id's type."""
+        table = _targets()
+        path = table.write(tmp_path)
+        stored = pq.read_table(path)
+        wide = stored.cast(
+            pa.schema(
+                [(ORDINAL_COLUMN, pa.int32()), ("gid", pa.large_string())],
+                metadata=stored.schema.metadata,
+            )
+        )
+        pq.write_table(wide, path)
+        assert pq.read_schema(path).field("gid").type == pa.large_string()
+        assert TargetTable.read(path) == table
+
+    def test_a_table_of_the_former_version_is_not_read(self, tmp_path):
+        """Version 1 took string ids alone, and its digest was taken over
+        them without their type."""
+        path = _targets().write(tmp_path)
+        stored = pq.read_table(path)
+        footer = json.loads(stored.schema.metadata[leaves.TARGETS_KEY])
+        footer["format_version"] = 1
+        pq.write_table(
+            stored.replace_schema_metadata(
+                {leaves.TARGETS_KEY: json.dumps(footer).encode("utf-8")}
+            ),
+            path,
+        )
+        with pytest.raises(ValueError, match="of format version 1"):
+            TargetTable.read(path)
 
     def test_a_table_out_of_ordinal_order_is_not_read(self, tmp_path):
         path = _targets().write(tmp_path)
@@ -184,6 +301,20 @@ class TestTargetTable:
 
 
 class TestLayout:
+    def test_integer_ids_are_written_in_their_type(self, tmp_path):
+        """It went red with every id written as a string."""
+        frame = pd.DataFrame(
+            {
+                "ID_1": np.array([10, 2, 2], dtype=np.int64),
+                "year": [2050, 2050, 2051],
+                "value": [1.0, 2.0, 3.0],
+            }
+        )
+        targets = TargetTable.from_frame(frame, ["ID_1"])
+        path, _ = _write(frame, tmp_path, targets=targets)
+        assert str(pq.read_schema(path).field("ID_1").type) == "int64"
+        assert pq.read_table(path).column("ID_1").to_pylist() == [2, 2, 10]
+
     def test_rows_are_sorted_by_target_and_keep_their_order_within_one(self, tmp_path):
         """The years of a target stay as the leaf had them, 2051, 2050,
         2052. Failed with a sort that is not stable, on the second leaf
@@ -367,7 +498,7 @@ class TestFooter:
         path, _ = _write(_leaf(), tmp_path, identity=identity)
         assert read_leaf_footer(path) == {
             **identity,
-            "format_version": 1,
+            "format_version": 2,
             "targets_per_group": 2,
             "n_targets": 5,
             "target_digest": _targets().digest,
@@ -431,7 +562,7 @@ class TestReadGroups:
     @staticmethod
     def _expect(rows: int = 15, **changed) -> dict:
         return {
-            "format_version": 1,
+            "format_version": 2,
             "targets_per_group": 2,
             "n_targets": 5,
             "target_digest": _targets().digest,
@@ -465,7 +596,7 @@ class TestReadGroups:
     @pytest.mark.parametrize(
         "changed",
         [
-            {"format_version": 2},
+            {"format_version": 1},
             {"targets_per_group": 4},
             {"n_targets": 6},
             {"target_digest": "0" * 64},

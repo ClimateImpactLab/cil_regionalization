@@ -46,9 +46,20 @@ SOURCE_VERSION = "units-v1"
 @pytest.fixture
 def weights_dir(tmp_path: Path) -> Path:
     """Generate and write a per_source area-weight artifact for real."""
+    return _weights_artifact(tmp_path, ["T1", "T2"])
+
+
+@pytest.fixture
+def integer_weights_dir(tmp_path: Path) -> Path:
+    """The same artifact with int64 target ids, as the GADM 2.0 ones give
+    ID_1, and ids whose order as numbers is not their order as strings."""
+    return _weights_artifact(tmp_path, np.array([10, 9], dtype=np.int64))
+
+
+def _weights_artifact(tmp_path: Path, target_ids) -> Path:
     targets = gpd.GeoDataFrame(
         {
-            "target_id": ["T1", "T2"],
+            "target_id": target_ids,
             "geometry": [box(0, 0, 4, 4), box(4, 0, 8, 4)],
         },
         crs="EPSG:4326",
@@ -2054,7 +2065,7 @@ class TestLeafFiles:
             )
             assert pq.read_metadata(path).num_row_groups == 2
             assert read_leaf_footer(path) == {
-                "format_version": 1,
+                "format_version": 2,
                 "targets_per_group": 1,
                 "n_targets": 2,
                 "target_digest": manifest["targets"]["digest"],
@@ -2098,7 +2109,7 @@ class TestLeafFiles:
         ]
         assert manifest["complete"] is True
         assert manifest["stem"] == "statistics"
-        assert manifest["format_version"] == 1
+        assert manifest["format_version"] == 2
         assert manifest["targets_per_group"] == 1
         assert manifest["rows_per_group"] == [24, 24]
         assert manifest["schema"] == [
@@ -2997,6 +3008,49 @@ class TestTargetCoverage:
             ["T2"]
         ]
 
+    def test_integer_ids_carry_their_shares_in_both_routes(
+        self, integer_weights_dir, tmp_path
+    ):
+        """Target 10 short of a unit in one leaf and target 9 absent from
+        it, with int64 ids. The reduce gives what stage all gives, and
+        both record the same coverage. It went red with every leaf
+        refused for its integer ids."""
+        raw, out = self._raw(integer_weights_dir, tmp_path)
+        whole = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert (
+            0
+            < whole.stats.loc[whole.stats["target_id"] == 10, "weight_share"].min()
+            < 1
+        )
+        again = TestReduce._reduce(raw)
+        _same_frames(again.stats, whole.stats)
+        run = json.loads((out / "statistics.manifest.json").read_text())
+        reduced = json.loads((out / "again.manifest.json").read_text())
+        assert reduced["target_coverage"] == run["target_coverage"]
+
+    def test_integer_ids_left_out_are_named_as_integers(
+        self, integer_weights_dir, tmp_path
+    ):
+        """Not as the strings of their digits. It went red with every leaf
+        refused for its integer ids."""
+        raw, out = self._raw(integer_weights_dir, tmp_path)
+        for path in Path(raw["tree"]["root"]).rglob("damages.parquet"):
+            leaf = pd.read_parquet(path)
+            leaf[leaf["unit_id"] != "u2"].to_parquet(path, index=False)
+        result = run_pipeline(MonteCarloPipelineConfig.model_validate(raw))
+        assert set(result.stats["target_id"]) == {10}
+        manifest = json.loads((out / "statistics.manifest.json").read_text())
+        assert manifest["target_coverage"]["left_out"]["no data"] == {
+            "count": 1,
+            "ids": [[9]],
+        }
+        assert _leaves_manifest(out)["target_coverage"]["left_out"]["no data"] == [[9]]
+        again = TestReduce._reduce(raw)
+        assert json.loads((out / "again.manifest.json").read_text())["target_coverage"][
+            "left_out"
+        ]["no data"] == {"count": 1, "ids": [[9]]}
+        assert set(again.stats["target_id"]) == {10}
+
     def test_a_leaves_manifest_without_the_targets_is_not_reduced(
         self, weights_dir, tmp_path
     ):
@@ -3090,6 +3144,27 @@ class TestReduce:
             )
             manifest = json.loads((out / f"{stem}.manifest.json").read_text())
             assert manifest["reduce"]["blocks"] == blocks
+
+    def test_integer_target_ids_go_through_the_leaves_in_their_type(
+        self, integer_weights_dir, tmp_path
+    ):
+        """The run and the two stages to the bit, with dtypes and row
+        order. Every leaf was refused when the leaf format took string ids
+        alone, and ids read back as strings would differ from the run in
+        their dtype and in their order, "10" before "9"."""
+        raw, whole, out = self._aggregated(integer_weights_dir, tmp_path, weighted=True)
+        assert whole.stats["target_id"].dtype == np.int64
+        assert whole.stats["target_id"].iloc[0] == 9
+        got = self._reduce(raw, memory_gb=2 * _ONE_GROUP_GB, n_workers=2)
+        _same_frames(got.stats, whole.stats)
+        _same_frames(
+            pd.read_parquet(out / "again.parquet"),
+            pd.read_parquet(out / "statistics.parquet"),
+        )
+        leaves = json.loads(
+            (out / "leaves" / "statistics.leaves.manifest.json").read_text()
+        )
+        assert leaves["format_version"] == 2
 
     def test_two_workers_give_the_same_bits(self, weights_dir, tmp_path):
         raw, whole, out = self._aggregated(weights_dir, tmp_path, weighted=True)

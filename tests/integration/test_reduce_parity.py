@@ -138,7 +138,7 @@ def build_request(
     targets = TargetTable.from_frame(pd.DataFrame({"gid": TARGETS}), ["gid"])
     targets.write(root)
     footer = {
-        "format_version": 1,
+        "format_version": 2,
         "targets_per_group": 2,
         "n_targets": len(targets),
         "target_digest": targets.digest,
