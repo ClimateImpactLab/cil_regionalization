@@ -54,6 +54,17 @@ records changes for every config, the same values included, since a
 weight now holds its column and the area weight no fallback or kind, so
 a hash from an earlier run does not match one written now.
 
+Regenerating the weights artifacts gives the same weights with new
+manifests, since each config states the value its default gave. They are
+regenerated before any product, because a product's run manifest records
+the SHA-256 of both files of the weights it loaded, the manifest among
+them, and a regenerated manifest records another config hash, so a
+product made from the old weights would name a manifest that is no
+longer published. Regenerating the GADM weights needs the GADM target
+layers, which are not distributed and are rebuilt from the GADM sources
+with `examples/gadm20/prepare_gadm20_targets.py` and
+`examples/gadm41/prepare_gadm41_targets.py`.
+
 **Every block of a reduce is measured and recorded, and only the first
 is judged.** Nothing is refused that was not before. A run then shows
 how much blocks of one size vary from worker to worker and how far the
