@@ -4,7 +4,8 @@ On Linux it is VmHWM of ``/proc/self/status``, the high-water mark of
 the process's own address space. ``ru_maxrss`` there survives an exec,
 so a worker started by spawn would read the peak of the process that
 started it. On macOS it is ``ru_maxrss``, which a new worker starts
-afresh. Elsewhere it is not read, rather than guessed.
+afresh. Elsewhere it is not read, rather than guessed. The resident
+memory of the moment, VmRSS, is read on Linux alone.
 """
 
 from __future__ import annotations
@@ -20,10 +21,7 @@ def peak_resident_bytes() -> int | None:
     not read. Under fork it counts the pages the process shares with its
     parent as its own."""
     if sys.platform.startswith("linux"):
-        try:
-            return vmhwm_bytes(_PROC_STATUS.read_text())
-        except OSError:
-            return None
+        return _from_status("VmHWM")
     if sys.platform == "darwin":
         import resource
 
@@ -32,17 +30,32 @@ def peak_resident_bytes() -> int | None:
     return None
 
 
-def vmhwm_bytes(status: str) -> int | None:
-    """VmHWM of the text of a ``/proc`` status file in bytes, or None if
-    the text has no VmHWM counted in kB, which there are kibibytes."""
+def resident_bytes() -> int | None:
+    """This process's resident memory at this moment in bytes, read as
+    VmRSS of ``/proc/self/status`` on Linux, or None elsewhere."""
+    if sys.platform.startswith("linux"):
+        return _from_status("VmRSS")
+    return None
+
+
+def status_bytes(status: str, field: str) -> int | None:
+    """A field of the text of a ``/proc`` status file in bytes, or None if
+    the text has no such field counted in kB, which there are kibibytes."""
     for line in status.splitlines():
         key, _, value = line.partition(":")
-        if key == "VmHWM":
+        if key == field:
             number, _, unit = value.strip().partition(" ")
             if number.isdigit() and unit.strip() == "kB":
                 return int(number) * 1024
             return None
     return None
+
+
+def _from_status(field: str) -> int | None:
+    try:
+        return status_bytes(_PROC_STATUS.read_text(), field)
+    except OSError:
+        return None
 
 
 def reading() -> str | None:

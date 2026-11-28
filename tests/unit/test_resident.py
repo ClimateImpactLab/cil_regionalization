@@ -33,10 +33,11 @@ def _on(monkeypatch, platform, *, status=None, ru_maxrss=419_900):
         monkeypatch.setattr(resident, "_PROC_STATUS", status)
 
 
-class TestVmHWM:
-    def test_the_high_water_mark_in_bytes(self):
-        """Its kB are kibibytes. It went red on thousands of bytes."""
-        assert resident.vmhwm_bytes(STATUS) == 17600 * 1024
+class TestStatus:
+    def test_the_high_water_mark_and_the_resident_memory_in_bytes(self):
+        """Their kB are kibibytes. It went red on thousands of bytes."""
+        assert resident.status_bytes(STATUS, "VmHWM") == 17600 * 1024
+        assert resident.status_bytes(STATUS, "VmRSS") == 17200 * 1024
 
     @pytest.mark.parametrize(
         "text",
@@ -50,7 +51,7 @@ class TestVmHWM:
     def test_a_status_without_a_vmhwm_in_kb_gives_none(self, text):
         """Rather than a number guessed. It went red with any unit read
         as kB."""
-        assert resident.vmhwm_bytes(text) is None
+        assert resident.status_bytes(text, "VmHWM") is None
 
 
 class TestPlatforms:
@@ -62,20 +63,24 @@ class TestPlatforms:
         _on(monkeypatch, "linux", status=status)
         assert resident.peak_resident_bytes() == 17600 * 1024
         assert resident.reading() == "VmHWM of /proc/self/status"
+        assert resident.resident_bytes() == 17200 * 1024
 
     def test_linux_without_the_file_gives_none_and_says_why(
         self, monkeypatch, tmp_path
     ):
         _on(monkeypatch, "linux", status=tmp_path / "absent")
         assert resident.peak_resident_bytes() is None
+        assert resident.resident_bytes() is None
         assert resident.why_not_read() == (
             "VmHWM could not be read from /proc/self/status"
         )
 
     def test_macos_reads_ru_maxrss_in_bytes(self, monkeypatch):
+        """The resident memory of the moment is not read there."""
         _on(monkeypatch, "darwin", ru_maxrss=1000)
         assert resident.peak_resident_bytes() == 1000
         assert resident.reading() == "ru_maxrss"
+        assert resident.resident_bytes() is None
 
     def test_elsewhere_nothing_is_read(self, monkeypatch):
         _on(monkeypatch, "freebsd14")

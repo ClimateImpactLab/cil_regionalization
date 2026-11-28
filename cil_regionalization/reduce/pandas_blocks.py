@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import statistics
 import sys
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -44,6 +45,7 @@ from cil_regionalization.reduce.base import (
     ReduceRequest,
 )
 from cil_regionalization.resident import peak_resident_bytes as _peak_resident_bytes
+from cil_regionalization.resident import resident_bytes as _resident_bytes
 from cil_regionalization.stats import (
     GroupError,
     UnweightedModelWeightsWarning,
@@ -333,6 +335,14 @@ class PandasBlocks(ReduceBackend):
             raise ValueError("reduce: the leaves hold no row inside any window")
         stats = pd.concat(frames, ignore_index=True)
         sizing.pop("refused", None)
+        # every block measured and recorded, and none of it judged
+        every = sorted(
+            (_block_reading(r) for r in results), key=lambda e: e["block"][0]
+        )
+        sizing.update(
+            every_block=every,
+            over_every_block=_over_every_block(every, plan["row_bytes"]),
+        )
         report = {
             **{k: v for k, v in self.describe(request).items() if k != "text"},
             "block_size": sizing,
@@ -439,7 +449,7 @@ def _run_blocks(request: ReduceRequest, blocks, n_workers: int, judge) -> list[d
         judge(results[0])
         _log_block(results, len(blocks))
         for block in rest:
-            results.append(_reduce_block(block))
+            results.append(_read_block(block))
             _log_block(results, len(blocks))
         return results
     results = []
@@ -458,7 +468,7 @@ def _run_blocks(request: ReduceRequest, blocks, n_workers: int, judge) -> list[d
         results[0]["start_method"] = context.get_start_method()
         judge(results[0])
         _log_block(results, len(blocks))
-        futures = {executor.submit(_reduce_block, block): block for block in rest}
+        futures = {executor.submit(_read_block, block): block for block in rest}
         for future in as_completed(futures):
             results.append(_collect(future, futures[future], executor))
             _log_block(results, len(blocks))
@@ -491,15 +501,15 @@ def _collect(future, block, executor) -> dict:
 
 
 def _measured_block(block: tuple[int, int]) -> dict:
-    """`_reduce_block`, with the growth of the process's peak resident
+    """`_read_block`, with the growth of the process's peak resident
     memory over the block under 'resident_growth_bytes', or None and the
     reason under 'measure_unavailable'. The growth is taken from the peak
     once the worker has set itself up and before it reads the block, so
     what the worker holds for every block, its imports and its target
     table, is outside it."""
-    setup = _peak_resident_bytes()
-    result = _reduce_block(block)
-    peak = _peak_resident_bytes()
+    result = _read_block(block)
+    setup = result["reading"]["peak_before_bytes"]
+    peak = result["reading"]["peak_after_bytes"]
     growth, unavailable = _growth(setup, peak, _STATE["own_process"])
     result.update(
         worker_setup_peak_bytes=setup,
@@ -508,6 +518,98 @@ def _measured_block(block: tuple[int, int]) -> dict:
         measure_unavailable=unavailable,
     )
     return result
+
+
+def _read_block(block: tuple[int, int]) -> dict:
+    """`_reduce_block`, with the process's peak resident memory before and
+    after the block and its resident memory before it under 'reading'."""
+    peak_before = _peak_resident_bytes()
+    resident_before = _resident_bytes()
+    result = _reduce_block(block)
+    peak_after = _peak_resident_bytes()
+    _STATE["blocks_read"] = _STATE.get("blocks_read", 0) + 1
+    result["reading"] = {
+        "peak_before_bytes": peak_before,
+        "resident_before_bytes": resident_before,
+        "peak_after_bytes": peak_after,
+        "nth_in_process": _STATE["blocks_read"],
+        "own_process": _STATE["own_process"],
+    }
+    return result
+
+
+def _block_reading(result: dict) -> dict:
+    """A block's entry in the manifest, with what the block itself grew
+    the resident memory by, or None and why. The growth is read off the
+    peak after the block, so only a block that raised its process's peak
+    has one. It is taken from the resident memory before the block where
+    that is read. Elsewhere only a worker's first block has a growth,
+    from the peak once the worker had set itself up."""
+    reading, rows = result["reading"], result["rows"]
+    before = reading["peak_before_bytes"]
+    resident_before = reading["resident_before_bytes"]
+    after = reading["peak_after_bytes"]
+    growth = base = unavailable = None
+    if not rows:
+        unavailable = "the block kept no rows"
+    elif before is None or after is None:
+        unavailable = resident.why_not_read()
+    elif after <= before:
+        unavailable = _FLAT_PEAK
+    elif resident_before is not None:
+        growth, base = after - resident_before, "the resident memory before it"
+    elif reading["nth_in_process"] == 1 and reading["own_process"]:
+        growth, base = after - before, "the peak once the worker had set itself up"
+    else:
+        unavailable = (
+            f"the resident memory before the block is not read on "
+            f"{sys.platform}, and the peak before it is that of what the "
+            f"process did earlier"
+        )
+    return {
+        "block": list(result["block"]),
+        "rows": rows,
+        "pid": result.get("pid"),
+        "nth_in_process": reading["nth_in_process"],
+        "peak_before_bytes": before,
+        "resident_before_bytes": resident_before,
+        "peak_after_bytes": after,
+        "growth_bytes": growth,
+        "bytes_per_row": growth / rows if growth is not None else None,
+        "growth_from": base,
+        "unavailable": unavailable,
+    }
+
+
+def _over_every_block(entries: list[dict], estimate: float) -> dict:
+    """What the measured blocks of a run say beside the estimate, the
+    spread of their bytes a kept row and how far the first block sits
+    from the heaviest. None of it is judged."""
+    measured = [e for e in entries if e["bytes_per_row"] is not None]
+    summary = {
+        "blocks": len(entries),
+        "measured": len(measured),
+        "bytes_per_row_min": None,
+        "bytes_per_row_median": None,
+        "bytes_per_row_max": None,
+        "heaviest_block": None,
+        "heaviest_over_estimate": None,
+        "first_over_heaviest": None,
+    }
+    if not measured:
+        return summary
+    per_row = sorted(e["bytes_per_row"] for e in measured)
+    heaviest = max(measured, key=lambda e: e["bytes_per_row"])
+    first = entries[0]["bytes_per_row"]
+    summary.update(
+        bytes_per_row_min=per_row[0],
+        bytes_per_row_median=statistics.median(per_row),
+        bytes_per_row_max=per_row[-1],
+        heaviest_block=heaviest["block"],
+        heaviest_over_estimate=per_row[-1] / estimate if estimate else None,
+        first_over_heaviest=first / per_row[-1] if first is not None else None,
+    )
+    return summary
 
 
 def _growth(
@@ -526,10 +628,12 @@ def _growth(
 
 def _log_block(results: list[dict], n_blocks: int) -> None:
     last = results[-1]
+    per_row = _block_reading(last)["bytes_per_row"]
+    grew = "" if per_row is None else f", {per_row:.0f} bytes a kept row"
     print(
         f"reduce: block {len(results)}/{n_blocks}, row groups "
         f"{last['block'][0]}-{last['block'][1] - 1}, {last['rows']:,} rows, "
-        f"worker peak {last['peak_gb']:.2f}G",
+        f"worker peak {last['peak_gb']:.2f}G{grew}",
         flush=True,
     )
 
@@ -541,7 +645,8 @@ def _init_worker(request: ReduceRequest, own_process: bool = True) -> None:
     """Load what every block needs. ``own_process`` is False where the
     blocks run in the process that planned the run, whose peak resident
     memory is not the worker's own."""
-    _STATE.update(own_process=own_process)
+    # a forked worker starts with the state of the process it came from
+    _STATE.update(own_process=own_process, blocks_read=0)
     targets = leaf_format.TargetTable.read(
         Path(request.leaves_root) / request.targets_file
     )

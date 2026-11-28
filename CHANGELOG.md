@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+**Every block of a reduce is measured and recorded, and only the first
+is judged.** Nothing is refused that was not before. A run then shows
+how much blocks of one size vary from worker to worker and how far the
+first block sits from the heaviest, which is what the tolerance of twice
+the estimate is to be set from, where one measured first block could say
+neither. Each block's entry under `reduce.block_size.every_block` gives
+the readings around it and its own growth, and `over_every_block` the
+spread of the measured blocks' bytes a kept row, the heaviest over the
+estimate and the first over the heaviest. A block's growth is read off
+its process's peak after it, so only a block that took its process to a
+new peak has one. On Linux it is taken from the resident memory before
+the block, VmRSS of `/proc/self/status`, because the peak before a later
+block is that of an earlier one. On macOS, which does not read the
+resident memory of the moment, only a worker's first block has one. Each
+worker's first block and each block that took its worker higher than
+before are measured, and a block lighter than one its worker built
+earlier is recorded without a growth, saying why. The log line of each
+block gives its bytes a kept row.
+
 **On Linux a worker's peak resident memory is read as VmHWM of
 `/proc/self/status`, where it was `ru_maxrss`.** On Linux `ru_maxrss`
 survives an exec, so a worker started by spawn read the peak of the

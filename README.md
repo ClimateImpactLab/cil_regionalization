@@ -647,6 +647,20 @@ the pages it shares with that process as its own, so the peaks under
 alone holds, which errs on the side of the budget. The growth, the
 difference of two peaks that both count those pages, is exact.
 
+Every block is measured and recorded under
+`reduce.block_size.every_block`, and only the first is judged. A block's
+own growth is read off its process's peak after it, so only a block that
+took its process to a new peak has one. On Linux it is taken from the
+resident memory before the block, VmRSS of `/proc/self/status`. On
+macOS, where that is not read, only a worker's first block has one, from
+the peak once the worker had set itself up. So each worker's first block
+is measured, and so is each block that took its worker higher than
+before, while a block lighter than one its worker built earlier has no
+growth and the record says why. `reduce.block_size.over_every_block`
+gives the spread of the measured blocks' bytes a kept row, the heaviest
+over the estimate, and the first over the heaviest. That is what the
+tolerance of twice the estimate is to be set from.
+
 Someone who has measured their own runs can declare the size of a
 block instead, in targets, a whole number of the leaves' row groups:
 

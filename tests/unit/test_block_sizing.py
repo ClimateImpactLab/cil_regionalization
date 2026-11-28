@@ -109,6 +109,94 @@ class TestGrowth:
         assert got["resident_growth_bytes"] == 10
 
 
+def _result(rows=100, before=1000, resident=None, after=1600, nth=2, own=True):
+    return {
+        "block": (4, 5),
+        "rows": rows,
+        "pid": 7,
+        "reading": {
+            "peak_before_bytes": before,
+            "resident_before_bytes": resident,
+            "peak_after_bytes": after,
+            "nth_in_process": nth,
+            "own_process": own,
+        },
+    }
+
+
+class TestEveryBlock:
+    """What `_block_reading` records of each block, none of it judged."""
+
+    def test_a_block_that_raised_the_peak_grew_from_the_resident_memory(self):
+        """Not from the peak before it, which an earlier block set. It went
+        red with the growth taken from that peak, 600 here."""
+        from cil_regionalization.reduce.pandas_blocks import _block_reading
+
+        got = _block_reading(_result(resident=400))
+        assert got["growth_bytes"] == 1200 and got["bytes_per_row"] == 12
+        assert got["growth_from"] == "the resident memory before it"
+        assert got["unavailable"] is None and got["block"] == [4, 5]
+
+    def test_a_block_that_did_not_raise_the_peak_has_no_growth(self):
+        from cil_regionalization.reduce.pandas_blocks import _FLAT_PEAK, _block_reading
+
+        got = _block_reading(_result(resident=400, after=1000))
+        assert got["growth_bytes"] is None and got["unavailable"] == _FLAT_PEAK
+
+    def test_without_the_resident_memory_a_worker_s_first_block_alone(self):
+        """As on macOS. A later block there would have been read from the
+        peak an earlier one set."""
+        from cil_regionalization.reduce.pandas_blocks import _block_reading
+
+        first = _block_reading(_result(nth=1))
+        assert first["growth_bytes"] == 600
+        assert first["growth_from"] == "the peak once the worker had set itself up"
+        later = _block_reading(_result(nth=2))
+        assert later["growth_bytes"] is None
+        assert (
+            "the resident memory before the block is not read" in (later["unavailable"])
+        )
+        planned_in = _block_reading(_result(nth=1, own=False))
+        assert planned_in["growth_bytes"] is None
+
+    def test_a_block_without_rows_or_without_a_reading_has_no_growth(self):
+        from cil_regionalization.reduce.pandas_blocks import _block_reading
+
+        assert _block_reading(_result(rows=0))["unavailable"] == (
+            "the block kept no rows"
+        )
+        assert _block_reading(_result(before=None))["growth_bytes"] is None
+
+    def test_the_summary_of_every_block(self):
+        """Over the measured blocks only, the first being the one that
+        starts the run. The median is not the mean here."""
+        from cil_regionalization.reduce.pandas_blocks import _over_every_block
+
+        entries = [
+            {"block": [0, 1], "bytes_per_row": 100.0},
+            {"block": [1, 2], "bytes_per_row": None},
+            {"block": [2, 3], "bytes_per_row": 400.0},
+            {"block": [3, 4], "bytes_per_row": 200.0},
+        ]
+        assert _over_every_block(entries, 250) == {
+            "blocks": 4,
+            "measured": 3,
+            "bytes_per_row_min": 100.0,
+            "bytes_per_row_median": 200.0,
+            "bytes_per_row_max": 400.0,
+            "heaviest_block": [2, 3],
+            "heaviest_over_estimate": 1.6,
+            "first_over_heaviest": 0.25,
+        }
+
+    def test_a_summary_with_nothing_measured_says_so(self):
+        from cil_regionalization.reduce.pandas_blocks import _over_every_block
+
+        got = _over_every_block([{"block": [0, 1], "bytes_per_row": None}], 250)
+        assert got["blocks"] == 1 and got["measured"] == 0
+        assert got["heaviest_over_estimate"] is None
+
+
 class TestJudged:
     """What `_block_size_record` makes of a first block."""
 
