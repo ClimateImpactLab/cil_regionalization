@@ -58,7 +58,11 @@ def _manifest(**extra) -> dict:
 
 
 def _schema() -> OutputSchema:
-    return OutputSchema(id_fields=("hierid",), weight_names=("pop", "area"))
+    return OutputSchema(
+        id_fields=("hierid",),
+        weight_names=("pop", "area"),
+        normalization="per_destination",
+    )
 
 
 class TestHappyPath:

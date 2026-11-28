@@ -35,7 +35,11 @@ class TestColumnNames:
 
 class TestOutputSchema:
     def test_columns_ordered_ids_cell_weights(self):
-        s = OutputSchema(id_fields=("region_id",), weight_names=("pop", "area"))
+        s = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop", "area"),
+            normalization="per_destination",
+        )
         assert s.columns == (
             "region_id",
             "cell_ix",
@@ -51,7 +55,11 @@ class TestOutputSchema:
         )
 
     def test_multi_id_fields_ordered(self):
-        s = OutputSchema(id_fields=("country", "admin1"), weight_names=("pop",))
+        s = OutputSchema(
+            id_fields=("country", "admin1"),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         assert s.columns[:5] == (
             "country",
             "admin1",
@@ -61,7 +69,11 @@ class TestOutputSchema:
         )
 
     def test_dtypes_match_columns(self):
-        s = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        s = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         d = s.dtypes
         assert set(d.keys()) == set(s.columns)
         assert d["cell_ix"] == "int64"
@@ -70,7 +82,11 @@ class TestOutputSchema:
         assert d["pop_method"] == "string"
 
     def test_empty_frame_has_schema(self):
-        s = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        s = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         df = s.empty_frame()
         assert list(df.columns) == list(s.columns)
         assert len(df) == 0
@@ -78,7 +94,11 @@ class TestOutputSchema:
 
 class TestValidateFrame:
     def test_well_formed_frame_passes(self):
-        s = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        s = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         df = pd.DataFrame(
             {
                 "region_id": pd.array(["A", "B"], dtype="string"),
@@ -94,13 +114,21 @@ class TestValidateFrame:
         s.validate_frame(df)
 
     def test_missing_column_raises(self):
-        s = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        s = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         df = pd.DataFrame({"region_id": ["A"]})
         with pytest.raises(ValueError, match="missing columns"):
             s.validate_frame(df)
 
     def test_dtype_mismatch_raises(self):
-        s = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        s = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         df = pd.DataFrame(
             {
                 "region_id": ["A"],
@@ -138,7 +166,11 @@ class TestSourceUnits:
 
 class TestNormalizationDirection:
     def test_default_is_per_destination_over_id_fields(self):
-        s = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        s = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         assert s.normalization == "per_destination"
         assert s.normalization_group == ("region_id",)
 

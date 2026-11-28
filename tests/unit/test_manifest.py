@@ -19,14 +19,29 @@ def _cfg() -> Config:
     return Config.model_validate(
         {
             "project": {"name": "test"},
-            "regions": {"path": "/tmp/r.shp", "id_fields": ["hierid"]},
-            "grid": {"mode": "generate", "resolution": 1.0},
+            "regions": {
+                "path": "/tmp/r.shp",
+                "id_fields": ["hierid"],
+                "on_invalid_geometry": "repair",
+            },
+            "grid": {
+                "mode": "generate",
+                "resolution": 1.0,
+                "offset": "center",
+                "lon_convention": "[-180,180)",
+            },
             "weights": [
-                {"name": "pop", "raster": "/tmp/pop.tif"},
+                {
+                    "name": "pop",
+                    "raster": "/tmp/pop.tif",
+                    "fallback": "area",
+                    "kind": "point_sum",
+                },
                 {"name": "area"},
             ],
-            "backend": {"kind": "local"},
+            "backend": {"kind": "local", "coverage": "exact_fraction"},
             "output": {"dir": "/tmp/out"},
+            "normalization": "per_destination",
         }
     )
 
@@ -44,7 +59,12 @@ class TestHashing:
         cfg2 = Config.model_validate(
             {
                 **cfg.model_dump(),
-                "grid": {"mode": "generate", "resolution": 0.25},
+                "grid": {
+                    "mode": "generate",
+                    "resolution": 0.25,
+                    "offset": "center",
+                    "lon_convention": "[-180,180)",
+                },
             }
         )
         assert hash_config(cfg) != hash_config(cfg2)

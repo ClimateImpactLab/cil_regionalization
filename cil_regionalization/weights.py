@@ -15,18 +15,17 @@ from cil_regionalization.config import FallbackPolicy, WeightConfig, WeightKind
 @dataclass(frozen=True)
 class WeightSpec:
     name: str
-    fallback: FallbackPolicy
+    # None for the area weight alone, which has no fallback.
+    fallback: FallbackPolicy | None
     raster: str | None
     table: str | None
-    # True if the user wrote `fallback = "..."` in the TOML; False if the
-    # value came from the WeightConfig default. Drives the implicit-
-    # default warning in `apply_fallback`; a fallback firing for many
-    # regions on a defaulted policy probably surprises the user.
-    fallback_explicit: bool = False
-    # How the raster is integrated. "point_sum" (default) sums raw pixel
-    # values; "area_weighted_sum" sums (pixel value * geodesic pixel
-    # area in m^2) and is the crop weight's canonical integration.
-    kind: WeightKind = "point_sum"
+    # How the raster is integrated. "point_sum" sums raw pixel values;
+    # "area_weighted_sum" sums (pixel value * geodesic pixel area in m^2)
+    # and is the crop weight's canonical integration. None for the area
+    # weight alone, which reads no raster.
+    kind: WeightKind | None
+    # The column of the BigQuery table that holds the weight's values.
+    column: str | None = None
 
     @classmethod
     def from_config(cls, cfg: WeightConfig) -> "WeightSpec":
@@ -35,8 +34,8 @@ class WeightSpec:
             fallback=cfg.fallback,
             raster=cfg.raster,
             table=cfg.table,
-            fallback_explicit="fallback" in cfg.model_fields_set,
             kind=cfg.kind,
+            column=cfg.column,
         )
 
     @property

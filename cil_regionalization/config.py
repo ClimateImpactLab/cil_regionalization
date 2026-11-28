@@ -85,7 +85,9 @@ class RegionsConfig(_Strict):
     version: Optional[str] = None
     keep: Optional[dict[str, list[Any]]] = None
     drop: Optional[dict[str, list[Any]]] = None
-    on_invalid_geometry: InvalidGeomPolicy = "repair"
+    # No default: repair changes a region's geometry and skip leaves it
+    # out, so a wrong choice gives other weights with nothing said.
+    on_invalid_geometry: InvalidGeomPolicy
     # NULL geometries in BQ regions tables: error (default, abort and list
     # the offending hierids) or skip (exclude them, record in the manifest
     # under null_geometry_regions). Measured 17 NULL hierids in the s51 IR
@@ -122,8 +124,11 @@ class RegionsConfig(_Strict):
 class GridConfig(_Strict):
     mode: GridMode
     resolution: Optional[float] = None
-    offset: GridOffset = "center"
-    lon_convention: LonConvention = "[-180,180)"
+    # No default for either: a grid at the wrong offset or longitude
+    # origin still covers the regions, so the weights come out on cells
+    # half a cell or a hemisphere from the data's, with nothing said.
+    offset: GridOffset
+    lon_convention: LonConvention
     path: Optional[str] = None
     table: Optional[str] = None
 
@@ -179,7 +184,7 @@ class SourceConfig(_Strict):
     path: str = Field(min_length=1)
     id_fields: list[str] = Field(min_length=1)
     version: str = Field(min_length=1)
-    on_invalid_geometry: InvalidGeomPolicy = "repair"
+    on_invalid_geometry: InvalidGeomPolicy
     on_zero_overlap: Literal["error", "skip"] = "error"
     # A source unit whose intersected geodesic area falls below this
     # share of the unit's own total area is partially covered by the
@@ -196,11 +201,18 @@ class SourceConfig(_Strict):
 
 
 class WeightConfig(_Strict):
+    """One weight of the run. Every weight but ``area`` needs its
+    ``fallback`` and its ``kind``, which have no default, and the area
+    weight takes neither, since its total is the region's own area and it
+    reads no raster. A BigQuery weight names the ``column`` of its
+    ``table`` that holds its values."""
+
     name: str = Field(min_length=1)
     raster: Optional[str] = None
     table: Optional[str] = None
-    fallback: FallbackPolicy = "area"
-    kind: WeightKind = "point_sum"
+    column: Optional[str] = Field(default=None, min_length=1)
+    fallback: Optional[FallbackPolicy] = None
+    kind: Optional[WeightKind] = None
 
 
 class LocalBackendOptions(_Strict):
@@ -316,7 +328,8 @@ class BigQueryBackendOptions(_Strict):
 
 class BackendConfig(_Strict):
     kind: BackendKind
-    coverage: CoverageMode = "exact_fraction"
+    # No default: the two ways of covering a cell give other weights.
+    coverage: CoverageMode
     local: LocalBackendOptions = Field(default_factory=LocalBackendOptions)
     bigquery: BigQueryBackendOptions = Field(default_factory=BigQueryBackendOptions)
 
@@ -373,12 +386,13 @@ class Config(_Strict):
     backend: BackendConfig
     output: OutputConfig
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
-    # Top-level TOML key. Existing configs omit it and keep the
-    # per_destination behavior they were written for. The grid backends
-    # support per_destination only; polygon mode supports both directions
+    # Top-level TOML key, with no default: the two directions are
+    # transposes over the same geometry, and either gives plausible
+    # numbers where the other was meant. The grid backends support
+    # per_destination only; polygon mode supports both directions
     # (per_source is the allocation direction weight files for extensive
     # quantities need).
-    normalization: Normalization = "per_destination"
+    normalization: Normalization
 
     @model_validator(mode="after")
     def _geometry_mode(self) -> "Config":
@@ -450,18 +464,47 @@ class Config(_Strict):
                     raise ValueError(
                         f"weights.{w.name}: 'area' weight does not accept raster or table"
                     )
+                given = [
+                    key
+                    for key in ("fallback", "kind", "column")
+                    if getattr(w, key) is not None
+                ]
+                if given:
+                    raise ValueError(
+                        f"weights.area takes no {_listed(given)}: its total is "
+                        f"the region's own area, which is never zero where the "
+                        f"region has cells, and it reads no raster or table"
+                    )
                 continue
+            missing = [key for key in ("fallback", "kind") if getattr(w, key) is None]
+            if missing:
+                raise ValueError(
+                    f"weights.{w.name} needs "
+                    f"{_listed([f'weights.{w.name}.{key}' for key in missing])}. "
+                    f"fallback says what a region whose {w.name} total is zero "
+                    f"gets, one of area, zero, error or nan, and kind how the "
+                    f"raster is summed, point_sum or area_weighted_sum. Neither "
+                    f"has a default, since a wrong one gives other weights with "
+                    f"nothing said."
+                )
             if self.backend.kind == "local":
                 if w.raster is None:
                     raise ValueError(
                         f"weights.{w.name}: backend.kind='local' requires "
                         f"weights.{w.name}.raster"
                     )
+                if w.column is not None:
+                    raise ValueError(
+                        f"weights.{w.name}.column names a column of a BigQuery "
+                        f"table, and backend.kind='local' reads weights.{w.name}"
+                        f".raster"
+                    )
             else:  # bigquery
-                if w.table is None:
+                if w.table is None or w.column is None:
                     raise ValueError(
                         f"weights.{w.name}: backend.kind='bigquery' requires "
-                        f"weights.{w.name}.table"
+                        f"weights.{w.name}.table and weights.{w.name}.column, the "
+                        f"column of the table that holds the weight's values"
                     )
         return self
 

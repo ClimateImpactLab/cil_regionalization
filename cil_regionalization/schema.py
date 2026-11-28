@@ -106,12 +106,12 @@ def weight_dtypes(name: str) -> dict[str, str]:
 class OutputSchema:
     """Resolved column layout for one run, the id fields, then the source
     units, then three columns for each weight. By default the source
-    units are grid cells and the normalization is per_destination."""
+    units are grid cells. The normalization has no default."""
 
     id_fields: tuple[str, ...]
     weight_names: tuple[str, ...]
+    normalization: Normalization
     source_units: SourceUnits = GRID_CELLS
-    normalization: Normalization = "per_destination"
 
     @property
     def columns(self) -> tuple[str, ...]:

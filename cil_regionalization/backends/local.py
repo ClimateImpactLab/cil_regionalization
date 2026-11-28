@@ -149,6 +149,7 @@ class LocalBackend(WeightsBackend):
                 id_fields,
                 "area",
                 raw_col="raw",
+                normalization=cfg.normalization,
             )
 
             per_weight_frames: list[pd.DataFrame] = [area_native]
@@ -163,7 +164,7 @@ class LocalBackend(WeightsBackend):
                     spec.name,
                     spec.fallback,
                     id_fields,
-                    policy_explicit=spec.fallback_explicit,
+                    normalization=cfg.normalization,
                 )
                 per_weight_frames.append(piece)
 
@@ -325,7 +326,6 @@ class LocalBackend(WeightsBackend):
                     spec.name,
                     spec.fallback,
                     id_fields,
-                    policy_explicit=spec.fallback_explicit,
                     source_units=source_units,
                     normalization=cfg.normalization,
                 )

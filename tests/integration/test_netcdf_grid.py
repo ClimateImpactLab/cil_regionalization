@@ -146,7 +146,14 @@ class TestNamingTheGrid:
         from cil_regionalization.config import GridConfig
 
         path = self._east(tmp_path)
-        spec = GridSpec.from_config(GridConfig(mode="prebuilt", path="x.parquet"))
+        spec = GridSpec.from_config(
+            GridConfig(
+                mode="prebuilt",
+                path="x.parquet",
+                offset="center",
+                lon_convention="[-180,180)",
+            )
+        )
         with pytest.raises(ValueError, match="generated grid"):
             cilreg.read_netcdf_grid(path, ["tas"], grid=spec)
 
@@ -234,6 +241,7 @@ class TestWithApplyWeights:
             id_fields=["region"],
             weights={"pop": "popwt"},
             source=grid,
+            normalization="per_destination",
         )
 
     def test_weighted_mean_of_the_file(self, tmp_path):

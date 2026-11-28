@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+**A weights config states every choice whose wrong value gives another
+number, as the quantile method and the summation already do.** The rule:
+a default that fails loudly when it is wrong is fine, and a default that
+silently produces a different number is not. So these have no default
+any more, and a config that leaves one out is refused naming it:
+`normalization`, which was `"per_destination"`; `weights[].fallback`,
+which was `"area"`; `weights[].kind`, which was `"point_sum"`;
+`backend.coverage`, which was `"exact_fraction"`;
+`regions.on_invalid_geometry` and `source.on_invalid_geometry`, which
+were `"repair"`; and `grid.offset` and `grid.lon_convention`, which were
+`"center"` and `"[-180,180)"`. The last two matter most. A grid at the
+wrong offset or longitude origin still covers the regions, so the
+weights came out on other cells with nothing said, the error the
+BigQuery backend has refused for an edge-offset grid since #34. The area
+weight takes neither `fallback` nor `kind`, since its total is the
+region's own area and it reads no raster, and it refuses them as it
+refuses a raster or table.
+
+The library's own copies of the normalization default follow what the
+caller says. `WeightsArtifact.from_table`, `compute_native_weights`,
+`apply_fallback`, `Manifest` and `OutputSchema` take it with no default,
+and `WeightsArtifact.load` refuses a weights manifest that does not
+record it, where it read one as `"per_destination"`. The warning when
+the fallback fired often under a policy left unstated goes with that
+default, `_IMPLICIT_DEFAULT_FRAC` and `_IMPLICIT_DEFAULT_MIN` too. It
+announced that an unstated default had fired, and `weight_share`
+measures how much of a target's basis contributed, which is the same
+information. The BigQuery backend read a weight named `pop` from the
+column `population` of its table and any other weight from the column of
+its own name. That was one table's layout and not a rule, so a BigQuery
+weight now declares `weights[].column` beside `weights[].table`, and a
+local weight refuses one.
+
+Left alone, and why. `read_gmst` and `[stats.warming_levels]` keep
+`time_col`, `value_col` and `sep`, because a wrong value there fails to
+find a column and stops. `from_table` keeps recognising coordinate
+columns by name, because it refuses ambiguity and checks the values
+against the grid. And every default that refuses stays,
+`on_null_geometry`, `on_unknown_id`, `on_zero_overlap`, `on_unmatched`,
+`on_zero_weight` and `on_absent_from_data`, because a default that
+refuses chooses nothing in silence.
+
+This breaks every weights config that relied on one of the defaults. The
+configs and examples of this repository state the values their defaults
+gave them, so none of their numbers moves. The recipes repository,
+pinned on v0.5.0, needs the same keys when its pin moves, where it
+already changes for the quantile method, the summation, the declared
+members and the model weight names. The config hash a weights manifest
+records changes for every config, the same values included, since a
+weight now holds its column and the area weight no fallback or kind, so
+a hash from an earlier run does not match one written now.
+
 **Every block of a reduce is measured and recorded, and only the first
 is judged.** Nothing is refused that was not before. A run then shows
 how much blocks of one size vary from worker to worker and how far the

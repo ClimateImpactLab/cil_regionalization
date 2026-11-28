@@ -60,7 +60,9 @@ class TestNative:
         raw = raw.loc[raw["region_id"] != "B"].copy()
         raw["region_id"] = pd.Categorical(raw["region_id"], categories=["A"])
         area = area.loc[area["region_id"] == "A"].copy()
-        out = apply_fallback(raw, area, "pop", "area", ["region_id"])
+        out = apply_fallback(
+            raw, area, "pop", "area", ["region_id"], normalization="per_destination"
+        )
         sums = out.groupby("region_id")["popwt"].sum()
         assert sums.loc["A"] == pytest.approx(1.0)
         assert (out["pop_method"] == "native").all()
@@ -69,7 +71,9 @@ class TestNative:
         raw = _raw_frame_AB_only()
         area = _area_frame()
         # A has cell (1,0) with raw=0; should appear in output with weight 0
-        out = apply_fallback(raw, area, "pop", "area", ["region_id"])
+        out = apply_fallback(
+            raw, area, "pop", "area", ["region_id"], normalization="per_destination"
+        )
         a_rows = out.loc[out["region_id"] == "A"].sort_values(["cell_ix", "cell_iy"])
         assert len(a_rows) == 3
         # raw values 100, 100, 0 → weights 0.5, 0.5, 0
@@ -82,6 +86,7 @@ class TestNative:
             ["region_id"],
             "area",
             raw_col="raw",
+            normalization="per_destination",
         )
         sums = out.groupby("region_id")["areawt"].sum()
         for region in ["A", "B", "C"]:
@@ -93,7 +98,9 @@ class TestFallbackArea:
     def test_zero_raw_region_falls_back_to_area(self):
         raw = _raw_frame_AB_only()
         area = _area_frame()
-        out = apply_fallback(raw, area, "pop", "area", ["region_id"])
+        out = apply_fallback(
+            raw, area, "pop", "area", ["region_id"], normalization="per_destination"
+        )
         c_rows = out.loc[out["region_id"] == "C"]
         # C has no raw at all → falls back to area weights (0.5, 0.5)
         assert (c_rows["pop_method"] == "area_fallback").all()
@@ -103,7 +110,9 @@ class TestFallbackArea:
     def test_native_and_fallback_in_same_output(self):
         raw = _raw_frame_AB_only()
         area = _area_frame()
-        out = apply_fallback(raw, area, "pop", "area", ["region_id"])
+        out = apply_fallback(
+            raw, area, "pop", "area", ["region_id"], normalization="per_destination"
+        )
         # A, B: native; C: area_fallback
         methods = out.groupby("region_id")["pop_method"].first()
         assert methods.loc["A"] == "native"
@@ -115,7 +124,9 @@ class TestFallbackZero:
     def test_zero_raw_region_gets_zero_weights(self):
         raw = _raw_frame_AB_only()
         area = _area_frame()
-        out = apply_fallback(raw, area, "pop", "zero", ["region_id"])
+        out = apply_fallback(
+            raw, area, "pop", "zero", ["region_id"], normalization="per_destination"
+        )
         c_rows = out.loc[out["region_id"] == "C"]
         assert (c_rows["pop_method"] == "zero").all()
         assert (c_rows["popwt"] == 0.0).all()
@@ -128,7 +139,9 @@ class TestFallbackNan:
     def test_zero_raw_region_gets_nan_weights(self):
         raw = _raw_frame_AB_only()
         area = _area_frame()
-        out = apply_fallback(raw, area, "pop", "nan", ["region_id"])
+        out = apply_fallback(
+            raw, area, "pop", "nan", ["region_id"], normalization="per_destination"
+        )
         c_rows = out.loc[out["region_id"] == "C"]
         assert (c_rows["pop_method"] == "nan").all()
         assert c_rows["popwt"].isna().all()
@@ -161,122 +174,15 @@ class TestFallbackNan:
                 "pop_method",
             ],
         )
-        schema = OutputSchema(id_fields=("region_id",), weight_names=("pop",))
+        schema = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop",),
+            normalization="per_destination",
+        )
         report = check_sum_to_one(df, schema)
         assert report.ok, (
             f"NaN regions must not be flagged; failures: {report.failures}"
         )
-
-
-class TestImplicitDefaultWarning:
-    def test_implicit_default_warns_when_threshold_crossed(self, caplog):
-        """When the fallback fires for >= max(5, 5% of regions) and the
-        policy was not set explicitly in TOML, log a WARN naming the
-        applied default + alternatives."""
-        # Build 20 regions; 10 of them have zero raw.
-        area_rows = []
-        raw_rows = []
-        for i in range(20):
-            rid = f"R{i:02d}"
-            area_rows.append((rid, i, 0, float(i), float(0), 1.0, 1e9))
-            if i < 10:
-                # zero raw -> fallback fires
-                pass
-            else:
-                raw_rows.append((rid, i, 0, 100.0))
-        area = pd.DataFrame(
-            area_rows,
-            columns=[
-                "region_id",
-                "cell_ix",
-                "cell_iy",
-                "cell_lon",
-                "cell_lat",
-                "areawt",
-                "area_raw",
-            ],
-        )
-        raw = pd.DataFrame(
-            raw_rows,
-            columns=["region_id", "cell_ix", "cell_iy", "raw"],
-        )
-
-        with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
-            apply_fallback(
-                raw,
-                area,
-                "pop",
-                "area",
-                ["region_id"],
-                policy_explicit=False,
-            )
-        msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
-        assert any("library default" in m for m in msgs)
-        assert any("[area | zero | error | nan]" in m for m in msgs)
-        assert any("weights.pop" in m for m in msgs)
-        assert any("Set weights.pop.fallback" in m for m in msgs)
-
-    def test_explicit_policy_does_not_warn(self, caplog):
-        """If the user wrote `fallback = "area"` in TOML, no warning
-        even with the same fallback-fire pattern."""
-        area = pd.DataFrame(
-            [(f"R{i}", i, 0, float(i), 0.0, 1.0, 1e9) for i in range(20)],
-            columns=[
-                "region_id",
-                "cell_ix",
-                "cell_iy",
-                "cell_lon",
-                "cell_lat",
-                "areawt",
-                "area_raw",
-            ],
-        )
-        raw = pd.DataFrame(
-            [(f"R{i}", i, 0, 100.0) for i in range(10, 20)],
-            columns=["region_id", "cell_ix", "cell_iy", "raw"],
-        )
-        with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
-            apply_fallback(
-                raw,
-                area,
-                "pop",
-                "area",
-                ["region_id"],
-                policy_explicit=True,
-            )
-        warn_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
-        assert not any("library default" in m for m in warn_msgs)
-
-    def test_implicit_default_below_threshold_does_not_warn(self, caplog):
-        """1 fallback region out of 20 is below the max(5, 5%) threshold."""
-        area = pd.DataFrame(
-            [(f"R{i}", i, 0, float(i), 0.0, 1.0, 1e9) for i in range(20)],
-            columns=[
-                "region_id",
-                "cell_ix",
-                "cell_iy",
-                "cell_lon",
-                "cell_lat",
-                "areawt",
-                "area_raw",
-            ],
-        )
-        # 19 regions with raw, only R0 falls back
-        raw = pd.DataFrame(
-            [(f"R{i}", i, 0, 100.0) for i in range(1, 20)],
-            columns=["region_id", "cell_ix", "cell_iy", "raw"],
-        )
-        with caplog.at_level("WARNING", logger="cil_regionalization.fallback"):
-            apply_fallback(
-                raw,
-                area,
-                "pop",
-                "area",
-                ["region_id"],
-                policy_explicit=False,
-            )
-        warn_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
-        assert not any("library default" in m for m in warn_msgs)
 
 
 class TestFallbackError:
@@ -284,7 +190,14 @@ class TestFallbackError:
         raw = _raw_frame_AB_only()
         area = _area_frame()
         with pytest.raises(ValueError) as exc:
-            apply_fallback(raw, area, "pop", "error", ["region_id"])
+            apply_fallback(
+                raw,
+                area,
+                "pop",
+                "error",
+                ["region_id"],
+                normalization="per_destination",
+            )
         msg = str(exc.value)
         assert "pop" in msg
         assert "C" in msg
@@ -302,7 +215,9 @@ class TestDegenerateArea:
             columns=["region_id", "cell_ix", "cell_iy", "raw"],
         )
         with pytest.raises(ValueError) as exc:
-            apply_fallback(raw, area, "pop", "area", ["region_id"])
+            apply_fallback(
+                raw, area, "pop", "area", ["region_id"], normalization="per_destination"
+            )
         assert "zero total area" in str(exc.value)
         assert "C" in str(exc.value)
 
@@ -325,14 +240,22 @@ class TestUnknownPolicy:
             ],
         )
         with pytest.raises(ValueError, match="B"):
-            compute_native_weights(area, ["region_id"], "area", raw_col="raw")
+            compute_native_weights(
+                area,
+                ["region_id"],
+                "area",
+                raw_col="raw",
+                normalization="per_destination",
+            )
 
 
 class TestCountMethods:
     def test_method_counts_per_region(self):
         raw = _raw_frame_AB_only()
         area = _area_frame()
-        out = apply_fallback(raw, area, "pop", "area", ["region_id"])
+        out = apply_fallback(
+            raw, area, "pop", "area", ["region_id"], normalization="per_destination"
+        )
         counts = count_methods(out, "pop")
         # 2 native regions (A, B), 1 area_fallback (C)
         assert counts == {"native": 2, "area_fallback": 1}

@@ -18,6 +18,7 @@ description = "IR to GADM 2.0 ADM2 allocation weights, full global run"
 path = "../../data/targets/gadm20/adm2.parquet"
 id_fields = ["ISO", "ID_1", "ID_2"]
 version = "gadm-2.0-impactmap-copy-2025"
+on_invalid_geometry = "repair"
 
 
 [source]
@@ -37,6 +38,7 @@ name = "pop"
 # it with the path to your copy.
 raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
 fallback = "area"
+kind = "point_sum"
 
 [[weights]]
 name = "area"

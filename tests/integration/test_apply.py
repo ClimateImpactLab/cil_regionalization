@@ -657,14 +657,16 @@ class TestArtifactRoundTrip:
                     "path": str(tp),
                     "id_fields": ["target_id"],
                     "version": "targets-v1",
+                    "on_invalid_geometry": "repair",
                 },
                 "source": {
                     "path": str(sp),
                     "id_fields": ["unit_id"],
                     "version": SOURCE_VERSION,
+                    "on_invalid_geometry": "repair",
                 },
                 "weights": [{"name": "area"}],
-                "backend": {"kind": "local"},
+                "backend": {"kind": "local", "coverage": "exact_fraction"},
                 "output": {"dir": str(tmp_path / "out")},
                 "normalization": "per_source",
             }

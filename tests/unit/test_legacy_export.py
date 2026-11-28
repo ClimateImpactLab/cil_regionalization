@@ -146,7 +146,11 @@ def _three_region_frame() -> pd.DataFrame:
 def _result_for(weight_names: tuple[str, ...]) -> _StubResult:
     return _StubResult(
         frame=_three_region_frame(),
-        schema=OutputSchema(id_fields=("hierid",), weight_names=weight_names),
+        schema=OutputSchema(
+            id_fields=("hierid",),
+            weight_names=weight_names,
+            normalization="per_destination",
+        ),
     )
 
 
@@ -226,6 +230,7 @@ class TestMissingInputs:
             schema=OutputSchema(
                 id_fields=("region_id",),
                 weight_names=("area", "crop", "pop"),
+                normalization="per_destination",
             ),
         )
         with pytest.raises(ValueError, match="hierid"):

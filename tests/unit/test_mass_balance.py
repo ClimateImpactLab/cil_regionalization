@@ -225,6 +225,7 @@ class TestEnforceSourcePolicies:
             grid_resolution=1.0,
             package_versions={},
             python_version="3",
+            normalization="per_destination",
         )
         policies = SourceUnitPolicies(
             on_unmatched="skip", on_zero_weight="skip", on_absent_from_data="skip"
@@ -249,6 +250,7 @@ class TestEnforceSourcePolicies:
             grid_resolution=1.0,
             package_versions={},
             python_version="3",
+            normalization="per_destination",
         )
         with pytest.raises(ValueError):
             enforce_source_policies(self._coverage(), SourceUnitPolicies(), manifest)

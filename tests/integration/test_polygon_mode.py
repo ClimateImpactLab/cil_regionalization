@@ -112,16 +112,23 @@ def _cfg(
                 "path": str(targets_path),
                 "id_fields": target_id_fields,
                 "version": "synthetic-targets-v1",
+                "on_invalid_geometry": "repair",
             },
             "source": {
                 "path": str(source_path),
                 "id_fields": ["unit_id"],
                 "version": "synthetic-units-v1",
                 "on_zero_overlap": on_zero_overlap,
+                "on_invalid_geometry": "repair",
             },
             "weights": weights
             or [
-                {"name": "pop", "raster": str(_POP_RASTER), "fallback": "area"},
+                {
+                    "name": "pop",
+                    "raster": str(_POP_RASTER),
+                    "fallback": "area",
+                    "kind": "point_sum",
+                },
                 {"name": "area"},
             ],
             "backend": {"kind": "local", "coverage": coverage},
@@ -268,7 +275,12 @@ class TestAllWeightKinds:
                 "kind": "area_weighted_sum",
                 "fallback": "nan",
             },
-            {"name": "pop", "raster": str(_POP_RASTER), "fallback": "area"},
+            {
+                "name": "pop",
+                "raster": str(_POP_RASTER),
+                "fallback": "area",
+                "kind": "point_sum",
+            },
             {"name": "area"},
         ]
 
@@ -423,20 +435,28 @@ class TestConfigModes:
                 "path": str(targets_level1),
                 "id_fields": ["target_id"],
                 "version": "v1",
+                "on_invalid_geometry": "repair",
             },
             "source": {
                 "path": str(source_units),
                 "id_fields": ["unit_id"],
                 "version": "v1",
+                "on_invalid_geometry": "repair",
             },
             "weights": [{"name": "area"}],
-            "backend": {"kind": "local"},
+            "backend": {"kind": "local", "coverage": "exact_fraction"},
             "output": {"dir": "unused"},
+            "normalization": "per_destination",
         }
 
     def test_grid_and_source_mutually_exclusive(self, targets_level1, source_units):
         data = self._base(targets_level1, source_units)
-        data["grid"] = {"mode": "generate", "resolution": 1.0}
+        data["grid"] = {
+            "mode": "generate",
+            "resolution": 1.0,
+            "offset": "center",
+            "lon_convention": "[-180,180)",
+        }
         with pytest.raises(ValueError, match="mutually exclusive"):
             Config.model_validate(data)
 
@@ -478,23 +498,27 @@ name = "polygon_cli_test"
 path = "{targets_level1}"
 id_fields = ["target_id"]
 version = "synthetic-targets-v1"
+on_invalid_geometry = "repair"
 
 [source]
 path = "{source_units}"
 id_fields = ["unit_id"]
 version = "synthetic-units-v1"
+on_invalid_geometry = "repair"
 on_zero_overlap = "skip"
 
 [[weights]]
 name = "pop"
 raster = "{_POP_RASTER}"
 fallback = "area"
+kind = "point_sum"
 
 [[weights]]
 name = "area"
 
 [backend]
 kind = "local"
+coverage = "exact_fraction"
 
 [output]
 dir = "{out_dir}"

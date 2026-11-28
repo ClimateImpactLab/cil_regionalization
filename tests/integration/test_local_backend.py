@@ -44,7 +44,11 @@ def _cfg(
     return Config.model_validate(
         {
             "project": {"name": "test"},
-            "regions": {"path": str(regions_path), "id_fields": ["region_id"]},
+            "regions": {
+                "path": str(regions_path),
+                "id_fields": ["region_id"],
+                "on_invalid_geometry": "repair",
+            },
             "grid": {
                 "mode": "generate",
                 "resolution": 1.0,
@@ -56,11 +60,13 @@ def _cfg(
                     "name": "pop",
                     "raster": str(raster_path),
                     "fallback": pop_fallback,
+                    "kind": "point_sum",
                 },
                 {"name": "area"},
             ],
             "backend": {"kind": "local", "coverage": coverage},
             "output": {"dir": str(output_dir)},
+            "normalization": "per_destination",
         }
     )
 
@@ -85,7 +91,11 @@ class TestExactFractionEnd2End:
     ):
         cfg = _cfg(three_region_geoparquet, synthetic_raster, tmp_path)
         result = _run(cfg)
-        expected = OutputSchema(id_fields=("region_id",), weight_names=("pop", "area"))
+        expected = OutputSchema(
+            id_fields=("region_id",),
+            weight_names=("pop", "area"),
+            normalization="per_destination",
+        )
         assert list(result.frame.columns) == list(expected.columns)
         expected.validate_frame(result.frame)
 
@@ -260,6 +270,7 @@ class TestAreaWeightedCropWeight:
                 "regions": {
                     "path": str(regions_path),
                     "id_fields": ["region_id"],
+                    "on_invalid_geometry": "repair",
                 },
                 "grid": {
                     "mode": "generate",
@@ -278,6 +289,7 @@ class TestAreaWeightedCropWeight:
                 ],
                 "backend": {"kind": "local", "coverage": "exact_fraction"},
                 "output": {"dir": str(out_dir)},
+                "normalization": "per_destination",
             }
         )
 
@@ -413,6 +425,7 @@ class TestAntimeridianSplitting:
                 "regions": {
                     "path": str(regions_path),
                     "id_fields": ["region_id"],
+                    "on_invalid_geometry": "repair",
                 },
                 "grid": {
                     "mode": "generate",
@@ -425,11 +438,13 @@ class TestAntimeridianSplitting:
                         "name": "pop",
                         "raster": str(raster_path),
                         "fallback": "area",
+                        "kind": "point_sum",
                     },
                     {"name": "area"},
                 ],
                 "backend": {"kind": "local", "coverage": "exact_fraction"},
                 "output": {"dir": str(out_dir)},
+                "normalization": "per_destination",
             }
         )
 
@@ -901,12 +916,15 @@ class TestCliLegacyCsv:
         cfg_path = tmp_path / "cfg.toml"
         cfg_path.write_text(
             f"""
+normalization = "per_destination"
+
 [project]
 name = "legacy_csv_test"
 
 [regions]
 path = "{regions_path}"
 id_fields = ["hierid"]
+on_invalid_geometry = "repair"
 
 [grid]
 mode = "generate"
@@ -924,6 +942,7 @@ fallback = "nan"
 name = "pop"
 raster = "{synthetic_raster}"
 fallback = "area"
+kind = "point_sum"
 
 [[weights]]
 name = "area"
@@ -960,11 +979,13 @@ format = "parquet"
 def _write_toml(path: Path, cfg: Config) -> None:
     """Render a Config back to a minimal TOML so the CLI can load it."""
     lines: list[str] = []
+    lines.append(f'normalization = "{cfg.normalization}"')
     lines.append("[project]")
     lines.append(f'name = "{cfg.project.name}"')
     lines.append("[regions]")
     lines.append(f'path = "{cfg.regions.path}"')
     lines.append(f"id_fields = {list(cfg.regions.id_fields)!r}")
+    lines.append(f'on_invalid_geometry = "{cfg.regions.on_invalid_geometry}"')
     lines.append("[grid]")
     lines.append(f'mode = "{cfg.grid.mode}"')
     lines.append(f"resolution = {cfg.grid.resolution}")
@@ -975,8 +996,9 @@ def _write_toml(path: Path, cfg: Config) -> None:
         lines.append(f'name = "{w.name}"')
         if w.raster is not None:
             lines.append(f'raster = "{w.raster}"')
-        if w.fallback != "area":
-            lines.append(f'fallback = "{w.fallback}"')
+        for key in ("fallback", "kind"):
+            if getattr(w, key) is not None:
+                lines.append(f'{key} = "{getattr(w, key)}"')
     lines.append("[backend]")
     lines.append(f'kind = "{cfg.backend.kind}"')
     lines.append(f'coverage = "{cfg.backend.coverage}"')

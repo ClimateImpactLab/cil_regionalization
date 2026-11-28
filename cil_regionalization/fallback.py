@@ -14,15 +14,9 @@ A group whose raw total is zero follows the weight's fallback policy.
 them weight NaN and the method ``"nan"``, and the sum-to-one check
 passes the group over. ``"error"`` raises, naming the groups. A group
 whose total area is zero raises under every policy.
-
-When the policy was not set in the config and the fallback fires for at
-least max(5, 5% of the groups), `apply_fallback` logs a warning naming the
-default and the alternatives.
 """
 
 from __future__ import annotations
-
-import logging
 
 import pandas as pd
 
@@ -34,13 +28,6 @@ from cil_regionalization.schema import (
     raw_column,
     weight_column,
 )
-
-
-logger = logging.getLogger(__name__)
-
-
-_IMPLICIT_DEFAULT_FRAC = 0.05
-_IMPLICIT_DEFAULT_MIN = 5
 
 
 def _group_fields(
@@ -64,8 +51,8 @@ def compute_native_weights(
     weight_name: str,
     raw_col: str = "raw",
     *,
+    normalization: Normalization,
     source_units: SourceUnits = GRID_CELLS,
-    normalization: Normalization = "per_destination",
 ) -> pd.DataFrame:
     """Each row's ``raw_col`` divided by its group's total, as the weight,
     raw and method columns of ``weight_name``, with every method
@@ -114,9 +101,8 @@ def apply_fallback(
     id_fields: list[str],
     raw_col: str = "raw",
     *,
-    policy_explicit: bool = True,
+    normalization: Normalization,
     source_units: SourceUnits = GRID_CELLS,
-    normalization: Normalization = "per_destination",
 ) -> pd.DataFrame:
     """Weights for ``weight_name``, each raw value divided by its group's
     total, with the groups whose total is zero handled by ``policy``.
@@ -124,9 +110,8 @@ def apply_fallback(
     The output has one row per row of ``area_weights``, which holds the id
     fields, the source columns, ``areawt`` and ``area_raw``.
     ``raw_per_cell`` holds the id fields, the source key columns and
-    ``raw_col``, and a row it leaves out counts as raw 0.
-    ``policy_explicit`` says whether the config set the policy. Only an
-    unset policy logs the warning. Raises if a column is missing, if
+    ``raw_col``, and a row it leaves out counts as raw 0. Raises if a
+    column is missing, if
     ``raw_per_cell`` has a group that ``area_weights`` lacks, if a group's
     total area is zero, or if a group falls back under ``"error"``.
     """
@@ -212,27 +197,6 @@ def apply_fallback(
             fb["_method"] = "nan"
         else:  # pragma: no cover
             raise ValueError(f"unhandled fallback policy: {policy}")
-
-    n_fallback_groups = len(fallback_group_ids)
-    n_total_groups = group_totals.shape[0]
-    if (
-        n_fallback_groups > 0
-        and not policy_explicit
-        and n_fallback_groups
-        >= max(_IMPLICIT_DEFAULT_MIN, int(_IMPLICIT_DEFAULT_FRAC * n_total_groups))
-    ):
-        logger.warning(
-            "weights.%s: fallback policy %r fired for %d of %d groups "
-            "(%.1f%%); this is the library default. Alternatives: "
-            "[area | zero | error | nan]. Set weights.%s.fallback "
-            "explicitly in the config to silence this warning.",
-            weight_name,
-            policy,
-            n_fallback_groups,
-            n_total_groups,
-            100.0 * n_fallback_groups / max(1, n_total_groups),
-            weight_name,
-        )
 
     out = pd.concat([native, fb], ignore_index=True)
     out = out.rename(

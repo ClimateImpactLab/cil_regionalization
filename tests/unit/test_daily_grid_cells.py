@@ -114,7 +114,11 @@ def test_feeds_apply_weights_on_the_right_regions():
         }
     )
     weights = cilreg.WeightsArtifact.from_table(
-        table, id_fields=["region"], weights={"w": "share"}, source=BCSD_GRID
+        table,
+        id_fields=["region"],
+        weights={"w": "share"},
+        source=BCSD_GRID,
+        normalization="per_destination",
     )
     out = cilreg.apply_weights(
         weights,

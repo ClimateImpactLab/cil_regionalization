@@ -124,8 +124,8 @@ WeightsArtifact.from_table(
     id_fields: Sequence[str],
     weights: Mapping[str, str],
     source: str,
+    normalization: str,
     source_keys: Sequence[str] | None = None,
-    normalization: str = 'per_destination',
     regions_version: str | None = None,
     check: bool = True,
     tolerance: float = 1e-06,
@@ -283,13 +283,13 @@ cell is masked in some slices and not others.
 class OutputSchema:
     id_fields: tuple[str, ...]
     weight_names: tuple[str, ...]
+    normalization: Normalization
     source_units: SourceUnits = GRID_CELLS
-    normalization: Normalization = 'per_destination'
 ```
 
 Resolved column layout for one run, the id fields, then the source
 units, then three columns for each weight. By default the source
-units are grid cells and the normalization is per_destination.
+units are grid cells. The normalization has no default.
 
 #### `OutputSchema.columns`
 
@@ -1126,7 +1126,7 @@ written.
 
 | key | type | default |
 | --- | --- | --- |
-| `normalization` | "per_destination" or "per_source" | "per_destination" |
+| `normalization` | "per_destination" or "per_source" | required |
 
 ### `[project]`
 
@@ -1149,7 +1149,7 @@ Required.
 | `version` | str | not set |
 | `keep` | dict[str, list[any]] | not set |
 | `drop` | dict[str, list[any]] | not set |
-| `on_invalid_geometry` | "repair" or "skip" or "error" | "repair" |
+| `on_invalid_geometry` | "repair" or "skip" or "error" | required |
 | `on_null_geometry` | "error" or "skip" | "error" |
 | `on_unknown_id` | "error" or "skip" | "error" |
 
@@ -1161,8 +1161,8 @@ Can be left out.
 | --- | --- | --- |
 | `mode` | "generate" or "prebuilt" | required |
 | `resolution` | float | not set |
-| `offset` | "center" or "edge" | "center" |
-| `lon_convention` | "[-180,180)" or "[0,360)" | "[-180,180)" |
+| `offset` | "center" or "edge" | required |
+| `lon_convention` | "[-180,180)" or "[0,360)" | required |
 | `path` | str | not set |
 | `table` | str | not set |
 
@@ -1191,7 +1191,7 @@ regional subset of targets should expect such units and set "skip".
 | `path` | str, not empty | required |
 | `id_fields` | list[str], not empty | required |
 | `version` | str, not empty | required |
-| `on_invalid_geometry` | "repair" or "skip" or "error" | "repair" |
+| `on_invalid_geometry` | "repair" or "skip" or "error" | required |
 | `on_zero_overlap` | "error" or "skip" | "error" |
 | `coverage_threshold` | float, above 0, at most 1 | 0.999 |
 
@@ -1199,13 +1199,20 @@ regional subset of targets should expect such units and set "skip".
 
 A list of tables, each with these keys.
 
+One weight of the run. Every weight but ``area`` needs its
+``fallback`` and its ``kind``, which have no default, and the area
+weight takes neither, since its total is the region's own area and it
+reads no raster. A BigQuery weight names the ``column`` of its
+``table`` that holds its values.
+
 | key | type | default |
 | --- | --- | --- |
 | `name` | str, not empty | required |
 | `raster` | str | not set |
 | `table` | str | not set |
-| `fallback` | "area" or "zero" or "error" or "nan" | "area" |
-| `kind` | "point_sum" or "area_weighted_sum" | "point_sum" |
+| `column` | str, not empty | not set |
+| `fallback` | "area" or "zero" or "error" or "nan" | not set |
+| `kind` | "point_sum" or "area_weighted_sum" | not set |
 
 ### `[backend]`
 
@@ -1214,7 +1221,7 @@ Required.
 | key | type | default |
 | --- | --- | --- |
 | `kind` | "local" or "bigquery" | required |
-| `coverage` | "exact_fraction" or "pixel_centroid" | "exact_fraction" |
+| `coverage` | "exact_fraction" or "pixel_centroid" | required |
 
 ### `[backend.local]`
 

@@ -18,6 +18,7 @@ description = "IR to GADM 4.1 adm1 weights, per_destination; not interchangeable
 path = "../../data/targets/gadm41/adm1.parquet"
 id_fields = ["GID_0", "GID_1"]
 version = "gadm-4.10-impactmap-copy-2022"
+on_invalid_geometry = "repair"
 
 [source]
 # The impact region shapefile, published at 10.5281/zenodo.21934131.
@@ -36,6 +37,7 @@ name = "pop"
 # it with the path to your copy.
 raster = "/project/cil/gcp/social/population/gpw_v4r10_unwpp_2015/raster_geotiff/gpw_v4r10_unwpp_2015_30ss.tif"
 fallback = "area"
+kind = "point_sum"
 
 [[weights]]
 name = "area"

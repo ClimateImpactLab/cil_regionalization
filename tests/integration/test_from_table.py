@@ -32,7 +32,12 @@ GRID = "grid-0.25deg-center-[-180,180)"
 
 
 def _from_fixture(**kwargs) -> WeightsArtifact:
-    opts = dict(id_fields=["hierid"], weights={"pop": "popwt"}, source=GRID)
+    opts = dict(
+        id_fields=["hierid"],
+        weights={"pop": "popwt"},
+        source=GRID,
+        normalization="per_destination",
+    )
     opts.update(kwargs)
     return WeightsArtifact.from_table(FIXTURE, **opts)
 
@@ -70,7 +75,14 @@ class TestGridTable:
 
     def test_derived_cells_match_grid_math(self):
         f = _from_fixture().frame
-        spec = GridSpec.from_config(GridConfig(mode="generate", resolution=0.25))
+        spec = GridSpec.from_config(
+            GridConfig(
+                mode="generate",
+                resolution=0.25,
+                offset="center",
+                lon_convention="[-180,180)",
+            )
+        )
         lon = np.where(
             f["pix_cent_x"] >= 180.0, f["pix_cent_x"] - 360.0, f["pix_cent_x"]
         )
@@ -91,7 +103,11 @@ class TestGridTable:
             columns={"pix_cent_x": lon_name, "pix_cent_y": lat_name}
         )
         art = WeightsArtifact.from_table(
-            df, id_fields=["hierid"], weights={"pop": "popwt"}, source=GRID
+            df,
+            id_fields=["hierid"],
+            weights={"pop": "popwt"},
+            source=GRID,
+            normalization="per_destination",
         )
         ref = _from_fixture().frame
         assert art.frame["cell_ix"].tolist() == ref["cell_ix"].tolist()
@@ -106,6 +122,7 @@ class TestGridTable:
             id_fields=["hierid"],
             weights={"pop": "pop_share", "area": "area_share"},
             source=GRID,
+            normalization="per_destination",
         )
         assert art.schema.weight_names == ("pop", "area")
         assert {"popwt", "areawt"} <= set(art.frame.columns)
@@ -115,14 +132,22 @@ class TestGridTable:
         df = pd.read_csv(FIXTURE).assign(pop_share=lambda d: d["popwt"])
         with pytest.raises(ValueError, match="would overwrite"):
             WeightsArtifact.from_table(
-                df, id_fields=["hierid"], weights={"pop": "pop_share"}, source=GRID
+                df,
+                id_fields=["hierid"],
+                weights={"pop": "pop_share"},
+                source=GRID,
+                normalization="per_destination",
             )
 
     def test_parquet_reads_the_same(self, tmp_path):
         p = tmp_path / "w.parquet"
         pd.read_csv(FIXTURE).to_parquet(p, index=False)
         a = WeightsArtifact.from_table(
-            p, id_fields=["hierid"], weights={"pop": "popwt"}, source=GRID
+            p,
+            id_fields=["hierid"],
+            weights={"pop": "popwt"},
+            source=GRID,
+            normalization="per_destination",
         )
         b = _from_fixture()
         cols = ["hierid", "cell_ix", "cell_iy", "popwt"]
@@ -141,7 +166,11 @@ class TestGridTable:
             }
         ).to_csv(p, index=False)
         art = WeightsArtifact.from_table(
-            p, id_fields=["code"], weights={"pop": "w"}, source=GRID
+            p,
+            id_fields=["code"],
+            weights={"pop": "w"},
+            source=GRID,
+            normalization="per_destination",
         )
         assert art.frame["code"].tolist() == ["001", "002"]
 
@@ -150,7 +179,11 @@ class TestGridTable:
         p.write_text("x")
         with pytest.raises(ValueError, match="cannot tell the format"):
             WeightsArtifact.from_table(
-                p, id_fields=["hierid"], weights={"pop": "popwt"}, source=GRID
+                p,
+                id_fields=["hierid"],
+                weights={"pop": "popwt"},
+                source=GRID,
+                normalization="per_destination",
             )
 
     def test_indices_alone_are_taken_on_trust(self):
@@ -166,7 +199,11 @@ class TestGridTable:
             }
         )
         art = WeightsArtifact.from_table(
-            df, id_fields=["r"], weights={"pop": "w"}, source=GRID
+            df,
+            id_fields=["r"],
+            weights={"pop": "w"},
+            source=GRID,
+            normalization="per_destination",
         )
         assert art.frame["cell_ix"].tolist() == [720, 1439]
         assert "cell_lon" not in art.frame.columns
@@ -192,7 +229,11 @@ class TestGridTable:
         assert df["cell_ix"].tolist() == [0, 720, 1439]
         with pytest.raises(ValueError, match="likely built on a different grid") as e:
             WeightsArtifact.from_table(
-                df, id_fields=["r"], weights={"pop": "w"}, source=GRID
+                df,
+                id_fields=["r"],
+                weights={"pop": "w"},
+                source=GRID,
+                normalization="per_destination",
             )
         assert "3 rows" in str(e.value)
 
@@ -202,6 +243,7 @@ class TestGridTable:
             id_fields=["r"],
             weights={"pop": "w"},
             source="grid-0.25deg-center-[0,360)",
+            normalization="per_destination",
         )
         assert art.frame["cell_ix"].tolist() == [0, 720, 1439]
 
@@ -210,7 +252,11 @@ class TestGridTable:
         # wrapping makes them agree, so the table passes
         df = self._zero_360_table().assign(cell_ix=[720, 0, 1439 - 720])
         art = WeightsArtifact.from_table(
-            df, id_fields=["r"], weights={"pop": "w"}, source=GRID
+            df,
+            id_fields=["r"],
+            weights={"pop": "w"},
+            source=GRID,
+            normalization="per_destination",
         )
         assert art.frame["cell_ix"].tolist() == [720, 0, 719]
 
@@ -228,25 +274,41 @@ class TestGridTable:
         )
         with pytest.raises(ValueError, match=r"\['lat'\]"):
             WeightsArtifact.from_table(
-                df, id_fields=["r"], weights={"pop": "w"}, source=GRID
+                df,
+                id_fields=["r"],
+                weights={"pop": "w"},
+                source=GRID,
+                normalization="per_destination",
             )
         ok = df.assign(cell_iy=[719, 0])
         WeightsArtifact.from_table(
-            ok, id_fields=["r"], weights={"pop": "w"}, source=GRID
+            ok,
+            id_fields=["r"],
+            weights={"pop": "w"},
+            source=GRID,
+            normalization="per_destination",
         )
 
     def test_explicit_cell_indices_outside_grid_rejected(self):
         df = pd.DataFrame({"r": ["A"], "cell_ix": [1440], "cell_iy": [5], "w": [1.0]})
         with pytest.raises(ValueError, match="outside the 1440 x 720 grid"):
             WeightsArtifact.from_table(
-                df, id_fields=["r"], weights={"pop": "w"}, source=GRID
+                df,
+                id_fields=["r"],
+                weights={"pop": "w"},
+                source=GRID,
+                normalization="per_destination",
             )
 
     def test_points_off_centroids_rejected(self):
         df = pd.DataFrame({"r": ["A"], "lon": [0.2], "lat": [0.125], "w": [1.0]})
         with pytest.raises(ValueError, match="not cell centroids"):
             WeightsArtifact.from_table(
-                df, id_fields=["r"], weights={"pop": "w"}, source=GRID
+                df,
+                id_fields=["r"],
+                weights={"pop": "w"},
+                source=GRID,
+                normalization="per_destination",
             )
 
     def test_ambiguous_or_missing_centroid_columns(self):
@@ -261,7 +323,11 @@ class TestGridTable:
         )
         with pytest.raises(ValueError, match="several longitude columns"):
             WeightsArtifact.from_table(
-                df, id_fields=["r"], weights={"pop": "w"}, source=GRID
+                df,
+                id_fields=["r"],
+                weights={"pop": "w"},
+                source=GRID,
+                normalization="per_destination",
             )
         with pytest.raises(ValueError, match="no longitude column"):
             WeightsArtifact.from_table(
@@ -269,6 +335,7 @@ class TestGridTable:
                 id_fields=["r"],
                 weights={"pop": "w"},
                 source=GRID,
+                normalization="per_destination",
             )
 
     def test_zero_360_grid_wraps_negative_longitudes(self):
@@ -285,6 +352,7 @@ class TestGridTable:
             id_fields=["r"],
             weights={"pop": "w"},
             source="grid-0.25deg-center-[0,360)",
+            normalization="per_destination",
         )
         assert art.frame["cell_lon"].tolist() == [180.125, 0.125]
         assert art.frame["cell_ix"].tolist() == [720, 0]
@@ -306,7 +374,11 @@ class TestChecks:
         df.loc[df["hierid"] == "AAA", "popwt"] = [0.6, 0.6]
         with pytest.raises(ValueError, match="do not sum to 1") as e:
             WeightsArtifact.from_table(
-                df, id_fields=["hierid"], weights={"pop": "popwt"}, source=GRID
+                df,
+                id_fields=["hierid"],
+                weights={"pop": "popwt"},
+                source=GRID,
+                normalization="per_destination",
             )
         assert "AAA" in str(e.value)
         assert "BBB" not in str(e.value)
@@ -317,7 +389,11 @@ class TestChecks:
         df.loc[df["hierid"] == "BBB", "popwt"] = 0.5
         with pytest.raises(ValueError, match="share a \\(region, source") as e:
             WeightsArtifact.from_table(
-                df, id_fields=["hierid"], weights={"pop": "popwt"}, source=GRID
+                df,
+                id_fields=["hierid"],
+                weights={"pop": "popwt"},
+                source=GRID,
+                normalization="per_destination",
             )
         assert "BBB" in str(e.value)
 
@@ -325,7 +401,12 @@ class TestChecks:
         df = pd.read_csv(FIXTURE)
         df = pd.concat([df, df.iloc[[2]]], ignore_index=True)
         art = WeightsArtifact.from_table(
-            df, id_fields=["hierid"], weights={"pop": "popwt"}, source=GRID, check=False
+            df,
+            id_fields=["hierid"],
+            weights={"pop": "popwt"},
+            source=GRID,
+            check=False,
+            normalization="per_destination",
         )
         assert len(art.frame) == 6
 
@@ -437,7 +518,11 @@ class TestApplication:
 class TestPackageRoot:
     def test_one_import_suffices(self):
         art = cilreg.WeightsArtifact.from_table(
-            FIXTURE, id_fields=["hierid"], weights={"pop": "popwt"}, source=GRID
+            FIXTURE,
+            id_fields=["hierid"],
+            weights={"pop": "popwt"},
+            source=GRID,
+            normalization="per_destination",
         )
         assert isinstance(art, cilreg.WeightsArtifact)
 
