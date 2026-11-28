@@ -52,7 +52,13 @@ already changes for the quantile method, the summation, the declared
 members and the model weight names. The config hash a weights manifest
 records changes for every config, the same values included, since a
 weight now holds its column and the area weight no fallback or kind, so
-a hash from an earlier run does not match one written now.
+a hash from an earlier run does not match one written now. So the config
+an earlier weights manifest came from can no longer be found by hashing
+candidate configs with this version, which refuses an old config for its
+missing keys and hashes a completed one differently. It takes the
+version that wrote the manifest, named in its package_versions, which
+the published GADM weights give as segment_weights 0.1.0, the package's
+former name.
 
 Regenerating the weights artifacts gives the same weights with new
 manifests, since each config states the value its default gave. They are
